@@ -10,7 +10,10 @@ import unohelper
 from com.sun.star.beans import PropertyValue
 from com.sun.star.text import XTextDocument
 from com.sun.star.sheet import XSpreadsheetDocument
-from com.sun.star.presentation import XPresentationDocument
+try:
+    from com.sun.star.presentation import XPresentationDocument
+except ImportError:
+    XPresentationDocument = None
 from com.sun.star.document import XDocumentEventListener
 from com.sun.star.awt import XActionListener
 from typing import Any, Optional, Dict, List
@@ -315,7 +318,7 @@ class UNOBridge:
             return "writer"
         elif isinstance(doc, XSpreadsheetDocument):
             return "calc"
-        elif isinstance(doc, XPresentationDocument):
+        elif XPresentationDocument and isinstance(doc, XPresentationDocument):
             return "impress"
         else:
             return "unknown"

@@ -9,7 +9,7 @@ import asyncio
 import json
 import logging
 from typing import Dict, Any, Optional, List
-from .uno_bridge import UNOBridge
+from uno_bridge import UNOBridge
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
