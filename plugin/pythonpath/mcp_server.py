@@ -107,6 +107,16 @@ class LibreOfficeMCPServer:
             "handler": self.format_text_live
         }
         
+        # Cursor and selection tools
+        self.tools["get_cursor_info_live"] = {
+            "description": "Get the cursor position, the paragraph containing the cursor, and the selected text in the active Writer document",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            },
+            "handler": self.get_cursor_info_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -244,6 +254,10 @@ class LibreOfficeMCPServer:
     def format_text_live(self, **formatting) -> Dict[str, Any]:
         """Apply formatting to selected text"""
         return self.uno_bridge.format_text(formatting)
+    
+    def get_cursor_info_live(self) -> Dict[str, Any]:
+        """Get cursor position, current paragraph and selected text"""
+        return self.uno_bridge.get_cursor_info()
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""

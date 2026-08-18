@@ -8,12 +8,6 @@ enabling direct manipulation of LibreOffice documents.
 import uno
 import unohelper
 from com.sun.star.beans import PropertyValue
-from com.sun.star.text import XTextDocument
-from com.sun.star.sheet import XSpreadsheetDocument
-try:
-    from com.sun.star.presentation import XPresentationDocument
-except ImportError:
-    XPresentationDocument = None
 from com.sun.star.document import XDocumentEventListener
 from com.sun.star.awt import XActionListener
 from typing import Any, Optional, Dict, List
@@ -23,6 +17,36 @@ import traceback
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# A UNO document proxy is <class 'pyuno'> and inherits none of the
+# com.sun.star.* interfaces, so isinstance() against them is always False.
+# Service names are the only working way to tell document types apart.
+WRITER_SERVICE = "com.sun.star.text.TextDocument"
+CALC_SERVICE = "com.sun.star.sheet.SpreadsheetDocument"
+IMPRESS_SERVICE = "com.sun.star.presentation.PresentationDocument"
+DRAW_SERVICE = "com.sun.star.drawing.DrawingDocument"
+
+
+def _supports(obj: Any, service: str) -> bool:
+    """Whether a UNO object implements a service, False if it cannot be asked"""
+    try:
+        return bool(obj.supportsService(service))
+    except Exception:
+        return False
+
+
+# Cap on paragraph and selection text returned by get_cursor_info; a single
+# paragraph (or a select-all) can otherwise be megabytes of MCP payload.
+MAX_TEXT_CHARS = 2000
+
+
+def _text_payload(value: str) -> Dict[str, Any]:
+    """Cap text at MAX_TEXT_CHARS while still reporting its true length"""
+    return {
+        "text": value[:MAX_TEXT_CHARS],
+        "length": len(value),
+        "truncated": len(value) > MAX_TEXT_CHARS,
+    }
 
 
 class UNOBridge:
@@ -96,11 +120,11 @@ class UNOBridge:
             }
             
             # Add document-specific information
-            if isinstance(doc, XTextDocument):
+            if _supports(doc, WRITER_SERVICE):
                 text = doc.getText()
                 info["word_count"] = len(text.getString().split())
                 info["character_count"] = len(text.getString())
-            elif isinstance(doc, XSpreadsheetDocument):
+            elif _supports(doc, CALC_SERVICE):
                 sheets = doc.getSheets()
                 info["sheet_count"] = sheets.getCount()
                 info["sheet_names"] = [sheets.getByIndex(i).getName() 
@@ -132,7 +156,7 @@ class UNOBridge:
                 return {"success": False, "error": "No active document"}
             
             # Handle Writer documents
-            if isinstance(doc, XTextDocument):
+            if _supports(doc, WRITER_SERVICE):
                 text_obj = doc.getText()
                 
                 if position is None:
@@ -171,7 +195,7 @@ class UNOBridge:
             if doc is None:
                 doc = self.get_active_document()
             
-            if not doc or not isinstance(doc, XTextDocument):
+            if not doc or not _supports(doc, WRITER_SERVICE):
                 return {"success": False, "error": "No Writer document available"}
             
             # Get current selection
@@ -302,7 +326,7 @@ class UNOBridge:
             if not doc:
                 return {"success": False, "error": "No document available"}
             
-            if isinstance(doc, XTextDocument):
+            if _supports(doc, WRITER_SERVICE):
                 text = doc.getText().getString()
                 return {"success": True, "content": text, "length": len(text)}
             else:
@@ -312,14 +336,149 @@ class UNOBridge:
             logger.error(f"Failed to get text content: {e}")
             return {"success": False, "error": str(e)}
     
+    def get_cursor_info(self, doc: Any = None) -> Dict[str, Any]:
+        """
+        Report where the caret is and what is selected in a Writer document
+
+        Covers the caret offset inside its paragraph, that paragraph's text and
+        the selected text. paragraph_index and document_offset additionally
+        require walking the body paragraphs, so they cost one UNO call per
+        paragraph up to the caret and are None when the caret sits outside the
+        body text, e.g. in a table cell or a frame.
+        """
+        try:
+            if doc is None:
+                doc = self.get_active_document()
+
+            if not doc:
+                return {"success": False, "error": "No document available"}
+
+            if not _supports(doc, WRITER_SERVICE):
+                return {
+                    "success": False,
+                    "error": f"Cursor info is only available for Writer documents, "
+                             f"got {self._get_document_type(doc)}"
+                }
+
+            controller = doc.getCurrentController()
+            view_cursor = controller.getViewCursor() if controller else None
+            if not view_cursor:
+                return {
+                    "success": False,
+                    "error": "Document has no view cursor (is LibreOffice running headless?)"
+                }
+
+            caret = view_cursor.getStart()
+            # The text owning the caret, which inside a table cell or a frame is
+            # not the body text. Handing a foreign range to the body text throws
+            # "End of content node doesn't have the proper start node".
+            caret_text = caret.getText()
+
+            # A view cursor has no paragraph methods, a text cursor does. With
+            # expand=True the mark stays at the caret, so the string spans from
+            # the paragraph start to the caret.
+            offset_cursor = caret_text.createTextCursorByRange(caret)
+            offset_cursor.gotoStartOfParagraph(True)
+            offset_in_paragraph = len(offset_cursor.getString())
+
+            paragraph_cursor = caret_text.createTextCursorByRange(caret)
+            paragraph_cursor.gotoStartOfParagraph(False)
+            paragraph_cursor.gotoEndOfParagraph(True)
+
+            index, chars_before = self._locate_paragraph(
+                doc.getText(), paragraph_cursor.getStart())
+
+            info = {
+                "success": True,
+                "cursor": {
+                    "paragraph_index": index,
+                    "offset_in_paragraph": offset_in_paragraph,
+                    "document_offset": None if chars_before is None
+                                       else chars_before + offset_in_paragraph,
+                    "page": self._get_page(view_cursor)
+                },
+                "paragraph": _text_payload(paragraph_cursor.getString()),
+                "selection": self._get_selection_info(controller)
+            }
+            logger.info("Retrieved cursor info")
+            return info
+
+        except Exception as e:
+            logger.error(f"Failed to get cursor info: {e}")
+            return {"success": False, "error": str(e)}
+
+    def _locate_paragraph(self, text: Any, paragraph_start: Any) -> tuple:
+        """
+        Find the caret's paragraph in the body text
+
+        Returns (index, characters before it) or (None, None) when the
+        paragraph is not part of the body enumeration. Tables are skipped, so
+        their content does not count towards the character total.
+        """
+        try:
+            enumeration = text.createEnumeration()
+            index = 0
+            chars_before = 0
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if not hasattr(element, "getStart"):
+                    continue
+                # Only equality matters here, so the sign convention of
+                # compareRegionStarts is irrelevant
+                if text.compareRegionStarts(element.getStart(), paragraph_start) == 0:
+                    return index, chars_before
+                chars_before += len(element.getString()) + 1  # + paragraph break
+                index += 1
+            return None, None
+        except Exception as e:
+            logger.info(f"No absolute position, caret is outside the body text: {e}")
+            return None, None
+
+    def _get_page(self, view_cursor: Any) -> Optional[int]:
+        """Page the caret is on, None if the view cannot report one"""
+        try:
+            return view_cursor.getPage()
+        except Exception as e:
+            logger.info(f"Page number unavailable: {e}")
+            return None
+
+    def _get_selection_info(self, controller: Any) -> Dict[str, Any]:
+        """
+        Read the selection, joining the parts of a multi-range selection
+
+        A table cell selection is not a collection of text ranges, so it is
+        reported as no selection rather than failing the whole call.
+        """
+        try:
+            selection = controller.getSelection()
+            range_count = selection.getCount()
+            parts = [selection.getByIndex(i).getString() for i in range(range_count)]
+        except Exception as e:
+            logger.info(f"Selection holds no readable text ranges: {e}")
+            return {
+                "has_selection": False,
+                "text": "",
+                "length": 0,
+                "range_count": 0,
+                "truncated": False
+            }
+
+        selected = "\n".join(part for part in parts if part)
+        info = _text_payload(selected)
+        info["has_selection"] = bool(selected)
+        info["range_count"] = range_count
+        return info
+
     def _get_document_type(self, doc: Any) -> str:
         """Determine document type"""
-        if isinstance(doc, XTextDocument):
+        if _supports(doc, WRITER_SERVICE):
             return "writer"
-        elif isinstance(doc, XSpreadsheetDocument):
+        elif _supports(doc, CALC_SERVICE):
             return "calc"
-        elif XPresentationDocument and isinstance(doc, XPresentationDocument):
+        elif _supports(doc, IMPRESS_SERVICE):
             return "impress"
+        elif _supports(doc, DRAW_SERVICE):
+            return "draw"
         else:
             return "unknown"
     
