@@ -369,24 +369,9 @@ class UNOBridge:
                 }
 
             caret = view_cursor.getStart()
-            # The text owning the caret, which inside a table cell or a frame is
-            # not the body text. Handing a foreign range to the body text throws
-            # "End of content node doesn't have the proper start node".
-            caret_text = caret.getText()
-
-            # A view cursor has no paragraph methods, a text cursor does. With
-            # expand=True the mark stays at the caret, so the string spans from
-            # the paragraph start to the caret.
-            offset_cursor = caret_text.createTextCursorByRange(caret)
-            offset_cursor.gotoStartOfParagraph(True)
-            offset_in_paragraph = len(offset_cursor.getString())
-
-            paragraph_cursor = caret_text.createTextCursorByRange(caret)
-            paragraph_cursor.gotoStartOfParagraph(False)
-            paragraph_cursor.gotoEndOfParagraph(True)
-
-            index, chars_before = self._locate_paragraph(
-                doc.getText(), paragraph_cursor.getStart())
+            address, paragraph_cursor, chars_before = self._locate_range(doc, caret)
+            index = address["paragraph"]
+            offset_in_paragraph = address["offset"]
 
             info = {
                 "success": True,
@@ -406,6 +391,39 @@ class UNOBridge:
         except Exception as e:
             logger.error(f"Failed to get cursor info: {e}")
             return {"success": False, "error": str(e)}
+
+    def _locate_range(self, doc: Any, text_range: Any) -> tuple:
+        """
+        Locate a range within the document
+
+        Returns (address, paragraph_cursor, chars_before_paragraph), where
+        address is {"paragraph": index or None, "offset": int, "length": int},
+        paragraph_cursor spans the paragraph holding the range start, and
+        chars_before_paragraph is None whenever the index is None.
+
+        The cursors come from the text owning the range, which inside a table
+        cell or a frame is not the body text.
+        """
+        owner = text_range.getText()
+        start = text_range.getStart()
+
+        offset_cursor = owner.createTextCursorByRange(start)
+        offset_cursor.gotoStartOfParagraph(True)
+        offset = len(offset_cursor.getString())
+
+        paragraph_cursor = owner.createTextCursorByRange(start)
+        paragraph_cursor.gotoStartOfParagraph(False)
+        paragraph_cursor.gotoEndOfParagraph(True)
+
+        index, chars_before = self._locate_paragraph(
+            doc.getText(), paragraph_cursor.getStart())
+
+        address = {
+            "paragraph": index,
+            "offset": offset,
+            "length": len(text_range.getString())
+        }
+        return address, paragraph_cursor, chars_before
 
     def _locate_paragraph(self, text: Any, paragraph_start: Any) -> tuple:
         """

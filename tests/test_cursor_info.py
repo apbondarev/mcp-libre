@@ -11,6 +11,7 @@ import pytest
 
 from tests.fake_writer import (
     FakeCalcDoc,
+    FakeRange,
     FakeTableCellSelection,
     writer_doc,
     writer_doc_with_caret_in_cell,
@@ -211,6 +212,17 @@ def test_fails_when_document_has_no_view(bridge):
 
     assert result["success"] is False
     assert "view" in result["error"].lower()
+
+
+def test_locate_range_reports_the_address_of_a_range(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+    target = FakeRange(doc.getText(), (1, 7), (1, 13))
+
+    address, paragraph_cursor, chars_before = bridge._locate_range(doc, target)
+
+    assert address == {"paragraph": 1, "offset": 7, "length": 6}
+    assert paragraph_cursor.getString() == "Second paragraph here."
+    assert chars_before == 17  # "First paragraph." + the paragraph break
 
 
 def test_tool_is_registered_and_dispatches_to_the_bridge():
