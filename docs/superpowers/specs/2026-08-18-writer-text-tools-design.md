@@ -118,6 +118,7 @@ resolution, new-index reporting).
 | `delete_range_live(address)` | Deletion, which has no equivalent today | `setString("")` |
 | `insert_paragraph_live(after_paragraph, text, style)` | Structural insert instead of appending to a run of text | `insertControlCharacter(PARAGRAPH_BREAK)` + `insertString` |
 | `replace_text_live(search, replace, all, regex)` | Bulk edit without reading the document | `createReplaceDescriptor` + `replaceAll`; returns the replacement count |
+| `set_track_changes_live(enabled)` | Lets the assistant and the human turn recording on or off deliberately, independent of the per-edit default below | `doc.RecordChanges` |
 
 ### Phase 3 — formatting and structure
 
@@ -135,7 +136,6 @@ fixed: an empty or unreadable selection must return `success: false`.
 
 | Tool | Purpose | Mechanism |
 |---|---|---|
-| `set_track_changes_live(enabled)` | Turns every subsequent edit into a suggestion the human accepts or rejects | `doc.RecordChanges` |
 | `add_comment_live(address, text)` | Suggest without touching the text | `com.sun.star.text.textfield.Annotation` via `insertTextContent` |
 | `create_bookmark_live(address, name)` / addresses by bookmark | Stable handles across multi-step edits | `com.sun.star.text.Bookmark` |
 
@@ -153,17 +153,29 @@ Every mutating tool must:
    the ability to reject it — which costs more trust than any missing feature.
 2. **Refuse read-only documents** via `doc.isReadonly()`, before touching
    anything.
-3. **Resolve its address through `_resolve_address`**, never inline.
-4. **Report the new position**: the affected paragraph index and the document's
+3. **Record itself as a tracked change by default.** Every mutating tool takes
+   `track_changes: bool = true`. When it is true the tool turns
+   `doc.RecordChanges` on for the duration of its edit and restores the
+   previous value afterwards, so the edit lands as a suggestion the human
+   accepts or rejects, while the document's own setting is left as the human
+   had it. Changes already recorded stay recorded — restoring the flag does not
+   undo them. Passing `track_changes: false` writes directly, which is the
+   right choice for a document the assistant itself created.
+
+   Ordering matters and is part of the contract: enter the undo context, set
+   the flag, edit, restore the flag, leave the undo context — the restore in a
+   `finally`, so a failed edit cannot leave recording switched on.
+4. **Resolve its address through `_resolve_address`**, never inline.
+5. **Report the new position**: the affected paragraph index and the document's
    paragraph count after the edit.
 
 Every tool, mutating or not, must:
 
-5. **Cap returned text** at `MAX_TEXT_CHARS` per field, with `truncated` and
+6. **Cap returned text** at `MAX_TEXT_CHARS` per field, with `truncated` and
    the true `length`, as `get_cursor_info_live` does.
-6. **Return `{"success": false, "error": …}` rather than raising**, per the
+7. **Return `{"success": false, "error": …}` rather than raising**, per the
    existing plugin convention — exceptions inside UNO callbacks vanish.
-7. **Accept an optional `document` argument** (a URL from
+8. **Accept an optional `document` argument** (a URL from
    `list_open_documents`), defaulting to the active document. With two windows
    open, "the active document" is otherwise a coin flip, and an assistant that
    edits the wrong file is worse than one that refuses.
@@ -209,13 +221,27 @@ replace and delete a span it addressed itself, insert a paragraph with a style
 — and every one of those changes is one undo step, refused outright on a
 read-only document.
 
-## Open questions
+## Decisions taken
 
-1. Should phase 2 mutations *require* track changes to be on by default, rather
-   than offering it in phase 4? Safer, but it changes the document's state on
-   the user's behalf.
-2. `find_text_live` returning `context` duplicates text the caller may already
-   have from `read_paragraphs_live`. Keep it (fewer round trips) or drop it
-   (smaller responses)?
-3. Is phase 3's `set_selection_live` worth having once `format_range_live`
-   exists? It moves the human's cursor as a side effect, which is intrusive.
+1. **Mutations are tracked by default.** Editing on the user's behalf is
+   recorded as a suggestion unless the caller opts out, per the contract above.
+   This pulls `set_track_changes_live` forward from phase 4 into phase 2, since
+   phase 2 now depends on the mechanism.
+2. **`find_text_live` keeps `context`.** The duplication with
+   `read_paragraphs_live` is worth fewer round trips: a search hit is usually
+   acted on immediately, and without context the assistant cannot tell which
+   hit it wants.
+3. **`set_selection_live` stays.** Moving the human's cursor is accepted as a
+   side effect; it is what makes selection-based tools reachable at all.
+
+## Remaining risks
+
+- Whether toggling `doc.RecordChanges` inside an open undo context is itself
+  undoable, or interacts badly with `enterUndoContext`, is unverified. If
+  toggling turns out to be recorded as an undo step, the flag must be set
+  outside the context instead. The live harness settles this before any phase 2
+  tool is believed.
+- Whether a tracked deletion leaves the original text in place (as Writer shows
+  it struck through) changes what `delete_range_live` should report back. The
+  harness must check what the document looks like after a tracked delete, not
+  just that the call succeeded.
