@@ -42,6 +42,14 @@ def _supports(obj: Any, service: str) -> bool:
 
 LANGUAGE_TAG = re.compile(r"^([A-Za-z]{2,3})(?:[-_]([A-Za-z]{2}))?$")
 
+# Words for spell checking: letters, with apostrophes and hyphens inside a word
+# but never at its edge, and no digits — "3.14" and "42" are not spellable.
+WORD = re.compile(r"[^\W\d_]+(?:['\u2019-][^\W\d_]+)*")
+
+# Caps for check_spelling
+DEFAULT_SPELLING_RESULTS = 50
+MAX_SPELLING_RESULTS = 200
+
 
 def _locale(language: str) -> Any:
     """
@@ -726,6 +734,169 @@ class UNOBridge:
             empty_error="Nothing is selected, so there is nothing to replace. "
                         "Select the text first, or use a tool that inserts.",
             language=language)
+
+    def check_spelling(self, address: Any = None,
+                       max_results: int = DEFAULT_SPELLING_RESULTS,
+                       doc: Any = None) -> Dict[str, Any]:
+        """
+        Report misspelled words with an address for each
+
+        Every hit's address resolves back to the word, so it can be handed to
+        replace_range. Words are judged against the language of the text
+        portion they sit in, not the paragraph's or the document's, so an
+        English term inside a Russian sentence is checked as English — the
+        distinction that makes the report worth reading at all.
+
+        A language with no dictionary installed is skipped and named rather
+        than having all of its words called misspellings.
+        """
+        doc, error = self._writer_document(doc, "Spell checking")
+        if error:
+            return error
+
+        try:
+            speller = self._spell_checker()
+        except Exception as e:
+            logger.error(f"No spell checker available: {e}")
+            return {"success": False, "error": f"No spell checker available: {e}"}
+
+        if address is not None:
+            try:
+                index = self._paragraph_index_of(doc, address)
+            except AddressError as e:
+                return {"success": False, "error": str(e)}
+        else:
+            index = None
+
+        limit = max(1, min(int(max_results), MAX_SPELLING_RESULTS))
+        misspelled = []
+        total = 0
+        checked_paragraphs = 0
+        skipped = []
+
+        for paragraph, position in self._body_paragraphs(doc):
+            if index is not None and position != index:
+                continue
+            checked_paragraphs += 1
+            for word, offset, locale in self._words_of(paragraph, speller, skipped):
+                if speller.isValid(word, locale, ()):
+                    continue
+                total += 1
+                if len(misspelled) >= limit:
+                    continue
+                misspelled.append({
+                    "word": word,
+                    "address": {"paragraph": position, "offset": offset,
+                                "length": len(word)},
+                    "suggestions": self._suggestions(speller, word, locale),
+                    "language": _locale_name(locale)
+                })
+
+        logger.info(f"Spell checked {checked_paragraphs} paragraphs, "
+                    f"{total} misspellings")
+        return {
+            "success": True,
+            "misspelled": misspelled,
+            "total_misspelled": total,
+            "truncated": total > len(misspelled),
+            "checked_paragraphs": checked_paragraphs,
+            "skipped_languages": skipped
+        }
+
+    def _spell_checker(self) -> Any:
+        """The spell checker, created once per bridge
+
+        The service is created directly rather than through
+        LinguServiceManager: the manager's checker resolves in pyuno to the
+        XSpellChecker1 overload, which wants a numeric language id and rejects
+        every Locale with "Type 17 is not supported".
+        """
+        speller = getattr(self, "_speller", None)
+        if speller is None:
+            speller = self.smgr.createInstanceWithContext(
+                "com.sun.star.linguistic2.SpellChecker", self.ctx)
+            self._speller = speller
+        return speller
+
+    def _body_paragraphs(self, doc: Any):
+        """Yield (paragraph, index) for the body, skipping tables"""
+        position = 0
+        enumeration = doc.getText().createEnumeration()
+        while enumeration.hasMoreElements():
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            yield element, position
+            position += 1
+
+    def _paragraph_index_of(self, doc: Any, address: Any) -> int:
+        """The body paragraph an address points at, for scoping a check"""
+        if isinstance(address, dict) and isinstance(address.get("paragraph"), int) \
+                and not isinstance(address.get("paragraph"), bool):
+            if self._paragraph_at(doc.getText(), address["paragraph"]) is None:
+                raise AddressError(f"no body paragraph {address['paragraph']}")
+            return address["paragraph"]
+
+        located, _, _ = self._locate_range(doc, self._resolve_address(doc, address))
+        if located["paragraph"] is None:
+            raise AddressError("that address is outside the body text, so its "
+                               "paragraph cannot be spell checked")
+        return located["paragraph"]
+
+    def _words_of(self, paragraph: Any, speller: Any, skipped: List[str]):
+        """
+        Yield (word, offset in paragraph, locale) for a paragraph
+
+        Offsets accumulate across text portions, so the address of a word in
+        the third run still points at the right characters.
+        """
+        offset = 0
+        try:
+            portions = paragraph.createEnumeration()
+        except Exception as e:
+            logger.info(f"Could not read the portions of a paragraph: {e}")
+            return
+
+        while portions.hasMoreElements():
+            portion = portions.nextElement()
+            try:
+                text = portion.getString()
+                locale = portion.CharLocale
+            except Exception as e:
+                logger.info(f"Skipping an unreadable portion: {e}")
+                continue
+
+            name = _locale_name(locale)
+            if not name:
+                offset += len(text)
+                continue
+
+            try:
+                known = speller.hasLocale(locale)
+            except Exception as e:
+                logger.info(f"Could not ask about {name}: {e}")
+                known = False
+
+            if not known:
+                if name not in skipped:
+                    skipped.append(name)
+                offset += len(text)
+                continue
+
+            for match in WORD.finditer(text):
+                yield match.group(), offset + match.start(), locale
+            offset += len(text)
+
+    def _suggestions(self, speller: Any, word: str, locale: Any) -> List[str]:
+        """What the dictionary offers instead of a word"""
+        try:
+            alternatives = speller.spell(word, locale, ())
+            if alternatives is None:
+                return []
+            return list(alternatives.getAlternatives())
+        except Exception as e:
+            logger.info(f"No suggestions for {word!r}: {e}")
+            return []
 
     def set_language(self, address: Any, language: str,
                      doc: Any = None) -> Dict[str, Any]:

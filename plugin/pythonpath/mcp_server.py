@@ -286,6 +286,35 @@ class LibreOfficeMCPServer:
             "handler": self.set_language_live
         }
         
+        self.tools["check_spelling_live"] = {
+            "description": "Report misspelled words in the active Writer document, each with the address of the word and the dictionary's suggestions. Every word is judged against the language of the text it sits in, so check the reported language before trusting a hit: text marked with the wrong language is reported as misspelled even when it is correct, and set_language_live fixes that",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Limit the check to one paragraph, e.g. {\"paragraph\": 4}. Omit to check the whole document",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "How many misspellings to report (max 200)",
+                        "default": 50
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.check_spelling_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -485,6 +514,15 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.replace_range(address, text,
                                              track_changes=track_changes,
                                              language=language, doc=doc)
+
+    def check_spelling_live(self, address: Any = None, max_results: int = 50,
+                            document: Optional[str] = None) -> Dict[str, Any]:
+        """Report misspelled words with an address and suggestions for each"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.check_spelling(address=address,
+                                              max_results=max_results, doc=doc)
 
     def set_language_live(self, address: Any, language: str,
                           document: Optional[str] = None) -> Dict[str, Any]:

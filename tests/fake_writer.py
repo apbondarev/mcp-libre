@@ -145,9 +145,61 @@ class FakeParagraph(FakeRange):
     def __init__(self, model, index):
         super().__init__(model, (index, 0), (index, len(model.paragraphs[index])))
         self.index = index
+
         self.ParaStyleName = model.styles[index]
         if model.expose_outline_level:
             self.OutlineLevel = model.outline_levels[index]
+
+    def createEnumeration(self):
+        return FakeEnumeration(
+            FakeTextPortion(text, locale)
+            for text, locale in self.model.portions_of(self.index))
+
+
+class FakeTextPortion:
+    """A run inside a paragraph, carrying its own language."""
+
+    def __init__(self, text, locale):
+        self._text = text
+        self.CharLocale = locale
+
+    def getString(self):
+        return self._text
+
+
+class FakeSpellChecker:
+    """Stands in for com.sun.star.linguistic2.SpellChecker.
+
+    Knows a fixed vocabulary per language, so a test can say what is a word
+    and what is not without shipping a dictionary.
+    """
+
+    def __init__(self, vocabulary=None, suggestions=None, locales=("ru-RU", "en-US")):
+        self.vocabulary = vocabulary or {}
+        self.suggestions = suggestions or {}
+        self.locales = set(locales)
+        self.checked = []
+
+    def hasLocale(self, locale):
+        return f"{locale.Language}-{locale.Country}" in self.locales
+
+    def isValid(self, word, locale, properties):
+        tag = f"{locale.Language}-{locale.Country}"
+        self.checked.append((word, tag))
+        return word in self.vocabulary.get(tag, ())
+
+    def spell(self, word, locale, properties):
+        if self.isValid(word, locale, properties):
+            return None
+        return FakeSpellAlternatives(self.suggestions.get(word, []))
+
+
+class FakeSpellAlternatives:
+    def __init__(self, alternatives):
+        self._alternatives = list(alternatives)
+
+    def getAlternatives(self):
+        return tuple(self._alternatives)
 
 
 class FakeTextTable:

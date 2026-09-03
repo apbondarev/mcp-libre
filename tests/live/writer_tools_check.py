@@ -286,6 +286,44 @@ try:
     bad_language = bridge.set_language({"paragraph": 3}, "russian please", doc=doc)
     check("refused", bad_language.get("success"), False)
 
+    print("\n--- check_spelling against real dictionaries ---")
+    bridge.replace_range({"paragraph": 3}, "Схеммы и типы описывают",
+                         language="ru-RU", doc=doc)
+    report = bridge.check_spelling(address={"paragraph": 3}, doc=doc)
+    print(report)
+    check("spell check succeeded", report.get("success"), True)
+    check("the misspelling is found",
+          [hit["word"] for hit in report["misspelled"]], ["Схеммы"])
+    check("suggestions offered",
+          "Схемы" in report["misspelled"][0]["suggestions"], True)
+    check("reported language", report["misspelled"][0]["language"], "ru-RU")
+
+    print("\n--- the reported address resolves to the misspelled word ---")
+    hit = report["misspelled"][0]
+    check("address resolves to the word",
+          bridge._resolve_address(doc, hit["address"]).getString(), hit["word"])
+
+    print("\n--- and the fix goes back through replace_range ---")
+    bridge.replace_range(hit["address"], hit["suggestions"][0],
+                         language="ru-RU", doc=doc)
+    after = bridge.check_spelling(address={"paragraph": 3}, doc=doc)
+    check("nothing misspelled after the fix", after["misspelled"], [])
+    check("paragraph now reads correctly",
+          bridge.read_paragraphs(start=3, count=1, doc=doc)["paragraphs"][0]["text"],
+          "Схемы и типы описывают")
+
+    print("\n--- correct Russian marked as English is reported, and why ---")
+    bridge.replace_range({"paragraph": 3}, "Схемы и типы", doc=doc)
+    bridge.set_language({"paragraph": 3}, "en-US", doc=doc)
+    wrong_language = bridge.check_spelling(address={"paragraph": 3}, doc=doc)
+    check("correct words reported as misspelled under the wrong language",
+          len(wrong_language["misspelled"]) > 0, True)
+    check("the report names the language that judged them",
+          wrong_language["misspelled"][0]["language"], "en-US")
+    bridge.set_language({"paragraph": 3}, "ru-RU", doc=doc)
+    check("and they are clean once the language is right",
+          bridge.check_spelling(address={"paragraph": 3}, doc=doc)["misspelled"], [])
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

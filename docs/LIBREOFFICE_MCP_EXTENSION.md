@@ -128,6 +128,7 @@ curl -X POST http://localhost:8765/execute \
 
 ### **Editing**
 - `replace_selection_live`: Replace the selected text; `text`, `track_changes` (default false), `document`. Fails when nothing is selected, and is a single undo step
+- `check_spelling_live`: Misspelled words with the address of each and the dictionary's suggestions; judged per text run's own language, and a language with no dictionary is named rather than reported as all wrong
 - `set_language_live`: Mark text at an address as being in a language (`ru-RU`), so Writer spell-checks it against the right dictionary
 - `replace_range_live`: Replace the text at an address — `{"paragraph": N}`, `{"paragraph": N, "offset": K, "length": L}` or `{"selection": true}`. This is what makes the addresses from `get_outline_live` and `find_text_live` actionable without a human selecting anything
 
