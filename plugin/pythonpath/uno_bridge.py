@@ -35,6 +35,10 @@ def _supports(obj: Any, service: str) -> bool:
         return False
 
 
+class AddressError(Exception):
+    """An address that cannot be resolved to a text range"""
+
+
 # Cap on paragraph and selection text returned by get_cursor_info; a single
 # paragraph (or a select-all) can otherwise be megabytes of MCP payload.
 MAX_TEXT_CHARS = 2000
@@ -424,6 +428,89 @@ class UNOBridge:
             "length": len(text_range.getString())
         }
         return address, paragraph_cursor, chars_before
+
+    def _paragraph_at(self, text: Any, index: Any) -> Any:
+        """
+        The index-th body paragraph, or None when there is no such paragraph
+
+        Tables are skipped, so indices match what _locate_paragraph reports.
+        """
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise AddressError(
+                f"paragraph must be a non-negative integer, got {index!r}")
+
+        position = 0
+        enumeration = text.createEnumeration()
+        while enumeration.hasMoreElements():
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            if position == index:
+                return element
+            position += 1
+        return None
+
+    def _resolve_address(self, doc: Any, address: Any) -> Any:
+        """
+        Turn an address into a text range
+
+        Accepts {"paragraph": i, "offset": k, "length": n} against the body
+        text, where offset defaults to 0 and an omitted length means the rest
+        of the paragraph, or {"selection": true} for the current selection.
+        Raises AddressError for anything it cannot resolve.
+
+        A collapsed selection resolves to an empty range rather than an error:
+        inserting at a caret is legitimate, so callers needing actual content
+        check for themselves.
+        """
+        if not isinstance(address, dict):
+            raise AddressError(
+                f"address must be an object, got {type(address).__name__}")
+
+        if address.get("selection"):
+            controller = doc.getCurrentController()
+            if not controller:
+                raise AddressError("document has no view, so it has no selection")
+            try:
+                selection = controller.getSelection()
+                count = selection.getCount()
+            except Exception as e:
+                raise AddressError(f"the selection is not a text range: {e}")
+            if count < 1:
+                raise AddressError("nothing is selected")
+            return selection.getByIndex(0)
+
+        if "paragraph" not in address:
+            raise AddressError("address needs either 'paragraph' or 'selection'")
+
+        paragraph = self._paragraph_at(doc.getText(), address["paragraph"])
+        if paragraph is None:
+            raise AddressError(f"no body paragraph {address['paragraph']}")
+
+        paragraph_length = len(paragraph.getString())
+        offset = address.get("offset", 0)
+        length = address.get("length")
+
+        if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0 \
+                or offset > paragraph_length:
+            raise AddressError(
+                f"offset {offset!r} is outside paragraph {address['paragraph']}, "
+                f"which holds {paragraph_length} characters")
+
+        cursor = paragraph.getText().createTextCursorByRange(paragraph.getStart())
+        if offset:
+            cursor.goRight(offset, False)
+
+        if length is None:
+            cursor.gotoEndOfParagraph(True)
+        else:
+            if not isinstance(length, int) or isinstance(length, bool) or length < 0 \
+                    or offset + length > paragraph_length:
+                raise AddressError(
+                    f"length {length!r} from offset {offset} runs past the end of "
+                    f"paragraph {address['paragraph']}")
+            cursor.goRight(length, True)
+        return cursor
 
     def _locate_paragraph(self, text: Any, paragraph_start: Any) -> tuple:
         """

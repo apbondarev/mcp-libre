@@ -81,6 +81,27 @@ class FakeTextCursor:
             self.mark = self.pos
         return True
 
+    def goRight(self, count, expand):
+        """Move right by count characters, a paragraph break counting as one."""
+        paragraph, offset = self.pos
+        remaining = count
+        while remaining > 0:
+            room = len(self.model.paragraphs[paragraph]) - offset
+            if remaining <= room:
+                offset += remaining
+                remaining = 0
+            elif paragraph + 1 < len(self.model.paragraphs):
+                remaining -= room + 1
+                paragraph += 1
+                offset = 0
+            else:
+                offset = len(self.model.paragraphs[paragraph])
+                break
+        self.pos = (paragraph, offset)
+        if not expand:
+            self.mark = self.pos
+        return remaining == 0
+
 
 class FakeParagraph(FakeRange):
     def __init__(self, model, index):
