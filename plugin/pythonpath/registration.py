@@ -5,13 +5,13 @@ sys.path.insert(0, os.path.dirname(__file__))
 import uno
 import unohelper
 import logging
-import threading
 import traceback
 
-# File logging — works even if UNO swallows stderr
+# File logging — works even if UNO swallows stderr. The path is overridable so
+# tests do not append to the log a developer is reading.
 logging.basicConfig(
     level=logging.DEBUG,
-    filename="/tmp/mcp_extension.log",
+    filename=os.environ.get("MCP_EXTENSION_LOG", "/tmp/mcp_extension.log"),
     filemode="a",
     format="%(asctime)s %(levelname)s %(message)s",
 )
@@ -93,16 +93,24 @@ class MCPExtension(unohelper.Base, XDispatchProvider, XServiceInfo):
         return SERVICE_NAMES
 
     def _execute_action(self, action):
+        """
+        Run a menu action and report what actually happened
+
+        Everything here stays on LibreOffice's main thread. Handing the work to
+        another thread and then opening a modal dialog kills the process: the
+        dialog runs a nested event loop holding the SolarMutex, the worker's
+        first UNO call needs that mutex, and Python has no way to acquire it.
+        Starting the server is fast — build the tool table, create the Desktop
+        proxy, bind a socket — so there is nothing to gain by moving it off.
+        """
         logger.info(f"_execute_action: {action}")
         if action == "start_mcp_server":
-            threading.Thread(target=self._start_mcp_server, daemon=True).start()
-            self._show_dialog("MCP Server", "MCP Server is started\nhttp://localhost:8765")
+            self._show_dialog("MCP Server", self._start_mcp_server())
         elif action == "stop_mcp_server":
-            threading.Thread(target=self._stop_mcp_server, daemon=True).start()
-            self._show_dialog("MCP Server", "MCP Server is stopped")
+            self._show_dialog("MCP Server", self._stop_mcp_server())
         elif action == "restart_mcp_server":
-            threading.Thread(target=lambda: (self._stop_mcp_server(), self._start_mcp_server()), daemon=True).start()
-            self._show_dialog("MCP Server", "MCP Server is restarted\nhttp://localhost:8765")
+            self._stop_mcp_server()
+            self._show_dialog("MCP Server", self._start_mcp_server())
         elif action == "get_status":
             self._show_status()
 
@@ -130,25 +138,29 @@ class MCPExtension(unohelper.Base, XDispatchProvider, XServiceInfo):
         self._show_dialog("MCP Server Status", f"MCP Server is {status}")
 
     def _start_mcp_server(self):
+        """Start the server, returning the message to show the user"""
         global _server_started, _mcp_server, _ai_interface
+        if _server_started:
+            logger.info("Already started")
+            return "MCP Server is already running\nhttp://localhost:8765"
         try:
-            if _server_started:
-                logger.info("Already started")
-                return
             from ai_interface import start_ai_interface
             from mcp_server import get_mcp_server
             _mcp_server = get_mcp_server()
             _ai_interface = start_ai_interface(port=8765, host="localhost")
             _server_started = True
             logger.info("MCP server started on http://localhost:8765")
+            return "MCP Server is started\nhttp://localhost:8765"
         except Exception as e:
             logger.error(f"start failed: {e}\n{traceback.format_exc()}")
+            return f"MCP Server failed to start:\n{e}"
 
     def _stop_mcp_server(self):
+        """Stop the server, returning the message to show the user"""
         global _server_started, _mcp_server, _ai_interface
+        if not _server_started:
+            return "MCP Server is not running"
         try:
-            if not _server_started:
-                return
             if _ai_interface:
                 from ai_interface import stop_ai_interface
                 stop_ai_interface()
@@ -156,8 +168,10 @@ class MCPExtension(unohelper.Base, XDispatchProvider, XServiceInfo):
             _mcp_server = None
             _server_started = False
             logger.info("MCP server stopped")
+            return "MCP Server is stopped"
         except Exception as e:
             logger.error(f"stop failed: {e}\n{traceback.format_exc()}")
+            return f"MCP Server failed to stop:\n{e}"
 
 def createInstance(ctx):
     logger.info("createInstance called")

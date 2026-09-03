@@ -212,6 +212,19 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         logger.info(f"{self.client_address[0]} - {fmt % args}")
 
 
+class MCPHTTPServer(socketserver.ThreadingTCPServer):
+    """
+    The SSE server
+
+    daemon_threads matters: an SSE handler blocks until its stream is closed,
+    and server_close() joins non-daemon handlers, so without this a single open
+    stream stops the server from ever shutting down.
+    """
+
+    allow_reuse_address = True
+    daemon_threads = True
+
+
 class AIInterface:
     def __init__(self, port: int = 8765, host: str = "localhost"):
         self.port = port
@@ -223,8 +236,7 @@ class AIInterface:
     def start(self):
         if self.running:
             return
-        socketserver.ThreadingTCPServer.allow_reuse_address = True
-        self.server = socketserver.ThreadingTCPServer((self.host, self.port), MCPRequestHandler)
+        self.server = MCPHTTPServer((self.host, self.port), MCPRequestHandler)
         self.running = True
         self.server_thread = threading.Thread(target=self._run, daemon=True)
         self.server_thread.start()
@@ -234,13 +246,14 @@ class AIInterface:
         if not self.running:
             return
         self.running = False
-        if self.server:
-            self.server.shutdown()
-            self.server.server_close()
-        # Signal all open SSE connections to close
+        # Signal open SSE connections first: their handlers are what would
+        # otherwise still be running when the server is asked to close.
         with _sessions_lock:
             for q in _sessions.values():
                 q.put(None)
+        if self.server:
+            self.server.shutdown()
+            self.server.server_close()
 
     def _run(self):
         try:

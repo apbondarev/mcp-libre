@@ -23,6 +23,9 @@ _INTERFACES = {
     "com.sun.star.presentation": ["XPresentationDocument"],
     "com.sun.star.document": ["XDocumentEventListener"],
     "com.sun.star.awt": ["XActionListener"],
+    # registration.py, the UNO component itself
+    "com.sun.star.frame": ["XDispatchProvider", "XDispatch"],
+    "com.sun.star.lang": ["XServiceInfo"],
 }
 
 
@@ -43,6 +46,7 @@ def install_uno_stubs():
     if "uno" not in sys.modules:
         uno = types.ModuleType("uno")
         uno.getComponentContext = lambda: FakeComponentContext()
+        uno.Enum = lambda type_name, value: f"{type_name}.{value}"
         sys.modules["uno"] = uno
 
     if "unohelper" not in sys.modules:
@@ -52,7 +56,15 @@ def install_uno_stubs():
             def __init__(self, *args, **kwargs):
                 pass
 
+        class ImplementationHelper:
+            def __init__(self):
+                self.implementations = []
+
+            def addImplementation(self, creator, name, services):
+                self.implementations.append((creator, name, services))
+
         unohelper.Base = Base
+        unohelper.ImplementationHelper = ImplementationHelper
         sys.modules["unohelper"] = unohelper
 
     for package in ("com", "com.sun", "com.sun.star"):
