@@ -296,6 +296,24 @@ class FakeUnknownDoc(FakeDoc):
     Title = "fake.odb"
 
 
+class FakeComponents:
+    """What Desktop.getComponents() hands back: an enumeration of documents."""
+
+    def __init__(self, documents):
+        self._documents = list(documents)
+
+    def createEnumeration(self):
+        return FakeEnumeration(self._documents)
+
+
+class FakeDesktop:
+    def __init__(self, documents):
+        self._documents = list(documents)
+
+    def getComponents(self):
+        return FakeComponents(self._documents)
+
+
 def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page=1):
     """Caret inside a table cell, whose text is separate from the body text."""
     body = FakeText(paragraphs)

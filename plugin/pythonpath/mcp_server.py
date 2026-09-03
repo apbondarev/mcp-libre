@@ -132,6 +132,10 @@ class LibreOfficeMCPServer:
                         "type": "integer",
                         "description": "How many paragraphs to read (max 200)",
                         "default": 50
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 }
             },
@@ -142,7 +146,12 @@ class LibreOfficeMCPServer:
             "description": "List the headings of the active Writer document with the paragraph index of each",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
             },
             "handler": self.get_outline_live
         }
@@ -170,6 +179,10 @@ class LibreOfficeMCPServer:
                         "type": "integer",
                         "description": "How many matches to return (max 200)",
                         "default": 50
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 },
                 "required": ["query"]
@@ -315,25 +328,45 @@ class LibreOfficeMCPServer:
         """Apply formatting to selected text"""
         return self.uno_bridge.format_text(formatting)
     
+    def _target_document(self, document: Optional[str] = None) -> tuple:
+        """(document, error) for a tool that may name a specific document"""
+        doc = self.uno_bridge.document_for(document)
+        if doc is None:
+            if document:
+                return None, {"success": False,
+                              "error": f"No open document with URL {document}"}
+            return None, {"success": False, "error": "No document available"}
+        return doc, None
+    
     def get_cursor_info_live(self) -> Dict[str, Any]:
         """Get cursor position, current paragraph and selected text"""
         return self.uno_bridge.get_cursor_info()
     
-    def read_paragraphs_live(self, start: int = 0, count: int = 50) -> Dict[str, Any]:
-        """Read a window of paragraphs from the active Writer document"""
-        return self.uno_bridge.read_paragraphs(start=start, count=count)
+    def read_paragraphs_live(self, start: int = 0, count: int = 50,
+                             document: Optional[str] = None) -> Dict[str, Any]:
+        """Read a window of paragraphs from a Writer document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.read_paragraphs(start=start, count=count, doc=doc)
     
-    def get_outline_live(self) -> Dict[str, Any]:
-        """List the headings of the active Writer document"""
-        return self.uno_bridge.get_outline()
+    def get_outline_live(self, document: Optional[str] = None) -> Dict[str, Any]:
+        """List the headings of a Writer document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.get_outline(doc=doc)
     
     def find_text_live(self, query: str, regex: bool = False,
-                       case_sensitive: bool = False,
-                       max_results: int = 50) -> Dict[str, Any]:
-        """Find text in the active Writer document"""
+                       case_sensitive: bool = False, max_results: int = 50,
+                       document: Optional[str] = None) -> Dict[str, Any]:
+        """Find text in a Writer document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
         return self.uno_bridge.find_text(query, regex=regex,
                                          case_sensitive=case_sensitive,
-                                         max_results=max_results)
+                                         max_results=max_results, doc=doc)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""

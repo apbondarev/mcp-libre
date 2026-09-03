@@ -144,6 +144,33 @@ class UNOBridge:
             logger.error(f"Failed to get active document: {e}")
             return None
     
+    def document_for(self, url: Optional[str] = None) -> Any:
+        """
+        The document a tool should act on
+
+        Without a url this is the active document. With one it is the open
+        document whose URL matches, so a tool never silently acts on whichever
+        window happens to be focused. Returns None when nothing matches.
+        """
+        if not url:
+            return self.get_active_document()
+
+        try:
+            enumeration = self.desktop.getComponents().createEnumeration()
+        except Exception as e:
+            logger.error(f"Could not enumerate open documents: {e}")
+            return None
+
+        while enumeration.hasMoreElements():
+            component = enumeration.nextElement()
+            try:
+                if component.getURL() == url:
+                    return component
+            except Exception:
+                continue  # not a document, e.g. the Start Center
+        logger.info(f"No open document with URL {url}")
+        return None
+
     def get_document_info(self, doc: Any = None) -> Dict[str, Any]:
         """Get information about a document"""
         try:
