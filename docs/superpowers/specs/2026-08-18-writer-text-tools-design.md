@@ -245,3 +245,10 @@ read-only document.
   it struck through) changes what `delete_range_live` should report back. The
   harness must check what the document looks like after a tracked delete, not
   just that the call succeeded.
+- Locating a range costs a walk of the body enumeration, so `find_text_live`
+  pays O(hits × paragraphs) UNO calls — measured only as far as "the caps bound
+  it" (50 results by default, 200 maximum). Phase 2 adds more walking paths, so
+  measure once there and optimise all of them together rather than guessing now.
+  The obvious fix, binary-searching paragraph starts, would make
+  `compareRegionStarts`'s sign convention load-bearing, and only its equality
+  behaviour has been verified live.
