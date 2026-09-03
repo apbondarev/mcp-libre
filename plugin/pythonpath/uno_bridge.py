@@ -171,6 +171,27 @@ class UNOBridge:
         logger.info(f"No open document with URL {url}")
         return None
 
+    def _writer_document(self, doc: Any, action: str) -> tuple:
+        """
+        (document, error) for a tool that needs a live Writer document
+
+        Falls back to the active document and rejects anything that is not
+        Writer, with an error naming what was being attempted.
+        """
+        if doc is None:
+            doc = self.get_active_document()
+
+        if not doc:
+            return None, {"success": False, "error": "No document available"}
+
+        if not _supports(doc, WRITER_SERVICE):
+            return None, {
+                "success": False,
+                "error": f"{action} is only available for Writer documents, "
+                         f"got {self._get_document_type(doc)}"
+            }
+        return doc, None
+
     def get_document_info(self, doc: Any = None) -> Dict[str, Any]:
         """Get information about a document"""
         try:
@@ -416,18 +437,9 @@ class UNOBridge:
         body text, e.g. in a table cell or a frame.
         """
         try:
-            if doc is None:
-                doc = self.get_active_document()
-
-            if not doc:
-                return {"success": False, "error": "No document available"}
-
-            if not _supports(doc, WRITER_SERVICE):
-                return {
-                    "success": False,
-                    "error": f"Cursor info is only available for Writer documents, "
-                             f"got {self._get_document_type(doc)}"
-                }
+            doc, error = self._writer_document(doc, "Cursor info")
+            if error:
+                return error
 
             controller = doc.getCurrentController()
             view_cursor = controller.getViewCursor() if controller else None
@@ -471,18 +483,9 @@ class UNOBridge:
         reflects the whole document, so the caller can page through it.
         """
         try:
-            if doc is None:
-                doc = self.get_active_document()
-
-            if not doc:
-                return {"success": False, "error": "No document available"}
-
-            if not _supports(doc, WRITER_SERVICE):
-                return {
-                    "success": False,
-                    "error": f"Reading paragraphs is only available for Writer "
-                             f"documents, got {self._get_document_type(doc)}"
-                }
+            doc, error = self._writer_document(doc, "Reading paragraphs")
+            if error:
+                return error
 
             if not isinstance(start, int) or isinstance(start, bool) or start < 0:
                 return {"success": False,
@@ -524,18 +527,9 @@ class UNOBridge:
         every entry doubles as an address to read or edit from.
         """
         try:
-            if doc is None:
-                doc = self.get_active_document()
-
-            if not doc:
-                return {"success": False, "error": "No document available"}
-
-            if not _supports(doc, WRITER_SERVICE):
-                return {
-                    "success": False,
-                    "error": f"An outline is only available for Writer documents, "
-                             f"got {self._get_document_type(doc)}"
-                }
+            doc, error = self._writer_document(doc, "An outline")
+            if error:
+                return error
 
             headings = []
             total = 0
@@ -585,18 +579,9 @@ class UNOBridge:
         when the list is capped.
         """
         try:
-            if doc is None:
-                doc = self.get_active_document()
-
-            if not doc:
-                return {"success": False, "error": "No document available"}
-
-            if not _supports(doc, WRITER_SERVICE):
-                return {
-                    "success": False,
-                    "error": f"Searching is only available for Writer documents, "
-                             f"got {self._get_document_type(doc)}"
-                }
+            doc, error = self._writer_document(doc, "Searching")
+            if error:
+                return error
 
             if not isinstance(query, str) or not query:
                 return {"success": False, "error": "query must be a non-empty string"}
