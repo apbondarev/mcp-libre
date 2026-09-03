@@ -52,7 +52,7 @@ Consequences worth knowing before adding a tool:
 
 Entry points: `src/main.py` does a flat `import libremcp`, which works only because Python puts the script's own directory on `sys.path` — hence `PYTHONPATH=<repo>/src` in the config templates. The root `libremcp.py` is a 6-line vestigial stub, not the server; `pyproject.toml`'s `[project.scripts]`/hatch `packages` still point at stale paths.
 
-### 2. Embedded plugin — `plugin/pythonpath/` (9 tools, SSE over HTTP :8765)
+### 2. Embedded plugin — `plugin/pythonpath/` (12 tools, SSE over HTTP :8765)
 
 Runs *inside* LibreOffice via UNO, so it acts on live open documents with no file I/O. Four layers:
 
@@ -70,6 +70,9 @@ Hard constraints on plugin code:
 - `plugin/description.xml` `identifier`/`version` must stay in sync with the hardcoded `org.mcp.libreoffice.extension` in `install.sh` and `build.sh`'s `VERSION`; `META-INF/manifest.xml` lists exactly which files LibreOffice loads.
 - **`isinstance` never works on UNO objects.** Every proxy is `<class 'pyuno'>` and inherits none of the imported `com.sun.star.*` interfaces, so `isinstance(doc, XTextDocument)` is always False — silently, since the fallback branch just reports "unknown". Use the `_supports(obj, service)` helper in `uno_bridge.py` with a service name instead. This defect had disabled `get_text_content`, `insert_text`, `format_text` and every document-type report until it was fixed.
 - A text range belongs to the text that owns it. Inside a table cell or a frame that is *not* `doc.getText()`, and passing a foreign range to the body text throws "End of content node doesn't have the proper start node" — so build cursors from `range.getText()`, as `get_cursor_info` does.
+- UNO objects can never be compared with `is`: pyuno mints a fresh proxy per call, so `hit.getText() is doc.getText()` is False even for a body-text hit. Compare ranges through `compareRegionStarts` instead, which works across proxies.
+- Text is addressed one way: `{"paragraph": i, "offset": k, "length": n}` (body paragraphs, tables skipped) or `{"selection": true}`. `_locate_range` produces an address from a range, `_resolve_address` turns one back into a range, and every tool goes through them — see `docs/superpowers/specs/2026-08-18-writer-text-tools-design.md`.
+- `tests/live/writer_tools_check.py` checks the bridge against a real headless LibreOffice. Run it with `/usr/bin/python3` (the venv has no `uno`) whenever bridge code changes; a green pytest run alone does not mean the UNO calls work.
 
 ## Conventions
 

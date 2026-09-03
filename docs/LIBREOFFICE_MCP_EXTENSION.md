@@ -121,6 +121,11 @@ curl -X POST http://localhost:8765/execute \
 - `format_text_live`: Apply formatting to selected text
 - `get_text_content_live`: Extract text content from document
 
+### **Reading and Search**
+- `get_outline_live`: Headings with the paragraph index of each (Writer only)
+- `read_paragraphs_live`: A window of paragraphs with indices and styles; `start`, `count` (max 200)
+- `find_text_live`: Search by text or regular expression; each hit carries an address other tools can act on
+
 ### **Cursor and Selection**
 - `get_cursor_info_live`: Cursor position, the paragraph containing the cursor, and the selected text (Writer only)
   - No parameters; returns `cursor` (`paragraph_index`, `offset_in_paragraph`, `document_offset`, `page`), `paragraph` and `selection`
