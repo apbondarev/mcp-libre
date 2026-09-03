@@ -50,6 +50,10 @@ MAX_PARAGRAPH_COUNT = 200
 # Cap on headings returned by get_outline
 MAX_OUTLINE_ENTRIES = 200
 
+# Search result caps for find_text
+DEFAULT_SEARCH_RESULTS = 50
+MAX_SEARCH_RESULTS = 200
+
 
 def _get_property(obj: Any, name: str, default: Any = None) -> Any:
     """Read a UNO property, falling back when the object does not carry it"""
@@ -539,6 +543,69 @@ class UNOBridge:
 
         except Exception as e:
             logger.error(f"Failed to get outline: {e}")
+            return {"success": False, "error": str(e)}
+
+    def find_text(self, query: str, regex: bool = False,
+                  case_sensitive: bool = False,
+                  max_results: int = DEFAULT_SEARCH_RESULTS,
+                  doc: Any = None) -> Dict[str, Any]:
+        """
+        Find text in the active Writer document
+
+        Each hit carries an address that resolves back to the match, so a hit
+        can be handed straight to a tool that edits it, plus the containing
+        paragraph as context. total_hits is the real number of matches even
+        when the list is capped.
+        """
+        try:
+            if doc is None:
+                doc = self.get_active_document()
+
+            if not doc:
+                return {"success": False, "error": "No document available"}
+
+            if not _supports(doc, WRITER_SERVICE):
+                return {
+                    "success": False,
+                    "error": f"Searching is only available for Writer documents, "
+                             f"got {self._get_document_type(doc)}"
+                }
+
+            if not isinstance(query, str) or not query:
+                return {"success": False, "error": "query must be a non-empty string"}
+
+            limit = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
+
+            descriptor = doc.createSearchDescriptor()
+            descriptor.SearchString = query
+            descriptor.SearchRegularExpression = bool(regex)
+            descriptor.SearchCaseSensitive = bool(case_sensitive)
+
+            found = doc.findAll(descriptor)
+            total = found.getCount()
+
+            hits = []
+            for position in range(min(total, limit)):
+                match = found.getByIndex(position)
+                address, paragraph_cursor, _ = self._locate_range(doc, match)
+                context = _text_payload(paragraph_cursor.getString())
+                hits.append({
+                    "address": address,
+                    "matched": match.getString(),
+                    "context": context["text"],
+                    "context_truncated": context["truncated"]
+                })
+
+            logger.info(f"Found {total} matches for {query!r}, returning {len(hits)}")
+            return {
+                "success": True,
+                "hits": hits,
+                "total_hits": total,
+                "truncated": total > len(hits)
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to search: {e}")
             return {"success": False, "error": str(e)}
 
     def _locate_range(self, doc: Any, text_range: Any) -> tuple:

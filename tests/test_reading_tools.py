@@ -196,3 +196,98 @@ def test_get_outline_tool_is_registered_and_dispatches():
     result = asyncio.run(server.execute_tool("get_outline_live", {}))
 
     assert [h["text"] for h in result["headings"]] == ["Chapter One", "Section A"]
+
+
+SEARCH_PARAGRAPHS = ["Alpha beta alpha.", "Gamma delta.", "ALPHA again."]
+
+
+def test_finds_every_match_with_an_address(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    result = bridge.find_text("alpha", doc=doc)
+
+    assert result["success"] is True
+    assert result["total_hits"] == 3
+    assert result["hits"][0]["address"] == {"paragraph": 0, "offset": 0, "length": 5}
+    assert result["hits"][1]["address"] == {"paragraph": 0, "offset": 11, "length": 5}
+    assert result["hits"][2]["address"] == {"paragraph": 2, "offset": 0, "length": 5}
+
+
+def test_includes_the_matched_text_and_its_paragraph_as_context(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    hit = bridge.find_text("delta", doc=doc)["hits"][0]
+
+    assert hit["matched"] == "delta"
+    assert hit["context"] == "Gamma delta."
+    assert hit["context_truncated"] is False
+
+
+def test_honours_case_sensitivity(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    result = bridge.find_text("alpha", case_sensitive=True, doc=doc)
+
+    # Only the lowercase occurrence in "Alpha beta alpha.", not "Alpha" or "ALPHA"
+    assert result["total_hits"] == 1
+    assert result["hits"][0]["address"] == {"paragraph": 0, "offset": 11, "length": 5}
+
+
+def test_searches_by_regular_expression(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    result = bridge.find_text("g[a-z]+a", regex=True, doc=doc)
+
+    assert [h["matched"] for h in result["hits"]] == ["Gamma"]
+
+
+def test_caps_the_hits_but_reports_the_true_total(bridge):
+    doc = writer_doc(["hit " * 40], caret=(0, 0))
+
+    result = bridge.find_text("hit", max_results=5, doc=doc)
+
+    assert len(result["hits"]) == 5
+    assert result["total_hits"] == 40
+    assert result["truncated"] is True
+
+
+def test_reports_no_hits_without_failing(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    result = bridge.find_text("nowhere", doc=doc)
+
+    assert result["success"] is True
+    assert result["hits"] == []
+    assert result["total_hits"] == 0
+
+
+def test_rejects_an_empty_query(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    result = bridge.find_text("", doc=doc)
+
+    assert result["success"] is False
+    assert "query" in result["error"].lower()
+
+
+def test_a_hit_address_resolves_back_to_the_matched_text(bridge):
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+
+    hit = bridge.find_text("delta", doc=doc)["hits"][0]
+    resolved = bridge._resolve_address(doc, hit["address"])
+
+    assert resolved.getString() == hit["matched"]
+
+
+def test_find_text_tool_is_registered_and_dispatches():
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
+    server.uno_bridge.get_active_document = lambda: doc
+
+    assert "find_text_live" in server.tools
+
+    result = asyncio.run(server.execute_tool("find_text_live", {"query": "delta"}))
+
+    assert result["hits"][0]["matched"] == "delta"

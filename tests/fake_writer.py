@@ -195,6 +195,25 @@ class FakeTableCellSelection:
     """What Writer hands back for a table cell selection: no ranges to read."""
 
 
+class FakeSearchDescriptor:
+    """The subset of com.sun.star.util.SearchDescriptor the bridge sets."""
+
+    SearchString = ""
+    SearchRegularExpression = False
+    SearchCaseSensitive = False
+
+
+class FakeFindResults:
+    def __init__(self, ranges):
+        self._ranges = list(ranges)
+
+    def getCount(self):
+        return len(self._ranges)
+
+    def getByIndex(self, index):
+        return self._ranges[index]
+
+
 class FakeViewCursor(FakeRange):
     def __init__(self, model, start, end=None, page=1):
         super().__init__(model, start, end)
@@ -245,6 +264,22 @@ class FakeWriterDoc(FakeDoc):
 
     def getCurrentController(self):
         return self._controller
+
+    def createSearchDescriptor(self):
+        return FakeSearchDescriptor()
+
+    def findAll(self, descriptor):
+        import re
+
+        pattern = (descriptor.SearchString if descriptor.SearchRegularExpression
+                   else re.escape(descriptor.SearchString))
+        flags = 0 if descriptor.SearchCaseSensitive else re.IGNORECASE
+        hits = []
+        for index, paragraph in enumerate(self._text.paragraphs):
+            for match in re.finditer(pattern, paragraph, flags):
+                hits.append(FakeRange(self._text, (index, match.start()),
+                                      (index, match.end())))
+        return FakeFindResults(hits)
 
 
 class FakeCalcDoc(FakeDoc):

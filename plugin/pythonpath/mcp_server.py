@@ -147,6 +147,36 @@ class LibreOfficeMCPServer:
             "handler": self.get_outline_live
         }
         
+        self.tools["find_text_live"] = {
+            "description": "Find text in the active Writer document, returning an address for each match that other tools can act on",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text or regular expression to search for"
+                    },
+                    "regex": {
+                        "type": "boolean",
+                        "description": "Treat the query as a regular expression",
+                        "default": False
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Match case exactly",
+                        "default": False
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "How many matches to return (max 200)",
+                        "default": 50
+                    }
+                },
+                "required": ["query"]
+            },
+            "handler": self.find_text_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -296,6 +326,14 @@ class LibreOfficeMCPServer:
     def get_outline_live(self) -> Dict[str, Any]:
         """List the headings of the active Writer document"""
         return self.uno_bridge.get_outline()
+    
+    def find_text_live(self, query: str, regex: bool = False,
+                       case_sensitive: bool = False,
+                       max_results: int = 50) -> Dict[str, Any]:
+        """Find text in the active Writer document"""
+        return self.uno_bridge.find_text(query, regex=regex,
+                                         case_sensitive=case_sensitive,
+                                         max_results=max_results)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""
