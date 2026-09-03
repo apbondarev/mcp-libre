@@ -43,6 +43,18 @@ class AddressError(Exception):
 # paragraph (or a select-all) can otherwise be megabytes of MCP payload.
 MAX_TEXT_CHARS = 2000
 
+# Paragraph window sizes for read_paragraphs
+DEFAULT_PARAGRAPH_COUNT = 50
+MAX_PARAGRAPH_COUNT = 200
+
+
+def _get_property(obj: Any, name: str, default: Any = None) -> Any:
+    """Read a UNO property, falling back when the object does not carry it"""
+    try:
+        return getattr(obj, name)
+    except Exception:
+        return default
+
 
 def _text_payload(value: str) -> Dict[str, Any]:
     """Cap text at MAX_TEXT_CHARS while still reporting its true length"""
@@ -394,6 +406,61 @@ class UNOBridge:
 
         except Exception as e:
             logger.error(f"Failed to get cursor info: {e}")
+            return {"success": False, "error": str(e)}
+
+    def read_paragraphs(self, start: int = 0,
+                        count: int = DEFAULT_PARAGRAPH_COUNT,
+                        doc: Any = None) -> Dict[str, Any]:
+        """
+        Read a window of body paragraphs with their indices and styles
+
+        count is capped at MAX_PARAGRAPH_COUNT. total_paragraphs always
+        reflects the whole document, so the caller can page through it.
+        """
+        try:
+            if doc is None:
+                doc = self.get_active_document()
+
+            if not doc:
+                return {"success": False, "error": "No document available"}
+
+            if not _supports(doc, WRITER_SERVICE):
+                return {
+                    "success": False,
+                    "error": f"Reading paragraphs is only available for Writer "
+                             f"documents, got {self._get_document_type(doc)}"
+                }
+
+            if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+                return {"success": False,
+                        "error": f"start must be a non-negative integer, got {start!r}"}
+
+            window = max(1, min(int(count), MAX_PARAGRAPH_COUNT))
+            paragraphs = []
+            total = 0
+
+            enumeration = doc.getText().createEnumeration()
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if not hasattr(element, "getStart"):
+                    continue
+                if start <= total < start + window:
+                    entry = _text_payload(element.getString())
+                    entry["paragraph"] = total
+                    entry["style"] = _get_property(element, "ParaStyleName")
+                    paragraphs.append(entry)
+                total += 1
+
+            return {
+                "success": True,
+                "paragraphs": paragraphs,
+                "start": start,
+                "count": len(paragraphs),
+                "total_paragraphs": total
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to read paragraphs: {e}")
             return {"success": False, "error": str(e)}
 
     def _locate_range(self, doc: Any, text_range: Any) -> tuple:

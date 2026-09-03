@@ -117,6 +117,27 @@ class LibreOfficeMCPServer:
             "handler": self.get_cursor_info_live
         }
         
+        # Reading tools
+        self.tools["read_paragraphs_live"] = {
+            "description": "Read a window of paragraphs from the active Writer document, with their indices and styles",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start": {
+                        "type": "integer",
+                        "description": "Index of the first paragraph to read (0-based)",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many paragraphs to read (max 200)",
+                        "default": 50
+                    }
+                }
+            },
+            "handler": self.read_paragraphs_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -258,6 +279,10 @@ class LibreOfficeMCPServer:
     def get_cursor_info_live(self) -> Dict[str, Any]:
         """Get cursor position, current paragraph and selected text"""
         return self.uno_bridge.get_cursor_info()
+    
+    def read_paragraphs_live(self, start: int = 0, count: int = 50) -> Dict[str, Any]:
+        """Read a window of paragraphs from the active Writer document"""
+        return self.uno_bridge.read_paragraphs(start=start, count=count)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""

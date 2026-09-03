@@ -107,6 +107,9 @@ class FakeParagraph(FakeRange):
     def __init__(self, model, index):
         super().__init__(model, (index, 0), (index, len(model.paragraphs[index])))
         self.index = index
+        self.ParaStyleName = model.styles[index]
+        if model.expose_outline_level:
+            self.OutlineLevel = model.outline_levels[index]
 
 
 class FakeTextTable:
@@ -127,8 +130,13 @@ class FakeEnumeration:
 class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
-    def __init__(self, paragraphs, enumeration_items=None):
+    def __init__(self, paragraphs, enumeration_items=None, styles=None,
+                 outline_levels=None, expose_outline_level=True):
         self.paragraphs = list(paragraphs)
+        self.styles = list(styles) if styles else ["Standard"] * len(self.paragraphs)
+        self.outline_levels = (list(outline_levels) if outline_levels
+                               else [0] * len(self.paragraphs))
+        self.expose_outline_level = expose_outline_level
         self.enumeration_items = (
             list(range(len(self.paragraphs)))
             if enumeration_items is None
