@@ -25,14 +25,23 @@ WRITER_SERVICE = "com.sun.star.text.TextDocument"
 CALC_SERVICE = "com.sun.star.sheet.SpreadsheetDocument"
 IMPRESS_SERVICE = "com.sun.star.presentation.PresentationDocument"
 DRAW_SERVICE = "com.sun.star.drawing.DrawingDocument"
+DOCUMENT_SERVICES = (WRITER_SERVICE, CALC_SERVICE, IMPRESS_SERVICE, DRAW_SERVICE)
 
 
 def _supports(obj: Any, service: str) -> bool:
     """Whether a UNO object implements a service, False if it cannot be asked"""
     try:
         return bool(obj.supportsService(service))
-    except Exception:
+    except Exception as e:
+        # Not silent: a component that cannot answer used to be reported as
+        # "not a Writer document", which sent debugging in the wrong direction.
+        logger.debug(f"Could not ask for {service}: {e}")
         return False
+
+
+def _is_document(component: Any) -> bool:
+    """Whether a component is a document, rather than a dialog or the Start Center"""
+    return any(_supports(component, service) for service in DOCUMENT_SERVICES)
 
 
 class AddressError(Exception):
@@ -134,15 +143,53 @@ class UNOBridge:
             raise
     
     def get_active_document(self) -> Optional[Any]:
-        """Get currently active document"""
+        """
+        The document to act on
+
+        getCurrentComponent() follows the focused frame, and that is not always
+        a document: with a modal dialog open — including this extension's own
+        status box — or the Start Center focused, it answers with a component
+        that supports no document service. Trusting it made every tool report
+        "not a Writer document" while a Writer document was open, so an answer
+        that is not a document falls back to the first document actually open.
+        """
         try:
-            doc = self.desktop.getCurrentComponent()
-            if doc:
+            current = self.desktop.getCurrentComponent()
+            if _is_document(current):
                 logger.info("Retrieved active document")
-            return doc
+                return current
+
+            if current is not None:
+                logger.info("Current component is not a document (dialog or Start "
+                            "Center?), falling back to an open document")
+            return self._first_open_document()
+
         except Exception as e:
             logger.error(f"Failed to get active document: {e}")
             return None
+
+    def open_documents(self) -> List[Any]:
+        """Every open document, skipping dialogs and the Start Center"""
+        documents = []
+        try:
+            enumeration = self.desktop.getComponents().createEnumeration()
+        except Exception as e:
+            logger.error(f"Could not enumerate open documents: {e}")
+            return documents
+
+        while enumeration.hasMoreElements():
+            component = enumeration.nextElement()
+            if _is_document(component):
+                documents.append(component)
+        return documents
+
+    def _first_open_document(self) -> Optional[Any]:
+        """The first open document, or None when nothing is open"""
+        documents = self.open_documents()
+        if not documents:
+            logger.info("No open document found")
+            return None
+        return documents[0]
     
     def document_for(self, url: Optional[str] = None) -> Any:
         """

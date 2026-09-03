@@ -383,26 +383,18 @@ class LibreOfficeMCPServer:
     def list_open_documents(self) -> Dict[str, Any]:
         """List all open documents in LibreOffice"""
         try:
-            desktop = self.uno_bridge.desktop
-            documents = []
-            
-            # Get all open documents
-            frames = desktop.getFrames()
-            for i in range(frames.getCount()):
-                frame = frames.getByIndex(i)
-                controller = frame.getController()
-                if controller:
-                    doc = controller.getModel()
-                    if doc:
-                        doc_info = self.uno_bridge.get_document_info(doc)
-                        documents.append(doc_info)
-            
+            # Components, not frames: a frame can belong to a dialog or the
+            # Start Center, which used to be listed as a document titled
+            # "Unknown" with no URL and type "unknown".
+            documents = [self.uno_bridge.get_document_info(doc)
+                         for doc in self.uno_bridge.open_documents()]
+
             return {
                 "success": True,
                 "documents": documents,
                 "count": len(documents)
             }
-            
+
         except Exception as e:
             return {"success": False, "error": str(e)}
 

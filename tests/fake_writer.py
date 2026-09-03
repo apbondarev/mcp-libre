@@ -306,9 +306,26 @@ class FakeComponents:
         return FakeEnumeration(self._documents)
 
 
+class FakeModalDialog:
+    """What getCurrentComponent() hands back while a dialog has the focus.
+
+    LibreOffice's current component follows the focused frame, so a modal
+    dialog or the Start Center answers here instead of the document. It carries
+    no Title and supports no document service.
+    """
+
+    def supportsService(self, name):
+        return False
+
+
 class FakeDesktop:
-    def __init__(self, documents):
+    def __init__(self, documents, current=None):
         self._documents = list(documents)
+        self._current = current if current is not None else (
+            documents[0] if documents else None)
+
+    def getCurrentComponent(self):
+        return self._current
 
     def getComponents(self):
         return FakeComponents(self._documents)
