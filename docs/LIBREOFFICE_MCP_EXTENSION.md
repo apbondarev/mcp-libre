@@ -128,6 +128,7 @@ curl -X POST http://localhost:8765/execute \
 
 ### **Editing**
 - `replace_selection_live`: Replace the selected text; `text`, `track_changes` (default false), `document`. Fails when nothing is selected, and is a single undo step
+- `replace_range_live`: Replace the text at an address — `{"paragraph": N}`, `{"paragraph": N, "offset": K, "length": L}` or `{"selection": true}`. This is what makes the addresses from `get_outline_live` and `find_text_live` actionable without a human selecting anything
 
 ### **Cursor and Selection**
 - `get_cursor_info_live`: Cursor position, the paragraph containing the cursor, and the selected text (Writer only)

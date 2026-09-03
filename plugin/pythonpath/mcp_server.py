@@ -48,7 +48,7 @@ class LibreOfficeMCPServer:
         
         # Text manipulation tools
         self.tools["insert_text_live"] = {
-            "description": "Insert text into the currently active document",
+            "description": "Insert text into the currently active document. This inserts and never replaces: with text selected it inserts at the start of the selection and leaves the original in place. To replace text use replace_selection_live or replace_range_live",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -213,6 +213,40 @@ class LibreOfficeMCPServer:
                 "required": ["text"]
             },
             "handler": self.replace_selection_live
+        }
+        
+        self.tools["replace_range_live"] = {
+            "description": "Replace the text at an address in the active Writer document. Use the addresses returned by get_outline_live, read_paragraphs_live and find_text_live — this is how text is rewritten without a human selecting it first",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Where to replace: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} for the current selection",
+                        "properties": {
+                            "paragraph": {"type": "integer", "description": "0-based body paragraph index"},
+                            "offset": {"type": "integer", "description": "Characters from the paragraph start, default 0"},
+                            "length": {"type": "integer", "description": "Characters to replace, default to the end of the paragraph"},
+                            "selection": {"type": "boolean", "description": "Use the current selection instead of an index"}
+                        }
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "Text to put in place of what the address points at"
+                    },
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
+                        "default": False
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address", "text"]
+            },
+            "handler": self.replace_range_live
         }
         
         # Document saving tools
@@ -401,6 +435,16 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.replace_selection(text, track_changes=track_changes,
                                                  doc=doc)
+    
+    def replace_range_live(self, address: Any, text: str,
+                           track_changes: bool = False,
+                           document: Optional[str] = None) -> Dict[str, Any]:
+        """Replace the text at an address in a Writer document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.replace_range(address, text,
+                                             track_changes=track_changes, doc=doc)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""

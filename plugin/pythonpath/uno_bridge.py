@@ -684,14 +684,43 @@ class UNOBridge:
         insert_text cannot do this: it calls insertString with bAbsorb=False,
         which inserts at the start of the selection and leaves the original
         behind — asking an assistant to translate and replace produced both
-        texts. Here the selected range is rewritten instead.
-
-        The whole edit is one undo step. track_changes defaults to false
-        because a tracked replacement keeps the original in the document,
-        struck through until someone accepts it, which reads as the
-        replacement having failed; pass true to get a reviewable suggestion.
+        texts.
         """
-        doc, error = self._writer_document(doc, "Replacing the selection")
+        return self._replace(
+            {"selection": True}, text, track_changes, doc,
+            what="Replacing the selection",
+            undo_title="MCP: replace selection",
+            empty_error="Nothing is selected, so there is nothing to replace. "
+                        "Select the text first, or use a tool that inserts.")
+
+    def replace_range(self, address: Any, text: str,
+                      track_changes: bool = False,
+                      doc: Any = None) -> Dict[str, Any]:
+        """
+        Replace the text at an address
+
+        This is what makes the addresses from get_outline and find_text
+        actionable without a human selecting anything, which is what an
+        assistant needs to rewrite a heading or every match of a search.
+        An empty paragraph is a legitimate target, so emptiness is no error
+        here, unlike with a selection.
+        """
+        return self._replace(address, text, track_changes, doc,
+                             what="Replacing text",
+                             undo_title="MCP: replace text",
+                             empty_error=None)
+
+    def _replace(self, address: Any, text: str, track_changes: bool,
+                 doc: Any, what: str, undo_title: str,
+                 empty_error: Optional[str]) -> Dict[str, Any]:
+        """
+        Rewrite the range an address points at, as a single undo step
+
+        track_changes defaults to false at every caller because a tracked
+        replacement keeps the original in the document, struck through until
+        someone accepts it, which reads as the replacement having failed.
+        """
+        doc, error = self._writer_document(doc, what)
         if error:
             return error
 
@@ -704,38 +733,34 @@ class UNOBridge:
                     "error": "The document is read-only, so it cannot be edited"}
 
         try:
-            selection = self._resolve_address(doc, {"selection": True})
+            target = self._resolve_address(doc, address)
         except AddressError as e:
             return {"success": False, "error": str(e)}
 
-        replaced = selection.getString()
-        if not replaced:
-            return {
-                "success": False,
-                "error": "Nothing is selected, so there is nothing to replace. "
-                         "Select the text first, or use a tool that inserts."
-            }
+        replaced = target.getString()
+        if empty_error and not replaced:
+            return {"success": False, "error": empty_error}
 
         try:
-            address, _, _ = self._locate_range(doc, selection)
-            paragraph_index = address["paragraph"]
+            located, _, _ = self._locate_range(doc, target)
+            paragraph_index = located["paragraph"]
         except Exception as e:
             # Naming the paragraph is a nicety; failing to do so must not stop
             # the edit, and must not escape as an exception either.
-            logger.info(f"Could not locate the selection: {e}")
+            logger.info(f"Could not locate the range: {e}")
             paragraph_index = None
 
         recording = _get_property(doc, "RecordChanges", None)
         undo = _get_property(doc, "UndoManager", None)
 
         if undo:
-            undo.enterUndoContext("MCP: replace selection")
+            undo.enterUndoContext(undo_title)
         try:
             if track_changes and recording is False:
                 doc.RecordChanges = True
-            selection.setString(text)
+            target.setString(text)
         except Exception as e:
-            logger.error(f"Failed to replace the selection: {e}")
+            logger.error(f"Failed to replace text: {e}")
             return {"success": False, "error": str(e)}
         finally:
             # Restore the document's own setting: the edit stays recorded, but

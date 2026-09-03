@@ -198,6 +198,49 @@ try:
     check("document's own RecordChanges restored", doc.RecordChanges, False)
     undo.undo()
 
+    print("\n--- replace_range by address: translating a heading ---")
+    outline_before = bridge.get_outline(doc)
+    heading = outline_before["headings"][1]        # "Section A" at its index
+    print("heading to rewrite:", heading)
+    replaced = bridge.replace_range({"paragraph": heading["paragraph"]},
+                                    "Раздел А", doc=doc)
+    print(replaced)
+    check("replace_range succeeded", replaced.get("success"), True)
+
+    outline_after = bridge.get_outline(doc)
+    check("heading text is translated",
+          [h["text"] for h in outline_after["headings"]],
+          ["Chapter One", "Раздел А"])
+    check("heading is still a heading at the same level",
+          outline_after["headings"][1]["level"], heading["level"])
+    check("heading is still at the same paragraph",
+          outline_after["headings"][1]["paragraph"], heading["paragraph"])
+    check("paragraph count unchanged",
+          outline_after["total_paragraphs"], outline_before["total_paragraphs"])
+
+    print("\n--- replace_range on part of a paragraph ---")
+    body_paragraph = 3                              # "Gamma delta."
+    part = bridge.replace_range(
+        {"paragraph": body_paragraph, "offset": 0, "length": 5}, "Гамма", doc=doc)
+    check("partial replace succeeded", part.get("success"), True)
+    check("only the addressed part changed",
+          bridge.read_paragraphs(start=body_paragraph, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "Гамма delta.")
+
+    print("\n--- a search hit's address can be rewritten straight away ---")
+    hit = bridge.find_text("beta", doc=doc)["hits"][0]
+    rewritten = bridge.replace_range(hit["address"], "БЕТА", doc=doc)
+    check("hit rewritten", rewritten.get("success"), True)
+    check("text now holds the replacement",
+          "БЕТА" in bridge.read_paragraphs(
+              start=hit["address"]["paragraph"], count=1,
+              doc=doc)["paragraphs"][0]["text"], True)
+
+    print("\n--- replace_range refuses an address it cannot resolve ---")
+    bad = bridge.replace_range({"paragraph": 99}, "nowhere", doc=doc)
+    check("bad address refused", bad.get("success"), False)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

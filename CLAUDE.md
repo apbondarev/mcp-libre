@@ -52,7 +52,7 @@ Consequences worth knowing before adding a tool:
 
 Entry points: `src/main.py` does a flat `import libremcp`, which works only because Python puts the script's own directory on `sys.path` — hence `PYTHONPATH=<repo>/src` in the config templates. The root `libremcp.py` is a 6-line vestigial stub, not the server; `pyproject.toml`'s `[project.scripts]`/hatch `packages` still point at stale paths.
 
-### 2. Embedded plugin — `plugin/pythonpath/` (13 tools, SSE over HTTP :8765)
+### 2. Embedded plugin — `plugin/pythonpath/` (14 tools, SSE over HTTP :8765)
 
 Runs *inside* LibreOffice via UNO, so it acts on live open documents with no file I/O. Four layers:
 
