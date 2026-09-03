@@ -39,6 +39,15 @@ def _supports(obj: Any, service: str) -> bool:
         return False
 
 
+def _is_readonly(doc: Any) -> bool:
+    """Whether the document refuses edits, False when it cannot be asked"""
+    try:
+        return bool(doc.isReadonly())
+    except Exception as e:
+        logger.debug(f"Could not ask whether the document is read-only: {e}")
+        return False
+
+
 def _is_document(component: Any) -> bool:
     """Whether a component is a document, rather than a dialog or the Start Center"""
     return any(_supports(component, service) for service in DOCUMENT_SERVICES)
@@ -666,6 +675,101 @@ class UNOBridge:
         except Exception as e:
             logger.error(f"Failed to search: {e}")
             return {"success": False, "error": str(e)}
+
+    def replace_selection(self, text: str, track_changes: bool = False,
+                          doc: Any = None) -> Dict[str, Any]:
+        """
+        Replace the selected text
+
+        insert_text cannot do this: it calls insertString with bAbsorb=False,
+        which inserts at the start of the selection and leaves the original
+        behind — asking an assistant to translate and replace produced both
+        texts. Here the selected range is rewritten instead.
+
+        The whole edit is one undo step. track_changes defaults to false
+        because a tracked replacement keeps the original in the document,
+        struck through until someone accepts it, which reads as the
+        replacement having failed; pass true to get a reviewable suggestion.
+        """
+        doc, error = self._writer_document(doc, "Replacing the selection")
+        if error:
+            return error
+
+        if not isinstance(text, str):
+            return {"success": False,
+                    "error": f"text must be a string, got {type(text).__name__}"}
+
+        if _is_readonly(doc):
+            return {"success": False,
+                    "error": "The document is read-only, so it cannot be edited"}
+
+        try:
+            selection = self._resolve_address(doc, {"selection": True})
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        replaced = selection.getString()
+        if not replaced:
+            return {
+                "success": False,
+                "error": "Nothing is selected, so there is nothing to replace. "
+                         "Select the text first, or use a tool that inserts."
+            }
+
+        try:
+            address, _, _ = self._locate_range(doc, selection)
+            paragraph_index = address["paragraph"]
+        except Exception as e:
+            # Naming the paragraph is a nicety; failing to do so must not stop
+            # the edit, and must not escape as an exception either.
+            logger.info(f"Could not locate the selection: {e}")
+            paragraph_index = None
+
+        recording = _get_property(doc, "RecordChanges", None)
+        undo = _get_property(doc, "UndoManager", None)
+
+        if undo:
+            undo.enterUndoContext("MCP: replace selection")
+        try:
+            if track_changes and recording is False:
+                doc.RecordChanges = True
+            selection.setString(text)
+        except Exception as e:
+            logger.error(f"Failed to replace the selection: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            # Restore the document's own setting: the edit stays recorded, but
+            # the user's preference is not silently changed underneath them.
+            if track_changes and recording is False:
+                try:
+                    doc.RecordChanges = False
+                except Exception as e:
+                    logger.error(f"Could not restore RecordChanges: {e}")
+            if undo:
+                undo.leaveUndoContext()
+
+        logger.info(f"Replaced {len(replaced)} characters with {len(text)}")
+        return {
+            "success": True,
+            "replaced_length": len(replaced),
+            "inserted_length": len(text),
+            "paragraph": paragraph_index,
+            "total_paragraphs": self._count_body_paragraphs(doc),
+            "tracked": bool(track_changes)
+        }
+
+    def _count_body_paragraphs(self, doc: Any) -> Optional[int]:
+        """How many paragraphs the body holds, None if it cannot be walked"""
+        try:
+            total = 0
+            enumeration = doc.getText().createEnumeration()
+            while enumeration.hasMoreElements():
+                if hasattr(enumeration.nextElement(), "getStart"):
+                    total += 1
+            return total
+        except Exception as e:
+            logger.info(f"Could not count paragraphs: {e}")
+            return None
 
     def _locate_range(self, doc: Any, text_range: Any) -> tuple:
         """

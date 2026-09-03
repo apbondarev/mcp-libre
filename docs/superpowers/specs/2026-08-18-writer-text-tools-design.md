@@ -223,10 +223,19 @@ read-only document.
 
 ## Decisions taken
 
-1. **Mutations are tracked by default.** Editing on the user's behalf is
-   recorded as a suggestion unless the caller opts out, per the contract above.
-   This pulls `set_track_changes_live` forward from phase 4 into phase 2, since
-   phase 2 now depends on the mechanism.
+1. **Mutations are NOT tracked by default** — revised 2026-09-03 against
+   evidence. The original decision was to record every edit as a suggestion.
+   Probing LibreOffice 24.2.7.2 showed what that means concretely: with
+   `RecordChanges = True`, replacing a selection leaves the original text in
+   the document (`getString()` returned `'ЗАМЕНАБыстрая brown fox.'` for a
+   replacement of the whole paragraph, with two redlines), because a tracked
+   deletion keeps the old text struck through until someone accepts it. A user
+   who asked to "translate and replace" then sees both texts and reports it as
+   the replacement having failed — which is exactly what happened.
+   So `track_changes` stays a parameter on every mutating tool, defaulting to
+   false: replacements are clean, and one Ctrl+Z still reverts them because of
+   the undo grouping. Review mode is opt-in per call, or for a whole session
+   via `set_track_changes_live`, which stays in phase 2.
 2. **`find_text_live` keeps `context`.** The duplication with
    `read_paragraphs_live` is worth fewer round trips: a search hit is usually
    acted on immediately, and without context the assistant cannot tell which

@@ -37,6 +37,9 @@ class FakeRange:
     def getText(self):
         return self.model
 
+    def setString(self, value):
+        self.model.replace_range(self.start, self.end, value)
+
     def getStart(self):
         return FakeRange(self.model, self.start)
 
@@ -65,6 +68,9 @@ class FakeTextCursor:
 
     def getText(self):
         return self.model
+
+    def setString(self, value):
+        self.model.replace_range(self.start, self.end, value)
 
     def getStart(self):
         return FakeRange(self.model, self.start)
@@ -161,6 +167,21 @@ class FakeText:
     def getString(self):
         return "\n".join(self.paragraphs)
 
+    def replace_range(self, start, end, value):
+        """Rewrite the span, joining paragraphs when the span crosses a break."""
+        (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
+        if start_para == end_para:
+            paragraph = self.paragraphs[start_para]
+            self.paragraphs[start_para] = (
+                paragraph[:start_offset] + value + paragraph[end_offset:])
+            return
+        head = self.paragraphs[start_para][:start_offset]
+        tail = self.paragraphs[end_para][end_offset:]
+        self.paragraphs[start_para:end_para + 1] = [head + value + tail]
+        del self.styles[start_para + 1:end_para + 1]
+        del self.outline_levels[start_para + 1:end_para + 1]
+        self.enumeration_items = list(range(len(self.paragraphs)))
+
     def createTextCursorByRange(self, text_range):
         self._own(text_range)
         return FakeTextCursor(self, text_range.start, text_range.start)
@@ -235,11 +256,29 @@ class FakeController:
         return self._selection
 
 
+class FakeUndoManager:
+    """Records the undo contexts a tool opens and closes."""
+
+    def __init__(self):
+        self.calls = []
+
+    def enterUndoContext(self, title):
+        self.calls.append(("enter", title))
+
+    def leaveUndoContext(self):
+        self.calls.append(("leave", None))
+
+
 class FakeDoc:
     """Common shape of a UNO document proxy."""
 
     services = frozenset()
     Title = "fake"
+    RecordChanges = False
+    readonly = False
+
+    def isReadonly(self):
+        return self.readonly
 
     def supportsService(self, name):
         return name in self.services
@@ -258,6 +297,7 @@ class FakeWriterDoc(FakeDoc):
     def __init__(self, text, controller):
         self._text = text
         self._controller = controller
+        self.UndoManager = FakeUndoManager()
 
     def getText(self):
         return self._text

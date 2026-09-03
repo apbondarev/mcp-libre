@@ -147,6 +147,57 @@ try:
     check("no paragraph holds the table's text",
           any(p["text"] == "in cell" for p in window["paragraphs"]), False)
 
+    print("\n--- replace_selection: the selection is rewritten, not added to ---")
+    body = doc.getText()
+    paragraphs = []
+    enumeration = body.createEnumeration()
+    while enumeration.hasMoreElements():
+        element = enumeration.nextElement()
+        if hasattr(element, "getStart"):
+            paragraphs.append(element)
+    target = paragraphs[1]              # "Alpha beta alpha."
+    before = target.getString()
+    selection = body.createTextCursorByRange(target.getStart())
+    selection.goRight(5, True)          # "Alpha"
+    doc.getCurrentController().select(selection)
+
+    result = bridge.replace_selection("Первый", doc=doc)
+    print(result)
+    check("replace succeeded", result.get("success"), True)
+    check("paragraph rewritten", target.getString(), "Первый beta alpha.")
+    check("original text is gone", "Alpha beta" in target.getString(), False)
+    check("reported paragraph", result.get("paragraph"), 1)
+    check("tracked", result.get("tracked"), False)
+
+    print("\n--- the whole edit is one undo step ---")
+    undo = doc.UndoManager
+    check("undo entry title", undo.getAllUndoActionTitles()[0],
+          "MCP: replace selection")
+    undo.undo()
+    check("one undo restores the original", target.getString(), before)
+
+    print("\n--- nothing selected: refused, document untouched ---")
+    collapsed = body.createTextCursorByRange(target.getStart())
+    doc.getCurrentController().select(collapsed)
+    refused = bridge.replace_selection("should not appear", doc=doc)
+    print(refused)
+    check("refused", refused.get("success"), False)
+    check("paragraph untouched", target.getString(), before)
+
+    print("\n--- track_changes=True keeps the original, struck through ---")
+    selection = body.createTextCursorByRange(target.getStart())
+    selection.goRight(5, True)
+    doc.getCurrentController().select(selection)
+    tracked = bridge.replace_selection("Второй", track_changes=True, doc=doc)
+    print(tracked)
+    check("tracked flag", tracked.get("tracked"), True)
+    check("new text present", "Второй" in target.getString(), True)
+    check("original still there as a tracked deletion",
+          "Alpha" in target.getString(), True)
+    check("redlines recorded", doc.getRedlines().getCount() > 0, True)
+    check("document's own RecordChanges restored", doc.RecordChanges, False)
+    undo.undo()
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

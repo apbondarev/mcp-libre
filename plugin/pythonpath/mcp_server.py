@@ -190,6 +190,31 @@ class LibreOfficeMCPServer:
             "handler": self.find_text_live
         }
         
+        # Editing tools
+        self.tools["replace_selection_live"] = {
+            "description": "Replace the text currently selected in the active Writer document. Fails when nothing is selected",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "text": {
+                        "type": "string",
+                        "description": "Text to put in place of the selection"
+                    },
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
+                        "default": False
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["text"]
+            },
+            "handler": self.replace_selection_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -367,6 +392,15 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.find_text(query, regex=regex,
                                          case_sensitive=case_sensitive,
                                          max_results=max_results, doc=doc)
+    
+    def replace_selection_live(self, text: str, track_changes: bool = False,
+                               document: Optional[str] = None) -> Dict[str, Any]:
+        """Replace the selected text in a Writer document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.replace_selection(text, track_changes=track_changes,
+                                                 doc=doc)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""
