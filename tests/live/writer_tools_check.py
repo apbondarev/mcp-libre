@@ -84,6 +84,8 @@ try:
 
     from uno_bridge import UNOBridge
     bridge = UNOBridge.__new__(UNOBridge)  # no local desktop wanted
+    bridge.ctx = ctx
+    bridge.smgr = ctx.ServiceManager
 
     print("--- get_outline ---")
     outline = bridge.get_outline(doc)
@@ -240,6 +242,49 @@ try:
     print("\n--- replace_range refuses an address it cannot resolve ---")
     bad = bridge.replace_range({"paragraph": 99}, "nowhere", doc=doc)
     check("bad address refused", bad.get("success"), False)
+
+    print("\n--- language: a translation must not inherit the original's locale ---")
+    speller = ctx.ServiceManager.createInstanceWithContext(
+        "com.sun.star.linguistic2.SpellChecker", ctx)
+
+    def locale_of(paragraph_index):
+        window = bridge.read_paragraphs(start=paragraph_index, count=1, doc=doc)
+        del window  # only to assert the paragraph exists
+        paragraph = bridge._paragraph_at(doc.getText(), paragraph_index)
+        portion = paragraph.createEnumeration().nextElement()
+        return f"{portion.CharLocale.Language}-{portion.CharLocale.Country}"
+
+    replaced = bridge.replace_range({"paragraph": 0}, "Схемы и типы", doc=doc)
+    check("replaced without a language", replaced.get("language"), None)
+    check("locale unchanged, so Russian is checked as English",
+          locale_of(0), "en-US")
+    russian_as_english = bridge._paragraph_at(doc.getText(), 0).createEnumeration(
+        ).nextElement().CharLocale
+    check("'Схемы' is called a misspelling under that locale",
+          speller.isValid("Схемы", russian_as_english, ()), False)
+
+    tagged = bridge.replace_range({"paragraph": 0}, "Схемы и типы",
+                                  language="ru-RU", doc=doc)
+    check("replaced with a language", tagged.get("language"), "ru-RU")
+    check("locale now Russian", locale_of(0), "ru-RU")
+    russian_locale = bridge._paragraph_at(doc.getText(), 0).createEnumeration(
+        ).nextElement().CharLocale
+    check("'Схемы' is now spelled correctly",
+          speller.isValid("Схемы", russian_locale, ()), True)
+    check("'Схеммы' is still a misspelling",
+          speller.isValid("Схеммы", russian_locale, ()), False)
+
+    print("\n--- set_language fixes text already written ---")
+    bridge.replace_range({"paragraph": 3}, "Гамма дельта.", doc=doc)
+    check("wrong locale before", locale_of(3), "en-US")
+    fixed = bridge.set_language({"paragraph": 3}, "ru-RU", doc=doc)
+    print(fixed)
+    check("set_language succeeded", fixed.get("success"), True)
+    check("locale after", locale_of(3), "ru-RU")
+
+    print("\n--- a language that is not a tag is refused ---")
+    bad_language = bridge.set_language({"paragraph": 3}, "russian please", doc=doc)
+    check("refused", bad_language.get("success"), False)
 
     doc.setModified(False)
     doc.close(True)

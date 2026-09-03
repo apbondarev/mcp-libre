@@ -25,11 +25,35 @@ WRITER_SERVICES = frozenset({
 CALC_SERVICES = frozenset({"com.sun.star.sheet.SpreadsheetDocument"})
 
 
+class FakeLocale:
+    """com.sun.star.lang.Locale, as much of it as the bridge touches."""
+
+    def __init__(self, language="en", country="US"):
+        self.Language = language
+        self.Country = country
+        self.Variant = ""
+
+    def __eq__(self, other):
+        return (self.Language, self.Country) == (
+            getattr(other, "Language", None), getattr(other, "Country", None))
+
+    def __repr__(self):
+        return f"FakeLocale({self.Language}-{self.Country})"
+
+
 class FakeRange:
     def __init__(self, model, start, end=None):
         self.model = model
         self.start = start
         self.end = start if end is None else end
+
+    @property
+    def CharLocale(self):
+        return self.model.locale_at(self.start)
+
+    @CharLocale.setter
+    def CharLocale(self, value):
+        self.model.set_locale(self.start, self.end, value)
 
     def getString(self):
         return self.model.slice_text(self.start, self.end)
@@ -54,6 +78,14 @@ class FakeTextCursor:
         self.model = model
         self.mark = mark
         self.pos = pos
+
+    @property
+    def CharLocale(self):
+        return self.model.locale_at(self.start)
+
+    @CharLocale.setter
+    def CharLocale(self, value):
+        self.model.set_locale(self.start, self.end, value)
 
     @property
     def start(self):
@@ -137,17 +169,42 @@ class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
     def __init__(self, paragraphs, enumeration_items=None, styles=None,
-                 outline_levels=None, expose_outline_level=True):
+                 outline_levels=None, expose_outline_level=True,
+                 default_locale=None, portions=None):
         self.paragraphs = list(paragraphs)
         self.styles = list(styles) if styles else ["Standard"] * len(self.paragraphs)
         self.outline_levels = (list(outline_levels) if outline_levels
                                else [0] * len(self.paragraphs))
         self.expose_outline_level = expose_outline_level
+        self.default_locale = default_locale or ("en", "US")
+        self.portions = dict(portions) if portions else {}
         self.enumeration_items = (
             list(range(len(self.paragraphs)))
             if enumeration_items is None
             else list(enumeration_items)
         )
+
+    def locale_at(self, position):
+        """The locale of the portion holding a position."""
+        paragraph, offset = position
+        for text, locale in self.portions_of(paragraph):
+            if offset < len(text) or (offset == len(text) and len(text)):
+                return locale
+            offset -= len(text)
+        return FakeLocale(*self.default_locale)
+
+    def set_locale(self, start, end, locale):
+        """Mark the span with one locale, collapsing the portions it covers."""
+        (start_para, _), (end_para, _) = sorted([start, end])
+        for paragraph in range(start_para, end_para + 1):
+            self.portions[paragraph] = [(self.paragraphs[paragraph], locale)]
+
+    def portions_of(self, paragraph):
+        """The (text, locale) runs of a paragraph, one run unless told otherwise."""
+        declared = self.portions.get(paragraph)
+        if declared is not None:
+            return declared
+        return [(self.paragraphs[paragraph], FakeLocale(*self.default_locale))]
 
     def _own(self, text_range):
         """Writer throws when a range from another text is passed in."""

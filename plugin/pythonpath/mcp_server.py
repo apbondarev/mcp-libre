@@ -205,6 +205,10 @@ class LibreOfficeMCPServer:
                         "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
                         "default": False
                     },
+                    "language": {
+                        "type": "string",
+                        "description": "Language tag for the new text, such as \"ru-RU\". Set it when the text is in a different language from what it replaces, otherwise the text keeps the old locale and every word is underlined as a spelling error"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -239,6 +243,10 @@ class LibreOfficeMCPServer:
                         "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
                         "default": False
                     },
+                    "language": {
+                        "type": "string",
+                        "description": "Language tag for the new text, such as \"ru-RU\". Set it when the text is in a different language from what it replaces, otherwise the text keeps the old locale and every word is underlined as a spelling error"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -247,6 +255,35 @@ class LibreOfficeMCPServer:
                 "required": ["address", "text"]
             },
             "handler": self.replace_range_live
+        }
+        
+        self.tools["set_language_live"] = {
+            "description": "Mark the text at an address as being in a language, so Writer spell-checks it against the right dictionary. Text left with the wrong language is underlined word by word even when it is spelled correctly",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "language": {
+                        "type": "string",
+                        "description": "Language tag such as \"ru-RU\", \"en-US\" or just \"de\""
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address", "language"]
+            },
+            "handler": self.set_language_live
         }
         
         # Document saving tools
@@ -428,23 +465,34 @@ class LibreOfficeMCPServer:
                                          max_results=max_results, doc=doc)
     
     def replace_selection_live(self, text: str, track_changes: bool = False,
+                               language: Optional[str] = None,
                                document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the selected text in a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.replace_selection(text, track_changes=track_changes,
-                                                 doc=doc)
+                                                 language=language, doc=doc)
     
     def replace_range_live(self, address: Any, text: str,
                            track_changes: bool = False,
+                           language: Optional[str] = None,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address in a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.replace_range(address, text,
-                                             track_changes=track_changes, doc=doc)
+                                             track_changes=track_changes,
+                                             language=language, doc=doc)
+
+    def set_language_live(self, address: Any, language: str,
+                          document: Optional[str] = None) -> Dict[str, Any]:
+        """Mark the text at an address as being in a language"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.set_language(address, language, doc=doc)
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""

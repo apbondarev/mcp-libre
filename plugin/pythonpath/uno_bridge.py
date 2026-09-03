@@ -12,6 +12,7 @@ from com.sun.star.document import XDocumentEventListener
 from com.sun.star.awt import XActionListener
 from typing import Any, Optional, Dict, List
 import logging
+import re
 import traceback
 
 # Set up logging
@@ -37,6 +38,37 @@ def _supports(obj: Any, service: str) -> bool:
         # "not a Writer document", which sent debugging in the wrong direction.
         logger.debug(f"Could not ask for {service}: {e}")
         return False
+
+
+LANGUAGE_TAG = re.compile(r"^([A-Za-z]{2,3})(?:[-_]([A-Za-z]{2}))?$")
+
+
+def _locale(language: str) -> Any:
+    """
+    Turn a language tag such as "ru-RU" into com.sun.star.lang.Locale
+
+    Raises AddressError — the caller already turns that into a refusal — when
+    the tag is not one, rather than silently marking text as some other
+    language.
+    """
+    match = LANGUAGE_TAG.match(language) if isinstance(language, str) else None
+    if not match:
+        raise AddressError(
+            f"language must be a tag like \"ru-RU\" or \"en\", got {language!r}")
+
+    locale = uno.createUnoStruct("com.sun.star.lang.Locale")
+    locale.Language = match.group(1).lower()
+    locale.Country = (match.group(2) or "").upper()
+    locale.Variant = ""
+    return locale
+
+
+def _locale_name(locale: Any) -> Optional[str]:
+    """"ru-RU" for a Locale, None when it carries no language"""
+    language = _get_property(locale, "Language", "") or ""
+    if not language:
+        return None
+    return f"{language}-{_get_property(locale, 'Country', '') or ''}"
 
 
 def _is_readonly(doc: Any) -> bool:
@@ -677,6 +709,7 @@ class UNOBridge:
             return {"success": False, "error": str(e)}
 
     def replace_selection(self, text: str, track_changes: bool = False,
+                          language: Optional[str] = None,
                           doc: Any = None) -> Dict[str, Any]:
         """
         Replace the selected text
@@ -691,10 +724,55 @@ class UNOBridge:
             what="Replacing the selection",
             undo_title="MCP: replace selection",
             empty_error="Nothing is selected, so there is nothing to replace. "
-                        "Select the text first, or use a tool that inserts.")
+                        "Select the text first, or use a tool that inserts.",
+            language=language)
+
+    def set_language(self, address: Any, language: str,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Mark the text at an address as being in a language
+
+        Writer decides which dictionary to spell-check a run against from its
+        character locale, so a translation left with the original's locale is
+        underlined word by word. This fixes text that is already written;
+        replace_range and replace_selection take the same language up front.
+        """
+        doc, error = self._writer_document(doc, "Setting the language")
+        if error:
+            return error
+
+        if _is_readonly(doc):
+            return {"success": False,
+                    "error": "The document is read-only, so it cannot be edited"}
+
+        try:
+            locale = _locale(language)
+            target = self._resolve_address(doc, address)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        undo = _get_property(doc, "UndoManager", None)
+        if undo:
+            undo.enterUndoContext("MCP: set language")
+        try:
+            target.CharLocale = locale
+        except Exception as e:
+            logger.error(f"Failed to set the language: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if undo:
+                undo.leaveUndoContext()
+
+        logger.info(f"Marked text as {language}")
+        return {
+            "success": True,
+            "language": _locale_name(locale),
+            "characters": len(target.getString())
+        }
 
     def replace_range(self, address: Any, text: str,
                       track_changes: bool = False,
+                      language: Optional[str] = None,
                       doc: Any = None) -> Dict[str, Any]:
         """
         Replace the text at an address
@@ -708,11 +786,12 @@ class UNOBridge:
         return self._replace(address, text, track_changes, doc,
                              what="Replacing text",
                              undo_title="MCP: replace text",
-                             empty_error=None)
+                             empty_error=None, language=language)
 
     def _replace(self, address: Any, text: str, track_changes: bool,
                  doc: Any, what: str, undo_title: str,
-                 empty_error: Optional[str]) -> Dict[str, Any]:
+                 empty_error: Optional[str],
+                 language: Optional[str] = None) -> Dict[str, Any]:
         """
         Rewrite the range an address points at, as a single undo step
 
@@ -733,6 +812,7 @@ class UNOBridge:
                     "error": "The document is read-only, so it cannot be edited"}
 
         try:
+            locale = _locale(language) if language else None
             target = self._resolve_address(doc, address)
         except AddressError as e:
             return {"success": False, "error": str(e)}
@@ -759,6 +839,10 @@ class UNOBridge:
             if track_changes and recording is False:
                 doc.RecordChanges = True
             target.setString(text)
+            if locale is not None:
+                # Without this the new text keeps the locale of what it
+                # replaced, and a translation is underlined word by word.
+                target.CharLocale = locale
         except Exception as e:
             logger.error(f"Failed to replace text: {e}")
             return {"success": False, "error": str(e)}
@@ -780,7 +864,8 @@ class UNOBridge:
             "inserted_length": len(text),
             "paragraph": paragraph_index,
             "total_paragraphs": self._count_body_paragraphs(doc),
-            "tracked": bool(track_changes)
+            "tracked": bool(track_changes),
+            "language": _locale_name(locale) if locale is not None else None
         }
 
     def _count_body_paragraphs(self, doc: Any) -> Optional[int]:

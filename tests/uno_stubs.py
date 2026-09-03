@@ -47,6 +47,20 @@ def install_uno_stubs():
         uno = types.ModuleType("uno")
         uno.getComponentContext = lambda: FakeComponentContext()
         uno.Enum = lambda type_name, value: f"{type_name}.{value}"
+
+        _STRUCT_FIELDS = {
+            "com.sun.star.lang.Locale": ("Language", "Country", "Variant"),
+            "com.sun.star.beans.PropertyValue": ("Name", "Handle", "Value", "State"),
+        }
+
+        def create_uno_struct(name, *args):
+            fields = _STRUCT_FIELDS.get(name, ())
+            struct = types.SimpleNamespace(**{field: "" for field in fields})
+            for field, value in zip(fields, args):
+                setattr(struct, field, value)
+            return struct
+
+        uno.createUnoStruct = create_uno_struct
         sys.modules["uno"] = uno
 
     if "unohelper" not in sys.modules:
