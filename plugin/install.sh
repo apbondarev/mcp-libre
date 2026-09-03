@@ -99,13 +99,26 @@ install_extension() {
         exit 1
     fi
     
-    # Remove existing installation
+    # LibreOffice owns the extension registry while it runs, so unopkg can
+    # fail here in ways that look like a broken package.
+    if pgrep -f "soffice.bin" >/dev/null 2>&1; then
+        echo "⚠️  LibreOffice is running — close it before installing if this fails."
+    fi
+
+    # Report what the removal did instead of discarding it. A silently failed
+    # remove is what made the add below die with "Extension has already been
+    # added": a second copy stayed registered in the package cache.
     echo "🗑️  Removing any existing installation..."
-    unopkg remove org.mcp.libreoffice.extension 2>/dev/null || true
-    
-    # Install new version
+    if unopkg remove org.mcp.libreoffice.extension >/dev/null 2>&1; then
+        echo "   previous registration removed"
+    else
+        echo "   nothing removed (not installed, or removal refused) — continuing"
+    fi
+
+    # -f replaces whatever is registered, so a leftover registration or a
+    # stale copy in the cache cannot block the install.
     echo "⬇️  Installing extension..."
-    unopkg add "$EXTENSION_FILE"
+    unopkg add -f "$EXTENSION_FILE"
     
     echo "✅ Extension installed successfully!"
     echo ""
