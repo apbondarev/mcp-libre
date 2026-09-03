@@ -47,6 +47,9 @@ MAX_TEXT_CHARS = 2000
 DEFAULT_PARAGRAPH_COUNT = 50
 MAX_PARAGRAPH_COUNT = 200
 
+# Cap on headings returned by get_outline
+MAX_OUTLINE_ENTRIES = 200
+
 
 def _get_property(obj: Any, name: str, default: Any = None) -> Any:
     """Read a UNO property, falling back when the object does not carry it"""
@@ -54,6 +57,25 @@ def _get_property(obj: Any, name: str, default: Any = None) -> Any:
         return getattr(obj, name)
     except Exception:
         return default
+
+
+def _heading_level(paragraph: Any) -> int:
+    """
+    Outline level of a paragraph, 0 when it is body text
+
+    OutlineLevel covers custom styles that were given a level; the style-name
+    check is the fallback for builds that do not expose the property.
+    """
+    level = _get_property(paragraph, "OutlineLevel", 0)
+    if isinstance(level, int) and not isinstance(level, bool) and level > 0:
+        return level
+
+    style = _get_property(paragraph, "ParaStyleName", "") or ""
+    if style.startswith("Heading "):
+        suffix = style[len("Heading "):].strip()
+        if suffix.isdigit():
+            return int(suffix)
+    return 0
 
 
 def _text_payload(value: str) -> Dict[str, Any]:
@@ -461,6 +483,62 @@ class UNOBridge:
 
         except Exception as e:
             logger.error(f"Failed to read paragraphs: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_outline(self, doc: Any = None) -> Dict[str, Any]:
+        """
+        List the document's headings with the paragraph index of each
+
+        Gives an assistant a map of a long document without reading it, and
+        every entry doubles as an address to read or edit from.
+        """
+        try:
+            if doc is None:
+                doc = self.get_active_document()
+
+            if not doc:
+                return {"success": False, "error": "No document available"}
+
+            if not _supports(doc, WRITER_SERVICE):
+                return {
+                    "success": False,
+                    "error": f"An outline is only available for Writer documents, "
+                             f"got {self._get_document_type(doc)}"
+                }
+
+            headings = []
+            total = 0
+            dropped = 0
+
+            enumeration = doc.getText().createEnumeration()
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if not hasattr(element, "getStart"):
+                    continue
+                level = _heading_level(element)
+                if level > 0:
+                    if len(headings) < MAX_OUTLINE_ENTRIES:
+                        headings.append({
+                            "paragraph": total,
+                            "level": level,
+                            "text": element.getString()[:MAX_TEXT_CHARS]
+                        })
+                    else:
+                        dropped += 1
+                total += 1
+
+            if dropped:
+                logger.info(f"Outline truncated, {dropped} headings dropped")
+
+            return {
+                "success": True,
+                "headings": headings,
+                "total_paragraphs": total,
+                "truncated": dropped > 0
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to get outline: {e}")
             return {"success": False, "error": str(e)}
 
     def _locate_range(self, doc: Any, text_range: Any) -> tuple:

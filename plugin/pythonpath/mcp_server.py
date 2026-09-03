@@ -138,6 +138,15 @@ class LibreOfficeMCPServer:
             "handler": self.read_paragraphs_live
         }
         
+        self.tools["get_outline_live"] = {
+            "description": "List the headings of the active Writer document with the paragraph index of each",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            },
+            "handler": self.get_outline_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -283,6 +292,10 @@ class LibreOfficeMCPServer:
     def read_paragraphs_live(self, start: int = 0, count: int = 50) -> Dict[str, Any]:
         """Read a window of paragraphs from the active Writer document"""
         return self.uno_bridge.read_paragraphs(start=start, count=count)
+    
+    def get_outline_live(self) -> Dict[str, Any]:
+        """List the headings of the active Writer document"""
+        return self.uno_bridge.get_outline()
     
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""
