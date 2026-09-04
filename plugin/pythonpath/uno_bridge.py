@@ -302,7 +302,12 @@ class UNOBridge:
                 "url": doc.getURL() if hasattr(doc, 'getURL') else "",
                 "modified": doc.isModified() if hasattr(doc, 'isModified') else False,
                 "type": self._get_document_type(doc),
-                "has_selection": self._has_selection(doc)
+                "has_selection": self._has_selection(doc),
+                # Whether edits are recorded decides how a replacement looks:
+                # with recording on, the original stays struck through and the
+                # new text is coloured, which reads as the edit having failed.
+                "track_changes": bool(_get_property(doc, "RecordChanges", False)),
+                "tracked_changes": self._count_tracked_changes(doc)
             }
             
             # Add document-specific information
@@ -716,7 +721,7 @@ class UNOBridge:
             logger.error(f"Failed to search: {e}")
             return {"success": False, "error": str(e)}
 
-    def replace_selection(self, text: str, track_changes: bool = False,
+    def replace_selection(self, text: str, track_changes: Optional[bool] = None,
                           language: Optional[str] = None,
                           doc: Any = None) -> Dict[str, Any]:
         """
@@ -942,7 +947,7 @@ class UNOBridge:
         }
 
     def replace_range(self, address: Any, text: str,
-                      track_changes: bool = False,
+                      track_changes: Optional[bool] = None,
                       language: Optional[str] = None,
                       doc: Any = None) -> Dict[str, Any]:
         """
@@ -959,16 +964,21 @@ class UNOBridge:
                              undo_title="MCP: replace text",
                              empty_error=None, language=language)
 
-    def _replace(self, address: Any, text: str, track_changes: bool,
+    def _replace(self, address: Any, text: str, track_changes: Optional[bool],
                  doc: Any, what: str, undo_title: str,
                  empty_error: Optional[str],
                  language: Optional[str] = None) -> Dict[str, Any]:
         """
         Rewrite the range an address points at, as a single undo step
 
-        track_changes defaults to false at every caller because a tracked
-        replacement keeps the original in the document, struck through until
-        someone accepts it, which reads as the replacement having failed.
+        track_changes has three states, because two were not enough. None, the
+        default, leaves the document's own recording setting alone: the edit is
+        recorded if the document records, and the result says which happened.
+        True records this edit even in a document that does not. False refuses
+        to record it even in a document that does — the opt-out has to actually
+        opt out, since a recorded replacement keeps the original struck through
+        and reads as the replacement having failed. Either override is undone
+        afterwards, so the document keeps the setting its owner chose.
         """
         doc, error = self._writer_document(doc, what)
         if error:
@@ -1001,14 +1011,16 @@ class UNOBridge:
             logger.info(f"Could not locate the range: {e}")
             paragraph_index = None
 
-        recording = _get_property(doc, "RecordChanges", None)
+        recording = bool(_get_property(doc, "RecordChanges", False))
+        wanted = recording if track_changes is None else bool(track_changes)
+        override = wanted != recording
         undo = _get_property(doc, "UndoManager", None)
 
         if undo:
             undo.enterUndoContext(undo_title)
         try:
-            if track_changes and recording is False:
-                doc.RecordChanges = True
+            if override:
+                doc.RecordChanges = wanted
             target.setString(text)
             if locale is not None:
                 # Without this the new text keeps the locale of what it
@@ -1018,11 +1030,11 @@ class UNOBridge:
             logger.error(f"Failed to replace text: {e}")
             return {"success": False, "error": str(e)}
         finally:
-            # Restore the document's own setting: the edit stays recorded, but
-            # the user's preference is not silently changed underneath them.
-            if track_changes and recording is False:
+            # Put the document's own setting back: this edit was recorded or
+            # not as asked, but the owner's preference is not changed for them.
+            if override:
                 try:
-                    doc.RecordChanges = False
+                    doc.RecordChanges = recording
                 except Exception as e:
                     logger.error(f"Could not restore RecordChanges: {e}")
             if undo:
@@ -1035,9 +1047,17 @@ class UNOBridge:
             "inserted_length": len(text),
             "paragraph": paragraph_index,
             "total_paragraphs": self._count_body_paragraphs(doc),
-            "tracked": bool(track_changes),
+            "tracked": wanted,
             "language": _locale_name(locale) if locale is not None else None
         }
+
+    def _count_tracked_changes(self, doc: Any) -> Optional[int]:
+        """How many recorded changes wait to be accepted, None if unknown"""
+        try:
+            return doc.getRedlines().getCount()
+        except Exception as e:
+            logger.debug(f"Could not count tracked changes: {e}")
+            return None
 
     def _count_body_paragraphs(self, doc: Any) -> Optional[int]:
         """How many paragraphs the body holds, None if it cannot be walked"""

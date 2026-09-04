@@ -245,15 +245,17 @@ read-only document.
 
 ## Remaining risks
 
-- Whether toggling `doc.RecordChanges` inside an open undo context is itself
-  undoable, or interacts badly with `enterUndoContext`, is unverified. If
-  toggling turns out to be recorded as an undo step, the flag must be set
-  outside the context instead. The live harness settles this before any phase 2
-  tool is believed.
-- Whether a tracked deletion leaves the original text in place (as Writer shows
-  it struck through) changes what `delete_range_live` should report back. The
-  harness must check what the document looks like after a tracked delete, not
-  just that the call succeeded.
+- ~~Whether toggling `doc.RecordChanges` inside an open undo context interacts
+  badly with `enterUndoContext` was unverified.~~ **Settled 2026-09-04:** it
+  does not. `setString` with recording on produces the same two redlines
+  whether the edit sits inside an undo context, outside one, or has recording
+  switched on from within the context.
+- ~~Whether a tracked deletion leaves the original text in place changes what
+  `delete_range_live` should report back.~~ **Settled 2026-09-04:** it does.
+  `getString()` returns the insertion followed by the struck-through original,
+  so a tracked replacement reads as both texts at once. Counting redlines
+  cannot prove an edit was recorded either, since an edit on top of recorded
+  text merges into the existing redlines.
 - Locating a range costs a walk of the body enumeration, so `find_text_live`
   pays O(hits × paragraphs) UNO calls — measured only as far as "the caps bound
   it" (50 results by default, 200 maximum). Phase 2 adds more walking paths, so

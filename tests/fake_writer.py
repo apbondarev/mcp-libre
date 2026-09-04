@@ -378,6 +378,16 @@ class FakeUndoManager:
         self.calls.append(("leave", None))
 
 
+class FakeRedlines:
+    """doc.getRedlines(): the recorded changes awaiting acceptance."""
+
+    def __init__(self, count=0):
+        self.count = count
+
+    def getCount(self):
+        return self.count
+
+
 class FakeDoc:
     """Common shape of a UNO document proxy."""
 
@@ -388,6 +398,9 @@ class FakeDoc:
 
     def isReadonly(self):
         return self.readonly
+
+    def getRedlines(self):
+        return FakeRedlines(getattr(self, "redline_count", 0))
 
     def supportsService(self, name):
         return name in self.services

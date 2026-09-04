@@ -68,7 +68,7 @@ class LibreOfficeMCPServer:
         
         # Document info tools
         self.tools["get_document_info_live"] = {
-            "description": "Get information about the currently active document",
+            "description": "Get information about the currently active document, including whether changes are being recorded (track_changes) and how many recorded changes await acceptance (tracked_changes)",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -202,12 +202,11 @@ class LibreOfficeMCPServer:
                     },
                     "track_changes": {
                         "type": "boolean",
-                        "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
-                        "default": False
+                        "description": "Omit to follow the document's own setting (see track_changes in get_document_info_live). True records this edit as a change to accept or reject, which leaves the original in place struck through. False refuses to record it even in a document that records everything. Either way the document's setting is left as its owner had it, and the result reports which happened"
                     },
                     "language": {
                         "type": "string",
-                        "description": "Language tag for the new text, such as \"ru-RU\". Set it when the text is in a different language from what it replaces, otherwise the text keeps the old locale and every word is underlined as a spelling error"
+                        "description": "Language tag for the new text, such as \"ru-RU\". ALWAYS set this when writing text in a different language from what it replaces — translating, for instance. Without it the new text keeps the locale of the text it replaced, Writer spell-checks it against the wrong dictionary, and every single word appears underlined in red even though it is spelled correctly"
                     },
                     "document": {
                         "type": "string",
@@ -240,12 +239,11 @@ class LibreOfficeMCPServer:
                     },
                     "track_changes": {
                         "type": "boolean",
-                        "description": "Record the replacement as a tracked change to be accepted or rejected. The original text then stays in the document, struck through, until it is accepted",
-                        "default": False
+                        "description": "Omit to follow the document's own setting (see track_changes in get_document_info_live). True records this edit as a change to accept or reject, which leaves the original in place struck through. False refuses to record it even in a document that records everything. Either way the document's setting is left as its owner had it, and the result reports which happened"
                     },
                     "language": {
                         "type": "string",
-                        "description": "Language tag for the new text, such as \"ru-RU\". Set it when the text is in a different language from what it replaces, otherwise the text keeps the old locale and every word is underlined as a spelling error"
+                        "description": "Language tag for the new text, such as \"ru-RU\". ALWAYS set this when writing text in a different language from what it replaces — translating, for instance. Without it the new text keeps the locale of the text it replaced, Writer spell-checks it against the wrong dictionary, and every single word appears underlined in red even though it is spelled correctly"
                     },
                     "document": {
                         "type": "string",
@@ -493,7 +491,8 @@ class LibreOfficeMCPServer:
                                          case_sensitive=case_sensitive,
                                          max_results=max_results, doc=doc)
     
-    def replace_selection_live(self, text: str, track_changes: bool = False,
+    def replace_selection_live(self, text: str,
+                               track_changes: Optional[bool] = None,
                                language: Optional[str] = None,
                                document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the selected text in a Writer document"""
@@ -504,7 +503,7 @@ class LibreOfficeMCPServer:
                                                  language=language, doc=doc)
     
     def replace_range_live(self, address: Any, text: str,
-                           track_changes: bool = False,
+                           track_changes: Optional[bool] = None,
                            language: Optional[str] = None,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address in a Writer document"""

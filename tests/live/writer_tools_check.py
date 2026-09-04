@@ -324,6 +324,50 @@ try:
     check("and they are clean once the language is right",
           bridge.check_spelling(address={"paragraph": 3}, doc=doc)["misspelled"], [])
 
+    print("\n--- get_document_info reports the recording state ---")
+    info = bridge.get_document_info(doc)
+    check("recording reported off", info.get("track_changes"), False)
+    check("no recorded changes yet", info.get("tracked_changes"), 0)
+
+    doc.RecordChanges = True
+    check("recording reported on after switching it on",
+          bridge.get_document_info(doc).get("track_changes"), True)
+
+    print("\n--- with recording on, the default records the edit ---")
+    # Prepare the paragraph while nothing is recorded, so the redline count
+    # starts from a known place: an edit on top of an already-recorded edit
+    # merges into it and leaves the count unchanged, which measures nothing.
+    doc.RecordChanges = False
+    bridge.replace_range({"paragraph": 3}, "Gamma delta.", language="en-US", doc=doc)
+    doc.RecordChanges = True
+    baseline = doc.getRedlines().getCount()
+
+    followed = bridge.replace_range({"paragraph": 3}, "Гамма дельта.",
+                                    language="ru-RU", doc=doc)
+    print(followed)
+    check("reported as tracked", followed.get("tracked"), True)
+    check("a change was recorded",
+          doc.getRedlines().getCount() > baseline, True)
+    recorded_text = bridge.read_paragraphs(
+        start=3, count=1, doc=doc)["paragraphs"][0]["text"]
+    print("   text now:", repr(recorded_text))
+    check("the original is still there, struck through",
+          "Gamma delta." in recorded_text, True)
+
+    print("\n--- track_changes=False refuses to record, even here ---")
+    doc.UndoManager.undo()            # drop the tracked edit, keep recording on
+    baseline = doc.getRedlines().getCount()
+    clean = bridge.replace_range({"paragraph": 3}, "Гамма дельта.",
+                                 track_changes=False, language="ru-RU", doc=doc)
+    print(clean)
+    check("reported as not tracked", clean.get("tracked"), False)
+    check("nothing new was recorded", doc.getRedlines().getCount(), baseline)
+    clean_text = bridge.read_paragraphs(
+        start=3, count=1, doc=doc)["paragraphs"][0]["text"]
+    check("only the replacement remains", clean_text, "Гамма дельта.")
+    check("the document keeps its own setting", doc.RecordChanges, True)
+
+    doc.RecordChanges = False
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()
