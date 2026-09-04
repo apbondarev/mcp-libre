@@ -451,6 +451,73 @@ try:
           bridge.format_range({"paragraph": 3}, color="blueish",
                               doc=doc).get("success"), False)
 
+    print("\n--- runs: translating without losing the formatting ---")
+    # A paragraph made of four differently formatted runs, like real prose with
+    # an inline code term and a coloured phrase in it.
+    body = doc.getText()
+    paragraph = bridge._paragraph_at(body, 3)
+    span = body.createTextCursorByRange(paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.setString("")
+    cursor = body.createTextCursorByRange(paragraph.getStart())
+    for piece, font, colour in [("Character", "Liberation Mono", -1),
+                                (" is a ", "Liberation Serif", -1),
+                                ("GraphQL Object type", "Liberation Serif", 0x000080),
+                                (", meaning it has fields.", "Liberation Serif", -1)]:
+        cursor.CharFontName = font
+        cursor.CharColor = colour
+        body.insertString(cursor, piece, False)
+
+    read = bridge.read_runs({"paragraph": 3}, doc=doc)
+    print(read)
+    check("four runs read", read.get("count"), 4)
+    check("run texts", [r["text"] for r in read["runs"]],
+          ["Character", " is a ", "GraphQL Object type", ", meaning it has fields."])
+    check("the monospace run is reported as such",
+          read["runs"][0]["font_name"], "Liberation Mono")
+    check("the coloured run is reported as such",
+          read["runs"][2]["color"], "#000080")
+    check("an automatic colour is reported as no colour",
+          read["runs"][1]["color"], None)
+
+    print("\n--- every run's address resolves to that run ---")
+    for run in read["runs"]:
+        check(f"address of {run['text'][:14]!r}",
+              bridge._resolve_address(doc, run["address"]).getString(), run["text"])
+
+    print("\n--- what plain replacement does, for comparison ---")
+    flattened = body.createTextCursorByRange(paragraph.getStart())
+    flattened.gotoEndOfParagraph(True)
+    flattened.setString("Character — это объектный тип GraphQL, то есть тип с полями.")
+    after_plain = bridge.read_runs({"paragraph": 3}, doc=doc)
+    check("plain setString collapses it to one run", after_plain["count"], 1)
+    check("and the monospace font is gone",
+          after_plain["runs"][0]["font_name"] != "Liberation Mono", True)
+
+    print("\n--- replace_runs keeps every run's look ---")
+    written = bridge.replace_runs({"paragraph": 3}, [
+        {"text": "Character", "font_name": "Liberation Mono", "language": "en-US"},
+        {"text": " — это ", "language": "ru-RU"},
+        {"text": "объектный тип GraphQL", "color": "#000080", "language": "ru-RU"},
+        {"text": ", то есть тип с полями.", "language": "ru-RU"},
+    ], doc=doc)
+    print(written)
+    check("written", written.get("success"), True)
+    check("four runs written", written.get("runs"), 4)
+
+    result = bridge.read_runs({"paragraph": 3}, doc=doc)
+    print([(r["text"][:16], r["font_name"], r["color"], r["language"])
+           for r in result["runs"]])
+    check("still four runs", result["count"], 4)
+    check("the term stayed monospace", result["runs"][0]["font_name"],
+          "Liberation Mono")
+    check("the phrase stayed navy", result["runs"][2]["color"], "#000080")
+    check("and the translation is marked Russian",
+          result["runs"][2]["language"], "ru-RU")
+    check("while the term stayed English", result["runs"][0]["language"], "en-US")
+    check("one undo step for the whole thing",
+          doc.UndoManager.getAllUndoActionTitles()[0], "MCP: replace runs")
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

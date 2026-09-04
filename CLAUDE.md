@@ -52,7 +52,7 @@ Consequences worth knowing before adding a tool:
 
 Entry points: `src/main.py` does a flat `import libremcp`, which works only because Python puts the script's own directory on `sys.path` — hence `PYTHONPATH=<repo>/src` in the config templates. The root `libremcp.py` is a 6-line vestigial stub, not the server; `pyproject.toml`'s `[project.scripts]`/hatch `packages` still point at stale paths.
 
-### 2. Embedded plugin — `plugin/pythonpath/` (20 tools, SSE over HTTP :8765)
+### 2. Embedded plugin — `plugin/pythonpath/` (22 tools, SSE over HTTP :8765)
 
 Runs *inside* LibreOffice via UNO, so it acts on live open documents with no file I/O. Four layers:
 
@@ -75,6 +75,7 @@ Hard constraints on plugin code:
 - A text range belongs to the text that owns it. Inside a table cell or a frame that is *not* `doc.getText()`, and passing a foreign range to the body text throws "End of content node doesn't have the proper start node" — so build cursors from `range.getText()`, as `get_cursor_info` does.
 - `insertString(cursor, text, bAbsorb)` — the last flag decides insert vs replace. `insert_text` passes `False`, so with a selection it inserts at the selection start and leaves the original: that is why "translate and replace" produced both texts. `replace_selection` rewrites the resolved range with `setString` instead.
 - Every mutation goes through `_guarded_edit(doc, undo_title, track_changes, edit)`: read-only refusal, one undo context, the three-state recording contract, and the document's own setting restored. Add a mutating tool by writing the `edit` closure, not by repeating the guards.
+- `setString` over a range holding several character runs **flattens it to one run**: four runs in, one out, so an inline monospace term and a coloured phrase both lose their look. Measured, not assumed. Reading the runs (`read_runs`) and writing them back with explicit per-run properties (`replace_runs`) is the only way text keeps its appearance through a rewrite; replacing run by run does not work reliably either, because setString takes its properties from the surrounding text.
 - Paragraph borders are `TopBorder`/`BottomBorder`/`LeftBorder`/`RightBorder` with `*BorderDistance` — there is no `ParaTopBorder`, and guessing that name is a dead end. Consecutive paragraphs given the same border render as one box, since `ParaIsConnectBorder` defaults to true.
 - A paragraph background cannot be set through `ParaBackColor`: writing it is silently ignored on a cursor *and* on the paragraph. `FillStyle = SOLID` plus `FillColor` **on the paragraph object** works, shows up afterwards as `ParaBackColor`, and survives saving. Ranges have no `FillStyle`, so the fill is applied per paragraph.
 - For a code block prefer `apply_paragraph_style` with "Preformatted Text" over setting a font: the style carries the monospace font *and* the paragraph spacing, where `CharFontName` alone leaves body-text spacing. A style the document lacks throws inside UNO, so names are checked against `doc.StyleFamilies` first.

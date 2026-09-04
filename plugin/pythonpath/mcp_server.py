@@ -313,6 +313,79 @@ class LibreOfficeMCPServer:
             "handler": self.check_spelling_live
         }
         
+        # Runs: reading and rewriting formatted pieces
+        self.tools["read_runs_live"] = {
+            "description": "Read the text at an address as the formatted runs it is made of, each with its own address, font, colour and language. Use this before rewriting text that is not uniformly formatted: replacing such a range in one go flattens it, so a monospace term or a coloured phrase inside it loses its look",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.read_runs_live
+        }
+        
+        self.tools["replace_runs_live"] = {
+            "description": "Replace the text at an address with a sequence of runs, each carrying its own formatting. This is how text keeps its appearance through a translation: read the runs, translate each one's text, write them back. Also the cheap way to syntax-highlight, since the whole sequence is one edit and one undo step",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "runs": {
+                        "type": "array",
+                        "description": "The pieces to write, in order. Each needs text; give it the formatting you want it to keep, since anything unspecified is left to whatever the surrounding text imposes",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "text": {"type": "string"},
+                                "bold": {"type": "boolean"},
+                                "italic": {"type": "boolean"},
+                                "underline": {"type": "boolean"},
+                                "font_name": {"type": "string"},
+                                "font_size": {"type": "number"},
+                                "color": {"type": "string", "description": "#RRGGBB"},
+                                "background_color": {"type": "string", "description": "#RRGGBB"},
+                                "language": {"type": "string", "description": "Language tag such as ru-RU"}
+                            },
+                            "required": ["text"]
+                        }
+                    },
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Omit to follow the document's own setting; true records this change, false refuses to record it"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address", "runs"]
+            },
+            "handler": self.replace_runs_live
+        }
+        
         # Formatting tools
         self.tools["format_range_live"] = {
             "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
@@ -677,6 +750,24 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.set_language(address, language, doc=doc)
     
+    def read_runs_live(self, address: Any,
+                       document: Optional[str] = None) -> Dict[str, Any]:
+        """Read the text at an address as its formatted runs"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.read_runs(address, doc=doc)
+
+    def replace_runs_live(self, address: Any, runs: Any,
+                          track_changes: Optional[bool] = None,
+                          document: Optional[str] = None) -> Dict[str, Any]:
+        """Replace the text at an address with a sequence of formatted runs"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.replace_runs(address, runs,
+                                            track_changes=track_changes, doc=doc)
+
     def format_range_live(self, address: Any, bold: Optional[bool] = None,
                           italic: Optional[bool] = None,
                           underline: Optional[bool] = None,

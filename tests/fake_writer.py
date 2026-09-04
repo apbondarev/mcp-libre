@@ -169,16 +169,22 @@ class FakeParagraph(FakeRange):
 
     def createEnumeration(self):
         return FakeEnumeration(
-            FakeTextPortion(text, locale)
-            for text, locale in self.model.portions_of(self.index))
+            FakeTextPortion(text, locale, properties)
+            for text, locale, properties in self.model.portions_of(self.index))
 
 
 class FakeTextPortion:
-    """A run inside a paragraph, carrying its own language."""
+    """A run inside a paragraph, carrying its own language and formatting."""
 
-    def __init__(self, text, locale):
+    DEFAULTS = {"CharWeight": 100.0, "CharPosture": "NONE", "CharUnderline": 0,
+                "CharHeight": 12.0, "CharFontName": "Liberation Serif",
+                "CharColor": -1, "CharBackColor": -1}
+
+    def __init__(self, text, locale, properties=None):
         self._text = text
         self.CharLocale = locale
+        for name, value in dict(self.DEFAULTS, **(properties or {})).items():
+            setattr(self, name, value)
 
     def getString(self):
         return self._text
@@ -366,24 +372,64 @@ class FakeText:
     def locale_at(self, position):
         """The locale of the portion holding a position."""
         paragraph, offset = position
-        for text, locale in self.portions_of(paragraph):
+        for text, locale, _ in self.portions_of(paragraph):
             if offset < len(text) or (offset == len(text) and len(text)):
                 return locale
             offset -= len(text)
         return FakeLocale(*self.default_locale)
 
     def set_locale(self, start, end, locale):
-        """Mark the span with one locale, collapsing the portions it covers."""
-        (start_para, _), (end_para, _) = sorted([start, end])
+        """
+        Mark exactly the span with one locale, splitting runs at its edges
+
+        Writer marks characters, not paragraphs, so a fake that marked whole
+        paragraphs would hide the difference between tagging a phrase and
+        tagging everything around it.
+        """
+        (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
         for paragraph in range(start_para, end_para + 1):
-            self.portions[paragraph] = [(self.paragraphs[paragraph], locale)]
+            body = self.paragraphs[paragraph]
+            from_offset = start_offset if paragraph == start_para else 0
+            to_offset = end_offset if paragraph == end_para else len(body)
+            rebuilt, position = [], 0
+            for text, existing, properties in self.portions_of(paragraph):
+                for character, index in zip(text, range(position, position + len(text))):
+                    marked = from_offset <= index < to_offset
+                    chosen = locale if marked else existing
+                    if rebuilt and rebuilt[-1][1] is chosen \
+                            and rebuilt[-1][2] == properties:
+                        rebuilt[-1] = (rebuilt[-1][0] + character, chosen, properties)
+                    else:
+                        rebuilt.append((character, chosen, properties))
+                position += len(text)
+            self.portions[paragraph] = [
+                {"text": text, "locale": marked_locale, **properties}
+                for text, marked_locale, properties in rebuilt]
 
     def portions_of(self, paragraph):
-        """The (text, locale) runs of a paragraph, one run unless told otherwise."""
+        """
+        The runs of a paragraph, one run unless told otherwise
+
+        A run is either a (text, locale) pair or a dict with text, locale and
+        whatever character properties the test cares about.
+        """
         declared = self.portions.get(paragraph)
-        if declared is not None:
-            return declared
-        return [(self.paragraphs[paragraph], FakeLocale(*self.default_locale))]
+        if declared is None:
+            return [(self.paragraphs[paragraph],
+                     FakeLocale(*self.default_locale), {})]
+        normalised = []
+        for run in declared:
+            if isinstance(run, dict):
+                properties = {k: v for k, v in run.items()
+                              if k not in ("text", "locale")}
+                normalised.append((run["text"],
+                                   run.get("locale",
+                                           FakeLocale(*self.default_locale)),
+                                   properties))
+            else:
+                text, locale = run
+                normalised.append((text, locale, {}))
+        return normalised
 
     def _own(self, text_range):
         """Writer throws when a range from another text is passed in."""

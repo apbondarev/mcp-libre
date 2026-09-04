@@ -132,6 +132,10 @@ curl -X POST http://localhost:8765/execute \
 - `set_language_live`: Mark text at an address as being in a language (`ru-RU`), so Writer spell-checks it against the right dictionary
 - `replace_range_live`: Replace the text at an address — `{"paragraph": N}`, `{"paragraph": N, "offset": K, "length": L}` or `{"selection": true}`. This is what makes the addresses from `get_outline_live` and `find_text_live` actionable without a human selecting anything
 
+### **Runs**
+- `read_runs_live`: The formatted pieces a range is made of — text, address, font, size, colour, language per run
+- `replace_runs_live`: Replace a range with a sequence of runs, each explicitly formatted. Keeps a translation looking like the original, in one undo step
+
 ### **Formatting**
 - `format_range_live`: Character formatting at an address — `bold`, `italic`, `underline`, `font_size`, `font_name`. Needs no selection
 - `apply_paragraph_style_live`: Paragraph style at an address, e.g. `Preformatted Text` for a code block

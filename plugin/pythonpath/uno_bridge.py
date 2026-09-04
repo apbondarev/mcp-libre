@@ -1221,6 +1221,171 @@ class UNOBridge:
         if "background_color" in asked:
             target.CharBackColor = _colour(asked["background_color"])
 
+    def read_runs(self, address: Any, doc: Any = None) -> Dict[str, Any]:
+        """
+        The formatted runs the text at an address is made of
+
+        Needed because replacing a mixed-formatting range flattens it: one
+        setString over four runs leaves one run, so a monospace term loses its
+        font and a coloured phrase loses its colour. With the runs read out,
+        text can be translated piece by piece and written back through
+        replace_runs with each piece's look restored.
+
+        Every run carries an address that resolves to exactly that run.
+        """
+        doc, error = self._writer_document(doc, "Reading runs")
+        if error:
+            return error
+
+        try:
+            target = self._resolve_address(doc, address)
+            located, paragraph_cursor, _ = self._locate_range(doc, target)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        index = located["paragraph"]
+        if index is None:
+            return {"success": False,
+                    "error": "That address is outside the body text, so its "
+                             "runs cannot be read"}
+
+        span_start = located["offset"]
+        span_end = span_start + max(located["length"], 0)
+        if span_end == span_start:
+            span_end = span_start + len(paragraph_cursor.getString())
+
+        paragraph = self._paragraph_at(doc.getText(), index)
+        runs = []
+        offset = 0
+        try:
+            portions = paragraph.createEnumeration()
+        except Exception as e:
+            logger.error(f"Could not read the runs: {e}")
+            return {"success": False, "error": str(e)}
+
+        while portions.hasMoreElements():
+            portion = portions.nextElement()
+            try:
+                body = portion.getString()
+            except Exception:
+                continue
+            start, end = offset, offset + len(body)
+            offset = end
+            if not body or end <= span_start or start >= span_end:
+                continue
+
+            clipped_start = max(start, span_start)
+            clipped_end = min(end, span_end)
+            runs.append(self._describe_run(
+                portion, body[clipped_start - start:clipped_end - start],
+                index, clipped_start))
+
+        return {"success": True, "runs": runs, "count": len(runs),
+                "paragraph": index}
+
+    def _describe_run(self, portion: Any, body: str, paragraph: int,
+                      offset: int) -> Dict[str, Any]:
+        """One run as a caller sees it: its text, where it is, how it looks"""
+        colour = _get_property(portion, "CharColor", -1)
+        background = _get_property(portion, "CharBackColor", -1)
+        weight = _get_property(portion, "CharWeight", 100.0) or 100.0
+        posture = _get_property(portion, "CharPosture", None)
+        return {
+            "text": _text_payload(body)["text"],
+            "length": len(body),
+            "address": {"paragraph": paragraph, "offset": offset,
+                        "length": len(body)},
+            "bold": weight > 120.0,
+            "italic": str(posture).endswith("ITALIC"),
+            "underline": bool(_get_property(portion, "CharUnderline", 0)),
+            "font_name": _get_property(portion, "CharFontName"),
+            "font_size": _get_property(portion, "CharHeight"),
+            # -1 is "automatic", which is not a colour anyone chose
+            "color": None if colour in (-1, None) else _colour_name(colour & 0xFFFFFF),
+            "background_color": (None if background in (-1, None)
+                                 else _colour_name(background & 0xFFFFFF)),
+            "language": _locale_name(_get_property(portion, "CharLocale", None))
+        }
+
+    def replace_runs(self, address: Any, runs: Any,
+                     track_changes: Optional[bool] = None,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Replace a range with a sequence of runs, each formatted explicitly
+
+        This is how text keeps its look through a translation. Formatting is
+        applied per run afterwards rather than relied upon to be inherited:
+        setString takes its properties from the surrounding text in ways that
+        are not worth predicting.
+        """
+        doc, error = self._writer_document(doc, "Replacing runs")
+        if error:
+            return error
+
+        if not isinstance(runs, (list, tuple)) or not runs:
+            return {"success": False,
+                    "error": "runs must be a list with at least one run"}
+
+        prepared = []
+        for position, run in enumerate(runs):
+            if not isinstance(run, dict) or not isinstance(run.get("text"), str):
+                return {"success": False,
+                        "error": f"run {position} needs a text string"}
+            try:
+                formatting = self._formatting_of(run)
+                language = _locale(run["language"]) if run.get("language") else None
+            except AddressError as e:
+                return {"success": False, "error": f"run {position}: {e}"}
+            prepared.append((run["text"], formatting, language))
+
+        try:
+            target = self._resolve_address(doc, address)
+            located, _, _ = self._locate_range(doc, target)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        if located["paragraph"] is None:
+            return {"success": False,
+                    "error": "That address is outside the body text, so runs "
+                             "cannot be written into it"}
+
+        paragraph = located["paragraph"]
+        start = located["offset"]
+
+        def edit():
+            target.setString("".join(text for text, _, _ in prepared))
+            offset = start
+            for text, formatting, language in prepared:
+                if text and (formatting or language):
+                    span = self._resolve_address(
+                        doc, {"paragraph": paragraph, "offset": offset,
+                              "length": len(text)})
+                    if formatting:
+                        self._apply_character_formatting(span, formatting)
+                    if language is not None:
+                        span.CharLocale = language
+                offset += len(text)
+            return {"runs": len(prepared), "paragraph": paragraph,
+                    "characters": offset - start}
+
+        return self._guarded_edit(doc, "MCP: replace runs", track_changes, edit)
+
+    def _formatting_of(self, run: Dict[str, Any]) -> Dict[str, Any]:
+        """The character properties a run asked for, validated"""
+        asked = {}
+        for key in ("bold", "italic", "underline"):
+            if run.get(key) is not None:
+                asked[key] = bool(run[key])
+        if run.get("font_size") is not None:
+            asked["font_size"] = float(run["font_size"])
+        if run.get("font_name") is not None:
+            asked["font_name"] = str(run["font_name"])
+        if run.get("color") is not None:
+            asked["color"] = _colour_name(_colour(run["color"]))
+        if run.get("background_color") is not None:
+            asked["background_color"] = _colour_name(_colour(run["background_color"]))
+        return asked
+
     def format_paragraph(self, address: Any, background_color: Any = None,
                          border: Optional[bool] = None,
                          border_color: Any = "#808080",
