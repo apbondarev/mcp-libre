@@ -178,7 +178,8 @@ class FakeTextPortion:
 
     DEFAULTS = {"CharWeight": 100.0, "CharPosture": "NONE", "CharUnderline": 0,
                 "CharHeight": 12.0, "CharFontName": "Liberation Serif",
-                "CharColor": -1, "CharBackColor": -1}
+                "CharColor": -1, "CharBackColor": -1, "HyperLinkURL": "",
+                "HyperLinkTarget": "", "CharStyleName": ""}
 
     def __init__(self, text, locale, properties=None):
         self._text = text
@@ -267,7 +268,9 @@ def _para_style_property():
 for _range_type in (FakeRange, FakeTextCursor):
     for _property_name in ("CharWeight", "CharPosture", "CharUnderline",
                            "CharHeight", "CharFontName", "CharColor",
-                           "CharBackColor"):
+                           "CharBackColor", "HyperLinkURL", "HyperLinkTarget",
+                           "CharStyleName", "UnvisitedCharStyleName",
+                           "VisitedCharStyleName"):
         setattr(_range_type, _property_name, _char_property(_property_name))
     for _border_name in BORDER_PROPERTIES:
         setattr(_range_type, _border_name, _border_property(_border_name))
@@ -450,7 +453,18 @@ class FakeText:
         return "\n".join(self.paragraphs)
 
     def replace_range(self, start, end, value):
-        """Rewrite the span, joining paragraphs when the span crosses a break."""
+        """
+        Rewrite the span, joining paragraphs when the span crosses a break
+
+        Declared portions for the paragraphs touched are dropped: they
+        described the old text, and keeping them would let a test read back
+        runs that no longer exist. What the new text looks like is a question
+        only a live LibreOffice answers, so the read-after-write round trip is
+        checked in tests/live/writer_tools_check.py instead.
+        """
+        (first, _), (last, _) = sorted([start, end])
+        for paragraph in range(first, last + 1):
+            self.portions.pop(paragraph, None)
         (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
         if start_para == end_para:
             paragraph = self.paragraphs[start_para]

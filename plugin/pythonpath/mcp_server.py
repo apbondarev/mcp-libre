@@ -367,7 +367,10 @@ class LibreOfficeMCPServer:
                                 "font_size": {"type": "number"},
                                 "color": {"type": "string", "description": "#RRGGBB"},
                                 "background_color": {"type": "string", "description": "#RRGGBB"},
-                                "language": {"type": "string", "description": "Language tag such as ru-RU"}
+                                "language": {"type": "string", "description": "Language tag such as ru-RU"},
+                                "link": {"type": "string", "description": "Hyperlink URL. Carry this over when rewriting text that read_runs_live reported a link on, or the link is destroyed"},
+                                "link_target": {"type": "string", "description": "Where the link opens, e.g. \"_blank\""},
+                                "character_style": {"type": "string", "description": "Character style name, e.g. \"Source Text\" for inline code. Prefer carrying this over instead of copying the font it implies"}
                             },
                             "required": ["text"]
                         }

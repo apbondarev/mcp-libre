@@ -177,3 +177,107 @@ def test_run_tools_are_registered_and_dispatch():
                  {"text": " и что"}]}))
     assert written["success"] is True
     assert doc.getText().paragraphs[1] == "Кто и что"
+
+
+LINKED = [
+    {"text": "Character", "locale": EN, "CharStyleName": "Source Text"},
+    {"text": " is a ", "locale": EN},
+    {"text": "GraphQL Object type", "locale": EN, "CharColor": 0x000080,
+     "CharUnderline": 1, "HyperLinkURL": "https://graphql.org/learn/schema/",
+     "HyperLinkTarget": "_blank"},
+    {"text": ", meaning it has fields.", "locale": EN},
+]
+LINKED_TEXT = "".join(run["text"] for run in LINKED)
+
+
+@pytest.fixture
+def linked_doc():
+    return writer_doc(["Heading", LINKED_TEXT], caret=(1, 0),
+                      portions={1: LINKED})
+
+
+def test_reports_a_hyperlink_on_the_run_that_carries_it(bridge, linked_doc):
+    runs = bridge.read_runs({"paragraph": 1}, doc=linked_doc)["runs"]
+
+    assert runs[2]["link"] == "https://graphql.org/learn/schema/"
+    assert runs[2]["link_target"] == "_blank"
+    assert runs[0]["link"] is None
+
+
+def test_reports_the_character_style_of_a_run(bridge, linked_doc):
+    runs = bridge.read_runs({"paragraph": 1}, doc=linked_doc)["runs"]
+
+    assert runs[0]["character_style"] == "Source Text"
+    assert runs[1]["character_style"] is None
+
+
+def test_writes_a_hyperlink_back(bridge, linked_doc):
+    result = bridge.replace_runs({"paragraph": 1}, [
+        {"text": "Character", "character_style": "Source Text"},
+        {"text": " — это "},
+        {"text": "объектный тип GraphQL",
+         "link": "https://graphql.org/learn/schema/", "link_target": "_blank"},
+        {"text": ", то есть тип с полями."},
+    ], doc=linked_doc)
+
+    assert result["success"] is True
+    text = linked_doc.getText()
+    span = ((1, 16), (1, 37))
+    assert text.char_property(*span, "HyperLinkURL") == \
+        "https://graphql.org/learn/schema/"
+    assert text.char_property(*span, "HyperLinkTarget") == "_blank"
+
+
+def test_a_written_link_gets_the_look_of_a_link(bridge, linked_doc):
+    """The navy underline comes from the link character styles, not a colour."""
+    bridge.replace_runs({"paragraph": 1}, [
+        {"text": "ссылка", "link": "https://example.org/"},
+    ], doc=linked_doc)
+
+    text = linked_doc.getText()
+    span = ((1, 0), (1, 6))
+    assert text.char_property(*span, "UnvisitedCharStyleName") == "Internet link"
+    assert text.char_property(*span, "VisitedCharStyleName") == \
+        "Visited Internet Link"
+
+
+def test_writes_a_character_style_back(bridge, linked_doc):
+    bridge.replace_runs({"paragraph": 1},
+                        [{"text": "Character", "character_style": "Source Text"}],
+                        doc=linked_doc)
+
+    assert linked_doc.getText().char_property(
+        (1, 0), (1, 9), "CharStyleName") == "Source Text"
+
+
+def test_rejects_a_link_that_is_not_a_string(bridge, linked_doc):
+    result = bridge.replace_runs({"paragraph": 1},
+                                 [{"text": "a", "link": 42}], doc=linked_doc)
+
+    assert result["success"] is False
+    assert "link" in result["error"].lower()
+    assert linked_doc.getText().paragraphs[1] == LINKED_TEXT
+
+
+def test_a_run_read_out_can_be_written_straight_back(bridge, linked_doc):
+    """Read, change the text, write back: the shape of a translation.
+
+    What the document looks like afterwards is checked live, in
+    tests/live/writer_tools_check.py — the fake drops its declared runs on a
+    write, since they described text that no longer exists. Here the point is
+    that a run as read is accepted verbatim as a run to write, with its link
+    and character style carried through.
+    """
+    runs = bridge.read_runs({"paragraph": 1}, doc=linked_doc)["runs"]
+    rewritten = [dict(run, text=run["text"].upper()) for run in runs]
+
+    result = bridge.replace_runs({"paragraph": 1}, rewritten, doc=linked_doc)
+
+    assert result["success"] is True
+    assert result["runs"] == 4
+    assert linked_doc.getText().paragraphs[1] == LINKED_TEXT.upper()
+
+    text = linked_doc.getText()
+    assert text.char_property((1, 0), (1, 9), "CharStyleName") == "Source Text"
+    assert text.char_property((1, 15), (1, 34), "HyperLinkURL") == \
+        "https://graphql.org/learn/schema/"

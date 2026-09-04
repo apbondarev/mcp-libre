@@ -518,6 +518,67 @@ try:
     check("one undo step for the whole thing",
           doc.UndoManager.getAllUndoActionTitles()[0], "MCP: replace runs")
 
+    print("\n--- a hyperlink survives a rewrite only if it is carried over ---")
+    body = doc.getText()
+    paragraph = bridge._paragraph_at(body, 3)
+    span = body.createTextCursorByRange(paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.setString("")
+    cursor = body.createTextCursorByRange(paragraph.getStart())
+    body.insertString(cursor, "See ", False)
+    linked = body.createTextCursorByRange(paragraph.getStart())
+    linked.goRight(4, False)
+    body.insertString(linked, "the schema docs", False)
+    linked = body.createTextCursorByRange(paragraph.getStart())
+    linked.goRight(4, False)
+    linked.goRight(15, True)
+    linked.HyperLinkURL = "https://graphql.org/learn/schema/"
+    linked.HyperLinkTarget = "_blank"
+    linked.UnvisitedCharStyleName = "Internet link"
+    linked.VisitedCharStyleName = "Visited Internet Link"
+
+    read = bridge.read_runs({"paragraph": 3}, doc=doc)
+    print([(r["text"], r["link"]) for r in read["runs"]])
+    linked_run = next(r for r in read["runs"] if r["link"])
+    check("the link is reported", linked_run["link"],
+          "https://graphql.org/learn/schema/")
+    check("and where it opens", linked_run["link_target"], "_blank")
+
+    print("\n--- dropping it: a plain rewrite destroys the link ---")
+    plain = body.createTextCursorByRange(paragraph.getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("Смотри документацию по схеме")
+    check("no link left after a plain replacement",
+          any(r["link"] for r in bridge.read_runs({"paragraph": 3},
+                                                  doc=doc)["runs"]), False)
+
+    print("\n--- carrying it: replace_runs keeps the link and its look ---")
+    written = bridge.replace_runs({"paragraph": 3}, [
+        {"text": "Смотри ", "language": "ru-RU"},
+        {"text": "документацию по схеме",
+         "link": "https://graphql.org/learn/schema/", "link_target": "_blank",
+         "language": "ru-RU"},
+    ], doc=doc)
+    print(written)
+    after = bridge.read_runs({"paragraph": 3}, doc=doc)
+    print([(r["text"], r["link"], r["color"], r["underline"]) for r in after["runs"]])
+    restored = next((r for r in after["runs"] if r["link"]), None)
+    check("the link is back", restored is not None, True)
+    check("with the right target", restored["link_target"], "_blank")
+    check("and it looks like a link (underlined)", restored["underline"], True)
+    check("its text is the translation", restored["text"], "документацию по схеме")
+
+    print("\n--- read a run, change only its text, write it back ---")
+    runs = bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]
+    rewritten = [dict(run, text=run["text"].upper()) for run in runs]
+    bridge.replace_runs({"paragraph": 3}, rewritten, doc=doc)
+    round_trip = bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]
+    check("the text changed", [r["text"] for r in round_trip],
+          [r["text"] for r in rewritten])
+    check("the link came through the round trip",
+          next((r["link"] for r in round_trip if r["link"]), None),
+          "https://graphql.org/learn/schema/")
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

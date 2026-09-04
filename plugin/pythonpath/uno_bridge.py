@@ -81,6 +81,11 @@ def _locale_name(locale: Any) -> Optional[str]:
 
 COLOUR_TAG = re.compile(r"^#?([0-9A-Fa-f]{6})$")
 
+# What gives a hyperlink its look. The navy underline is these character
+# styles, not a colour anyone set, so restoring a link means restoring them.
+UNVISITED_LINK_STYLE = "Internet link"
+VISITED_LINK_STYLE = "Visited Internet Link"
+
 # 1 point in 1/100 mm, the unit UNO uses for widths and distances
 HUNDREDTHS_MM_PER_POINT = 2540.0 / 72.0
 
@@ -1220,6 +1225,14 @@ class UNOBridge:
             target.CharColor = _colour(asked["color"])
         if "background_color" in asked:
             target.CharBackColor = _colour(asked["background_color"])
+        if "character_style" in asked:
+            target.CharStyleName = asked["character_style"]
+        if "link" in asked:
+            target.HyperLinkURL = asked["link"]
+            target.HyperLinkTarget = asked.get("link_target", "")
+            # Without these the link works but does not look like one.
+            target.UnvisitedCharStyleName = UNVISITED_LINK_STYLE
+            target.VisitedCharStyleName = VISITED_LINK_STYLE
 
     def read_runs(self, address: Any, doc: Any = None) -> Dict[str, Any]:
         """
@@ -1304,7 +1317,13 @@ class UNOBridge:
             "color": None if colour in (-1, None) else _colour_name(colour & 0xFFFFFF),
             "background_color": (None if background in (-1, None)
                                  else _colour_name(background & 0xFFFFFF)),
-            "language": _locale_name(_get_property(portion, "CharLocale", None))
+            "language": _locale_name(_get_property(portion, "CharLocale", None)),
+            # A hyperlink is a property of the run, not of the text, and it is
+            # lost outright by a plain replacement — which is what makes
+            # reading it here the difference between keeping and destroying it.
+            "link": _get_property(portion, "HyperLinkURL", "") or None,
+            "link_target": _get_property(portion, "HyperLinkTarget", "") or None,
+            "character_style": _get_property(portion, "CharStyleName", "") or None
         }
 
     def replace_runs(self, address: Any, runs: Any,
@@ -1384,6 +1403,12 @@ class UNOBridge:
             asked["color"] = _colour_name(_colour(run["color"]))
         if run.get("background_color") is not None:
             asked["background_color"] = _colour_name(_colour(run["background_color"]))
+        for key in ("link", "link_target", "character_style"):
+            if run.get(key) is not None:
+                if not isinstance(run[key], str):
+                    raise AddressError(
+                        f"{key} must be a string, got {run[key]!r}")
+                asked[key] = run[key]
         return asked
 
     def format_paragraph(self, address: Any, background_color: Any = None,
