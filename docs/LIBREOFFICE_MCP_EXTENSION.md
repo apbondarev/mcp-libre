@@ -132,6 +132,11 @@ curl -X POST http://localhost:8765/execute \
 - `set_language_live`: Mark text at an address as being in a language (`ru-RU`), so Writer spell-checks it against the right dictionary
 - `replace_range_live`: Replace the text at an address — `{"paragraph": N}`, `{"paragraph": N, "offset": K, "length": L}` or `{"selection": true}`. This is what makes the addresses from `get_outline_live` and `find_text_live` actionable without a human selecting anything
 
+### **Formatting**
+- `format_range_live`: Character formatting at an address — `bold`, `italic`, `underline`, `font_size`, `font_name`. Needs no selection
+- `apply_paragraph_style_live`: Paragraph style at an address, e.g. `Preformatted Text` for a code block
+- `list_styles_live`: The style names this document actually has
+
 ### **Cursor and Selection**
 - `get_cursor_info_live`: Cursor position, the paragraph containing the cursor, and the selected text (Writer only)
   - No parameters; returns `cursor` (`paragraph_index`, `offset_in_paragraph`, `document_offset`, `page`), `paragraph` and `selection`

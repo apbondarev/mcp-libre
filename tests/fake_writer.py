@@ -145,8 +145,6 @@ class FakeParagraph(FakeRange):
     def __init__(self, model, index):
         super().__init__(model, (index, 0), (index, len(model.paragraphs[index])))
         self.index = index
-
-        self.ParaStyleName = model.styles[index]
         if model.expose_outline_level:
             self.OutlineLevel = model.outline_levels[index]
 
@@ -202,6 +200,68 @@ class FakeSpellAlternatives:
         return tuple(self._alternatives)
 
 
+def _char_property(name):
+    """A character property that records what was applied, for assertions."""
+
+    def getter(self):
+        return self.model.char_property(self.start, self.end, name)
+
+    def setter(self, value):
+        self.model.record_char_property(self.start, self.end, name, value)
+
+    return property(getter, setter)
+
+
+def _para_style_property():
+    def getter(self):
+        return self.model.styles[self.start[0]]
+
+    def setter(self, value):
+        self.model.set_style(self.start, self.end, value)
+
+    return property(getter, setter)
+
+
+for _range_type in (FakeRange, FakeTextCursor):
+    for _property_name in ("CharWeight", "CharPosture", "CharUnderline",
+                           "CharHeight", "CharFontName"):
+        setattr(_range_type, _property_name, _char_property(_property_name))
+    setattr(_range_type, "ParaStyleName", _para_style_property())
+
+
+class FakeStyleFamily:
+    def __init__(self, names):
+        self.names = list(names)
+
+    def hasByName(self, name):
+        return name in self.names
+
+    def getElementNames(self):
+        return tuple(self.names)
+
+
+class FakeStyleFamilies:
+    """doc.StyleFamilies, with the families a Writer document has."""
+
+    def __init__(self, families=None):
+        self.families = families or {
+            "ParagraphStyles": ["Standard", "Text body", "Heading 1", "Heading 2",
+                                "Preformatted Text", "Quotations"],
+            "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
+        }
+
+    def getElementNames(self):
+        return tuple(self.families)
+
+    def hasByName(self, name):
+        return name in self.families
+
+    def getByName(self, name):
+        if name not in self.families:
+            raise RuntimeError(f"no style family {name}")
+        return FakeStyleFamily(self.families[name])
+
+
 class FakeTextTable:
     """A table in the body enumeration: no getStart(), so the walk must skip it."""
 
@@ -229,12 +289,29 @@ class FakeText:
                                else [0] * len(self.paragraphs))
         self.expose_outline_level = expose_outline_level
         self.default_locale = default_locale or ("en", "US")
+        self.char_formatting = []
         self.portions = dict(portions) if portions else {}
         self.enumeration_items = (
             list(range(len(self.paragraphs)))
             if enumeration_items is None
             else list(enumeration_items)
         )
+
+    def record_char_property(self, start, end, name, value):
+        """Remember a character property applied to a span."""
+        self.char_formatting.append({"span": (start, end), name: value})
+
+    def char_property(self, start, end, name):
+        """The last value applied to this span for a property, else None."""
+        for applied in reversed(self.char_formatting):
+            if applied["span"] == (start, end) and name in applied:
+                return applied[name]
+        return None
+
+    def set_style(self, start, end, style):
+        (start_para, _), (end_para, _) = sorted([start, end])
+        for paragraph in range(start_para, end_para + 1):
+            self.styles[paragraph] = style
 
     def locale_at(self, position):
         """The locale of the portion holding a position."""
@@ -401,6 +478,10 @@ class FakeDoc:
 
     def getRedlines(self):
         return FakeRedlines(getattr(self, "redline_count", 0))
+
+    @property
+    def StyleFamilies(self):
+        return FakeStyleFamilies()
 
     def supportsService(self, name):
         return name in self.services

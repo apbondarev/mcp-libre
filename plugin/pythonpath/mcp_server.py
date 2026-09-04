@@ -313,6 +313,93 @@ class LibreOfficeMCPServer:
             "handler": self.check_spelling_live
         }
         
+        # Formatting tools
+        self.tools["format_range_live"] = {
+            "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Where to act: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "bold": {"type": "boolean", "description": "Bold on or off"},
+                    "italic": {"type": "boolean", "description": "Italic on or off"},
+                    "underline": {"type": "boolean", "description": "Underline on or off"},
+                    "font_size": {"type": "number", "description": "Font size in points"},
+                    "font_name": {"type": "string", "description": "Font family, e.g. \"Liberation Mono\" for a code block"},
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Omit to follow the document's own setting; true records this change, false refuses to record it"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address"]
+            },
+            "handler": self.format_range_live
+        }
+        
+        self.tools["apply_paragraph_style_live"] = {
+            "description": "Give the paragraphs at an address a paragraph style. Prefer this over setting a font by hand for code blocks and quotations: \"Preformatted Text\" carries the monospace font and the spacing together. Use list_styles_live for the names this document has",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Where to act: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "style": {
+                        "type": "string",
+                        "description": "Paragraph style name, e.g. \"Preformatted Text\", \"Heading 2\", \"Quotations\""
+                    },
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Omit to follow the document's own setting; true records this change, false refuses to record it"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address", "style"]
+            },
+            "handler": self.apply_paragraph_style_live
+        }
+        
+        self.tools["list_styles_live"] = {
+            "description": "List the style names the active Writer document has, so a style is never guessed at",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "family": {
+                        "type": "string",
+                        "description": "Which family to list: ParagraphStyles (default), CharacterStyles, PageStyles, FrameStyles, NumberingStyles",
+                        "default": "ParagraphStyles"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.list_styles_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -531,6 +618,41 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.set_language(address, language, doc=doc)
     
+    def format_range_live(self, address: Any, bold: Optional[bool] = None,
+                          italic: Optional[bool] = None,
+                          underline: Optional[bool] = None,
+                          font_size: Optional[float] = None,
+                          font_name: Optional[str] = None,
+                          track_changes: Optional[bool] = None,
+                          document: Optional[str] = None) -> Dict[str, Any]:
+        """Apply character formatting to the text at an address"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.format_range(address, bold=bold, italic=italic,
+                                            underline=underline,
+                                            font_size=font_size,
+                                            font_name=font_name,
+                                            track_changes=track_changes, doc=doc)
+
+    def apply_paragraph_style_live(self, address: Any, style: str,
+                                   track_changes: Optional[bool] = None,
+                                   document: Optional[str] = None) -> Dict[str, Any]:
+        """Give the paragraphs at an address a paragraph style"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.apply_paragraph_style(
+            address, style, track_changes=track_changes, doc=doc)
+
+    def list_styles_live(self, family: str = "ParagraphStyles",
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """List the style names the document has"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.list_styles(family=family, doc=doc)
+
     def save_document_live(self, file_path: Optional[str] = None) -> Dict[str, Any]:
         """Save the currently active document"""
         return self.uno_bridge.save_document(file_path=file_path)

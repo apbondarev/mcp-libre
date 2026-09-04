@@ -367,7 +367,47 @@ try:
     check("only the replacement remains", clean_text, "Гамма дельта.")
     check("the document keeps its own setting", doc.RecordChanges, True)
 
+    print("\n--- list_styles / apply_paragraph_style / format_range ---")
     doc.RecordChanges = False
+    styles = bridge.list_styles(doc=doc)
+    check("styles listed", styles.get("success"), True)
+    check("Preformatted Text is among them",
+          "Preformatted Text" in styles["styles"], True)
+    print(f"   {styles['count']} paragraph styles")
+
+    bridge.replace_range({"paragraph": 3}, "query { hero { name } }",
+                         language="en-US", doc=doc)
+    styled = bridge.apply_paragraph_style({"paragraph": 3}, "Preformatted Text",
+                                          doc=doc)
+    print(styled)
+    check("style applied", styled.get("success"), True)
+    check("the paragraph now carries it",
+          bridge.read_paragraphs(start=3, count=1,
+                                 doc=doc)["paragraphs"][0]["style"],
+          "Preformatted Text")
+    paragraph = bridge._paragraph_at(doc.getText(), 3)
+    font = paragraph.createEnumeration().nextElement().CharFontName
+    print("   font from the style:", font)
+    check("the style brought a monospace font", "Mono" in font, True)
+
+    refused = bridge.apply_paragraph_style({"paragraph": 3}, "No Such Style",
+                                           doc=doc)
+    check("an unknown style is refused", refused.get("success"), False)
+    check("and the caller is pointed at list_styles",
+          "list_styles" in refused["error"], True)
+
+    formatted = bridge.format_range({"paragraph": 3, "offset": 0, "length": 5},
+                                    bold=True, font_name="Liberation Mono",
+                                    doc=doc)
+    print(formatted)
+    check("formatting applied", formatted.get("success"), True)
+    first = bridge._paragraph_at(doc.getText(), 3).createEnumeration().nextElement()
+    check("the first run is bold", first.CharWeight, 150.0)
+    check("and monospace", first.CharFontName, "Liberation Mono")
+
+    check("formatting with nothing to apply is refused",
+          bridge.format_range({"paragraph": 3}, doc=doc).get("success"), False)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

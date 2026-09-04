@@ -389,13 +389,21 @@ class UNOBridge:
             if not doc or not _supports(doc, WRITER_SERVICE):
                 return {"success": False, "error": "No Writer document available"}
             
-            # Get current selection
-            selection = doc.getCurrentController().getSelection()
-            if selection.getCount() == 0:
-                return {"success": False, "error": "No text selected"}
-            
-            # Apply formatting to selection
-            text_range = selection.getByIndex(0)
+            # The selection, which must actually hold something: a collapsed
+            # caret answers getCount() == 1 with an empty range, so the old
+            # check never fired and this reported success while doing nothing.
+            try:
+                text_range = self._resolve_address(doc, {"selection": True})
+            except AddressError as e:
+                return {"success": False, "error": str(e)}
+
+            if not text_range.getString():
+                return {
+                    "success": False,
+                    "error": "Nothing is selected, so there is nothing to "
+                             "format. Select the text first, or use "
+                             "format_range with an address."
+                }
             
             # Apply various formatting options
             if "bold" in formatting:
@@ -1050,6 +1058,171 @@ class UNOBridge:
             "tracked": wanted,
             "language": _locale_name(locale) if locale is not None else None
         }
+
+    def _guarded_edit(self, doc: Any, undo_title: str,
+                      track_changes: Optional[bool], edit) -> Dict[str, Any]:
+        """
+        Run edit() as one undo step, under the guards every mutation shares
+
+        Refuses a read-only document, honours the three states of
+        track_changes and puts the document's own setting back, and reports
+        what edit() returns alongside whether the change was recorded.
+        """
+        if _is_readonly(doc):
+            return {"success": False,
+                    "error": "The document is read-only, so it cannot be edited"}
+
+        recording = bool(_get_property(doc, "RecordChanges", False))
+        wanted = recording if track_changes is None else bool(track_changes)
+        override = wanted != recording
+        undo = _get_property(doc, "UndoManager", None)
+
+        if undo:
+            undo.enterUndoContext(undo_title)
+        try:
+            if override:
+                doc.RecordChanges = wanted
+            outcome = edit()
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"{undo_title} failed: {e}")
+            return {"success": False, "error": str(e)}
+        finally:
+            if override:
+                try:
+                    doc.RecordChanges = recording
+                except Exception as e:
+                    logger.error(f"Could not restore RecordChanges: {e}")
+            if undo:
+                undo.leaveUndoContext()
+
+        result = {"success": True, "tracked": wanted}
+        result.update(outcome or {})
+        return result
+
+    def format_range(self, address: Any, bold: Optional[bool] = None,
+                     italic: Optional[bool] = None,
+                     underline: Optional[bool] = None,
+                     font_size: Optional[float] = None,
+                     font_name: Optional[str] = None,
+                     track_changes: Optional[bool] = None,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Apply character formatting to the text at an address
+
+        format_text can only reach the human's current selection, and nothing
+        in this server can select, so an assistant asked to make a code block
+        monospace had no way to do it. This takes an address instead.
+        """
+        doc, error = self._writer_document(doc, "Formatting text")
+        if error:
+            return error
+
+        asked = {}
+        if bold is not None:
+            asked["bold"] = bool(bold)
+        if italic is not None:
+            asked["italic"] = bool(italic)
+        if underline is not None:
+            asked["underline"] = bool(underline)
+        if font_size is not None:
+            asked["font_size"] = float(font_size)
+        if font_name is not None:
+            asked["font_name"] = str(font_name)
+
+        if not asked:
+            return {"success": False,
+                    "error": "Nothing to apply: pass at least one of bold, "
+                             "italic, underline, font_size, font_name"}
+
+        def edit():
+            target = self._resolve_address(doc, address)
+            self._apply_character_formatting(target, asked)
+            return {"applied": asked, "characters": len(target.getString())}
+
+        return self._guarded_edit(doc, "MCP: format text", track_changes, edit)
+
+    def _apply_character_formatting(self, target: Any, asked: Dict[str, Any]):
+        """Write the character properties a formatting request asked for"""
+        if "bold" in asked:
+            target.CharWeight = 150.0 if asked["bold"] else 100.0
+        if "italic" in asked:
+            target.CharPosture = uno.Enum(
+                "com.sun.star.awt.FontSlant",
+                "ITALIC" if asked["italic"] else "NONE")
+        if "underline" in asked:
+            target.CharUnderline = 1 if asked["underline"] else 0
+        if "font_size" in asked:
+            target.CharHeight = asked["font_size"]
+        if "font_name" in asked:
+            target.CharFontName = asked["font_name"]
+
+    def apply_paragraph_style(self, address: Any, style: str,
+                              track_changes: Optional[bool] = None,
+                              doc: Any = None) -> Dict[str, Any]:
+        """
+        Give the paragraphs at an address a paragraph style
+
+        This is the reliable way to make a block monospace: "Preformatted Text"
+        carries the font and the spacing together, where setting a font by hand
+        leaves the paragraph spacing of body text.
+
+        A style the document does not have throws deep inside UNO, so the name
+        is checked first and the caller is pointed at list_styles.
+        """
+        doc, error = self._writer_document(doc, "Applying a paragraph style")
+        if error:
+            return error
+
+        if not isinstance(style, str) or not style:
+            return {"success": False, "error": "style must be a non-empty string"}
+
+        if not self._has_style(doc, "ParagraphStyles", style):
+            return {
+                "success": False,
+                "error": f"This document has no paragraph style {style!r}. "
+                         f"Use list_styles to see the names it does have."
+            }
+
+        def edit():
+            target = self._resolve_address(doc, address)
+            target.ParaStyleName = style
+            return {"style": style}
+
+        return self._guarded_edit(doc, "MCP: apply paragraph style",
+                                  track_changes, edit)
+
+    def list_styles(self, family: str = "ParagraphStyles",
+                    doc: Any = None) -> Dict[str, Any]:
+        """The style names a document actually has, so callers stop guessing"""
+        doc, error = self._writer_document(doc, "Listing styles")
+        if error:
+            return error
+
+        try:
+            families = doc.StyleFamilies
+            if not families.hasByName(family):
+                return {
+                    "success": False,
+                    "error": f"No style family {family!r}. This document has: "
+                             f"{', '.join(families.getElementNames())}"
+                }
+            names = list(families.getByName(family).getElementNames())
+        except Exception as e:
+            logger.error(f"Could not list styles: {e}")
+            return {"success": False, "error": str(e)}
+
+        return {"success": True, "family": family, "styles": names,
+                "count": len(names)}
+
+    def _has_style(self, doc: Any, family: str, style: str) -> bool:
+        """Whether a document carries a style, False if it cannot be asked"""
+        try:
+            return bool(doc.StyleFamilies.getByName(family).hasByName(style))
+        except Exception as e:
+            logger.info(f"Could not check style {style!r}: {e}")
+            return False
 
     def _count_tracked_changes(self, doc: Any) -> Optional[int]:
         """How many recorded changes wait to be accepted, None if unknown"""
