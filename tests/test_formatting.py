@@ -173,3 +173,113 @@ def test_formatting_tools_are_registered_and_dispatch():
 
     assert result["success"] is True
     assert doc.getText().styles[2] == "Preformatted Text"
+
+
+def test_applies_a_character_colour(bridge, doc):
+    result = bridge.format_range({"paragraph": 0, "offset": 0, "length": 5},
+                                 color="#0000CC", doc=doc)
+
+    assert result["success"] is True
+    assert applied(doc, "CharColor") == 0x0000CC
+    assert result["applied"]["color"] == "#0000CC"
+
+
+def test_applies_a_character_background(bridge, doc):
+    bridge.format_range({"paragraph": 0}, background_color="FFFFCC", doc=doc)
+
+    assert applied(doc, "CharBackColor") == 0xFFFFCC
+
+
+def test_accepts_a_colour_as_a_number(bridge, doc):
+    bridge.format_range({"paragraph": 0}, color=0x336699, doc=doc)
+
+    assert applied(doc, "CharColor") == 0x336699
+
+
+def test_rejects_something_that_is_not_a_colour(bridge, doc):
+    for bad in ["blueish", "#12345", "#GGHHII", None.__class__, -1, 0x1000000]:
+        result = bridge.format_range({"paragraph": 0}, color=bad, doc=doc)
+        assert result["success"] is False, bad
+        assert "colour" in result["error"].lower() or "color" in result["error"].lower()
+
+
+def test_draws_a_box_around_a_paragraph(bridge, doc):
+    result = bridge.format_paragraph({"paragraph": 0}, border=True,
+                                     border_color="#808080", border_width=0.5,
+                                     doc=doc)
+
+    assert result["success"] is True
+    text = doc.getText()
+    for side in ("TopBorder", "BottomBorder", "LeftBorder", "RightBorder"):
+        line = text.border_property((0, 0), (0, len(text.paragraphs[0])), side)
+        assert line is not None, side
+        assert line.Color == 0x808080
+        assert line.LineWidth == 18  # 0.5pt in 1/100 mm
+
+
+def test_removing_the_border_sets_zero_width_lines(bridge, doc):
+    bridge.format_paragraph({"paragraph": 0}, border=False, doc=doc)
+
+    text = doc.getText()
+    line = text.border_property((0, 0), (0, len(text.paragraphs[0])), "TopBorder")
+    assert line.LineWidth == 0
+
+
+def test_padding_sets_the_distance_on_every_side(bridge, doc):
+    bridge.format_paragraph({"paragraph": 0}, border=True, padding=2.0, doc=doc)
+
+    text = doc.getText()
+    span = ((0, 0), (0, len(text.paragraphs[0])))
+    for side in ("TopBorderDistance", "BottomBorderDistance",
+                 "LeftBorderDistance", "RightBorderDistance"):
+        assert text.border_property(*span, side) == 71  # 2pt in 1/100 mm
+
+
+def test_fills_the_paragraph_background(bridge, doc):
+    """ParaBackColor does not stick; FillStyle plus FillColor is what works."""
+    result = bridge.format_paragraph({"paragraph": 1}, background_color="#F5F5F5",
+                                     doc=doc)
+
+    assert result["success"] is True
+    assert doc.getText().fills[1]["FillColor"] == 0xF5F5F5
+    assert doc.getText().fills[1]["FillStyle"] is not None
+
+
+def test_format_paragraph_refuses_when_nothing_was_asked_for(bridge, doc):
+    result = bridge.format_paragraph({"paragraph": 0}, doc=doc)
+
+    assert result["success"] is False
+    assert "nothing to apply" in result["error"].lower()
+
+
+def test_format_paragraph_is_one_undo_step(bridge, doc):
+    bridge.format_paragraph({"paragraph": 0}, border=True, doc=doc)
+
+    assert doc.UndoManager.calls == [("enter", "MCP: format paragraph"),
+                                     ("leave", None)]
+
+
+def test_format_paragraph_rejects_a_bad_address(bridge, doc):
+    result = bridge.format_paragraph({"paragraph": 99}, border=True, doc=doc)
+
+    assert result["success"] is False
+    assert "no body paragraph 99" in result["error"]
+
+
+def test_format_paragraph_tool_is_registered_and_dispatches():
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    assert "format_paragraph_live" in server.tools
+    assert "color" in server.tools["format_range_live"]["parameters"]["properties"]
+
+    result = asyncio.run(server.execute_tool(
+        "format_paragraph_live",
+        {"address": {"paragraph": 2}, "background_color": "#F5F5F5",
+         "border": True}))
+
+    assert result["success"] is True
+    assert doc.getText().fills[2]["FillColor"] == 0xF5F5F5

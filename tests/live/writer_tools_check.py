@@ -408,6 +408,49 @@ try:
     check("formatting with nothing to apply is refused",
           bridge.format_range({"paragraph": 3}, doc=doc).get("success"), False)
 
+    print("\n--- colours and a framed block ---")
+    bridge.replace_range({"paragraph": 3}, "query { hero }", language="en-US",
+                         doc=doc)
+    coloured = bridge.format_range({"paragraph": 3, "offset": 0, "length": 5},
+                                   color="#0000CC", background_color="#FFFFCC",
+                                   doc=doc)
+    print(coloured)
+    check("colour applied", coloured.get("success"), True)
+    run = bridge._paragraph_at(doc.getText(), 3).createEnumeration().nextElement()
+    check("character colour", hex(run.CharColor), hex(0x0000CC))
+    check("character background", hex(run.CharBackColor), hex(0xFFFFCC))
+
+    framed = bridge.format_paragraph({"paragraph": 3}, background_color="#F5F5F5",
+                                     border=True, border_color="#808080",
+                                     border_width=0.5, padding=2.0, doc=doc)
+    print(framed)
+    check("frame applied", framed.get("success"), True)
+    paragraph = bridge._paragraph_at(doc.getText(), 3)
+    check("top border colour", hex(paragraph.TopBorder.Color), hex(0x808080))
+    check("border on all four sides",
+          [paragraph.TopBorder.LineWidth > 0, paragraph.BottomBorder.LineWidth > 0,
+           paragraph.LeftBorder.LineWidth > 0, paragraph.RightBorder.LineWidth > 0],
+          [True, True, True, True])
+    check("padding on all four sides",
+          [paragraph.TopBorderDistance, paragraph.BottomBorderDistance,
+           paragraph.LeftBorderDistance, paragraph.RightBorderDistance],
+          [71, 71, 71, 71])
+    check("background really applied, not silently ignored",
+          hex(paragraph.ParaBackColor & 0xFFFFFF), hex(0xF5F5F5))
+    check("and the paragraph is no longer transparent",
+          paragraph.ParaBackTransparent, False)
+    check("consecutive paragraphs would merge into one box",
+          paragraph.ParaIsConnectBorder, True)
+
+    removed = bridge.format_paragraph({"paragraph": 3}, border=False, doc=doc)
+    check("border removed", removed.get("success"), True)
+    check("zero width now",
+          bridge._paragraph_at(doc.getText(), 3).TopBorder.LineWidth, 0)
+
+    check("a colour that is not one is refused",
+          bridge.format_range({"paragraph": 3}, color="blueish",
+                              doc=doc).get("success"), False)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

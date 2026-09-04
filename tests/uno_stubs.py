@@ -51,6 +51,9 @@ def install_uno_stubs():
         _STRUCT_FIELDS = {
             "com.sun.star.lang.Locale": ("Language", "Country", "Variant"),
             "com.sun.star.beans.PropertyValue": ("Name", "Handle", "Value", "State"),
+            "com.sun.star.table.BorderLine2": ("Color", "InnerLineWidth",
+                                               "OuterLineWidth", "LineDistance",
+                                               "LineStyle", "LineWidth"),
         }
 
         def create_uno_struct(name, *args):

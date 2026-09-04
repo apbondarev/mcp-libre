@@ -79,6 +79,55 @@ def _locale_name(locale: Any) -> Optional[str]:
     return f"{language}-{_get_property(locale, 'Country', '') or ''}"
 
 
+COLOUR_TAG = re.compile(r"^#?([0-9A-Fa-f]{6})$")
+
+# 1 point in 1/100 mm, the unit UNO uses for widths and distances
+HUNDREDTHS_MM_PER_POINT = 2540.0 / 72.0
+
+
+def _colour(value: Any) -> int:
+    """
+    A colour as UNO wants it: 0xRRGGBB
+
+    Accepts "#F5F5F5", "F5F5F5" or a plain integer, and refuses anything else
+    rather than painting text some arbitrary colour.
+    """
+    if isinstance(value, bool):
+        raise AddressError(f"colour must be #RRGGBB or a number, got {value!r}")
+    if isinstance(value, int):
+        if 0 <= value <= 0xFFFFFF:
+            return value
+        raise AddressError(f"colour {value} is outside 0x000000..0xFFFFFF")
+    match = COLOUR_TAG.match(value) if isinstance(value, str) else None
+    if not match:
+        raise AddressError(
+            f"colour must look like \"#RRGGBB\", got {value!r}")
+    return int(match.group(1), 16)
+
+
+def _colour_name(value: int) -> str:
+    """The #RRGGBB spelling of a colour, for reporting back"""
+    return f"#{value:06X}"
+
+
+def _points_to_uno(points: float) -> int:
+    """Points to the 1/100 mm UNO measures widths and distances in"""
+    return int(round(float(points) * HUNDREDTHS_MM_PER_POINT))
+
+
+def _border_line(colour: int, points: float) -> Any:
+    """A com.sun.star.table.BorderLine2 of the given colour and thickness"""
+    line = uno.createUnoStruct("com.sun.star.table.BorderLine2")
+    width = _points_to_uno(points)
+    line.Color = colour
+    line.LineStyle = 0  # SOLID
+    line.LineWidth = width
+    line.OuterLineWidth = width
+    line.InnerLineWidth = 0
+    line.LineDistance = 0
+    return line
+
+
 def _is_readonly(doc: Any) -> bool:
     """Whether the document refuses edits, False when it cannot be asked"""
     try:
@@ -1106,6 +1155,8 @@ class UNOBridge:
                      underline: Optional[bool] = None,
                      font_size: Optional[float] = None,
                      font_name: Optional[str] = None,
+                     color: Any = None,
+                     background_color: Any = None,
                      track_changes: Optional[bool] = None,
                      doc: Any = None) -> Dict[str, Any]:
         """
@@ -1130,11 +1181,19 @@ class UNOBridge:
             asked["font_size"] = float(font_size)
         if font_name is not None:
             asked["font_name"] = str(font_name)
+        try:
+            if color is not None:
+                asked["color"] = _colour_name(_colour(color))
+            if background_color is not None:
+                asked["background_color"] = _colour_name(_colour(background_color))
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
 
         if not asked:
             return {"success": False,
                     "error": "Nothing to apply: pass at least one of bold, "
-                             "italic, underline, font_size, font_name"}
+                             "italic, underline, font_size, font_name, "
+                             "color, background_color"}
 
         def edit():
             target = self._resolve_address(doc, address)
@@ -1157,6 +1216,99 @@ class UNOBridge:
             target.CharHeight = asked["font_size"]
         if "font_name" in asked:
             target.CharFontName = asked["font_name"]
+        if "color" in asked:
+            target.CharColor = _colour(asked["color"])
+        if "background_color" in asked:
+            target.CharBackColor = _colour(asked["background_color"])
+
+    def format_paragraph(self, address: Any, background_color: Any = None,
+                         border: Optional[bool] = None,
+                         border_color: Any = "#808080",
+                         border_width: float = 0.5,
+                         padding: Optional[float] = None,
+                         track_changes: Optional[bool] = None,
+                         doc: Any = None) -> Dict[str, Any]:
+        """
+        Put a frame and a background behind a paragraph
+
+        Borders live on the range as TopBorder/BottomBorder/LeftBorder/
+        RightBorder — *not* ParaTopBorder, which does not exist and is the
+        wrong guess to make. Consecutive paragraphs given the same border are
+        drawn as one box, because ParaIsConnectBorder defaults to true, so a
+        code block is framed by formatting each of its paragraphs.
+
+        The background is the other trap: ParaBackColor cannot be written,
+        neither on a cursor nor on the paragraph. FillStyle plus FillColor on
+        the paragraph object is what works, and what survives saving.
+        """
+        doc, error = self._writer_document(doc, "Formatting a paragraph")
+        if error:
+            return error
+
+        asked = {}
+        try:
+            if background_color is not None:
+                asked["background_color"] = _colour_name(_colour(background_color))
+            if border is not None:
+                asked["border"] = bool(border)
+                asked["border_color"] = _colour_name(_colour(border_color))
+                asked["border_width"] = float(border_width)
+            if padding is not None:
+                asked["padding"] = float(padding)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        if not asked:
+            return {"success": False,
+                    "error": "Nothing to apply: pass background_color, border "
+                             "or padding"}
+
+        def edit():
+            target = self._resolve_address(doc, address)
+
+            if "border" in asked:
+                line = _border_line(
+                    _colour(asked["border_color"]),
+                    asked["border_width"] if asked["border"] else 0.0)
+                for side in ("TopBorder", "BottomBorder",
+                             "LeftBorder", "RightBorder"):
+                    setattr(target, side, line)
+
+            if "padding" in asked:
+                distance = _points_to_uno(asked["padding"])
+                for side in ("TopBorderDistance", "BottomBorderDistance",
+                             "LeftBorderDistance", "RightBorderDistance"):
+                    setattr(target, side, distance)
+
+            if "background_color" in asked:
+                self._fill_paragraphs(doc, target,
+                                      _colour(asked["background_color"]))
+
+            return {"applied": asked}
+
+        return self._guarded_edit(doc, "MCP: format paragraph",
+                                  track_changes, edit)
+
+    def _fill_paragraphs(self, doc: Any, target: Any, colour: int):
+        """
+        Give every paragraph the range touches a background
+
+        The fill has to be set on the paragraph objects themselves: writing
+        ParaBackColor on a text range is silently ignored.
+        """
+        start = self._locate_range(doc, target.getStart())[0]["paragraph"]
+        end = self._locate_range(doc, target.getEnd())[0]["paragraph"]
+        if start is None:
+            raise AddressError("that address is outside the body text, so its "
+                               "paragraphs cannot be filled")
+        if end is None:
+            end = start
+
+        for paragraph, index in self._body_paragraphs(doc):
+            if start <= index <= end:
+                paragraph.FillStyle = uno.Enum("com.sun.star.drawing.FillStyle",
+                                               "SOLID")
+                paragraph.FillColor = colour
 
     def apply_paragraph_style(self, address: Any, style: str,
                               track_changes: Optional[bool] = None,

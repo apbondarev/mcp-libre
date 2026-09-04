@@ -135,6 +135,7 @@ curl -X POST http://localhost:8765/execute \
 ### **Formatting**
 - `format_range_live`: Character formatting at an address — `bold`, `italic`, `underline`, `font_size`, `font_name`. Needs no selection
 - `apply_paragraph_style_live`: Paragraph style at an address, e.g. `Preformatted Text` for a code block
+- `format_paragraph_live`: Border and background behind a paragraph — `background_color`, `border`, `border_color`, `border_width`, `padding`. Formatting consecutive paragraphs alike draws one box around the block
 - `list_styles_live`: The style names this document actually has
 
 ### **Cursor and Selection**

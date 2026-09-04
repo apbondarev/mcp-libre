@@ -107,6 +107,9 @@ class FakeTextCursor:
     def getStart(self):
         return FakeRange(self.model, self.start)
 
+    def getEnd(self):
+        return FakeRange(self.model, self.end)
+
     def gotoStartOfParagraph(self, expand):
         self.pos = (self.pos[0], 0)
         if not expand:
@@ -147,6 +150,22 @@ class FakeParagraph(FakeRange):
         self.index = index
         if model.expose_outline_level:
             self.OutlineLevel = model.outline_levels[index]
+
+    @property
+    def FillStyle(self):
+        return self.model.fills.get(self.index, {}).get("FillStyle")
+
+    @FillStyle.setter
+    def FillStyle(self, value):
+        self.model.fills.setdefault(self.index, {})["FillStyle"] = value
+
+    @property
+    def FillColor(self):
+        return self.model.fills.get(self.index, {}).get("FillColor")
+
+    @FillColor.setter
+    def FillColor(self, value):
+        self.model.fills.setdefault(self.index, {})["FillColor"] = value
 
     def createEnumeration(self):
         return FakeEnumeration(
@@ -212,6 +231,23 @@ def _char_property(name):
     return property(getter, setter)
 
 
+BORDER_PROPERTIES = ("TopBorder", "BottomBorder", "LeftBorder", "RightBorder",
+                     "TopBorderDistance", "BottomBorderDistance",
+                     "LeftBorderDistance", "RightBorderDistance")
+
+
+def _border_property(name):
+    """A paragraph border side, recorded per span for assertions."""
+
+    def getter(self):
+        return self.model.border_property(self.start, self.end, name)
+
+    def setter(self, value):
+        self.model.record_border_property(self.start, self.end, name, value)
+
+    return property(getter, setter)
+
+
 def _para_style_property():
     def getter(self):
         return self.model.styles[self.start[0]]
@@ -224,8 +260,11 @@ def _para_style_property():
 
 for _range_type in (FakeRange, FakeTextCursor):
     for _property_name in ("CharWeight", "CharPosture", "CharUnderline",
-                           "CharHeight", "CharFontName"):
+                           "CharHeight", "CharFontName", "CharColor",
+                           "CharBackColor"):
         setattr(_range_type, _property_name, _char_property(_property_name))
+    for _border_name in BORDER_PROPERTIES:
+        setattr(_range_type, _border_name, _border_property(_border_name))
     setattr(_range_type, "ParaStyleName", _para_style_property())
 
 
@@ -290,12 +329,23 @@ class FakeText:
         self.expose_outline_level = expose_outline_level
         self.default_locale = default_locale or ("en", "US")
         self.char_formatting = []
+        self.border_formatting = []
+        self.fills = {}
         self.portions = dict(portions) if portions else {}
         self.enumeration_items = (
             list(range(len(self.paragraphs)))
             if enumeration_items is None
             else list(enumeration_items)
         )
+
+    def record_border_property(self, start, end, name, value):
+        self.border_formatting.append({"span": (start, end), name: value})
+
+    def border_property(self, start, end, name):
+        for applied in reversed(self.border_formatting):
+            if applied["span"] == (start, end) and name in applied:
+                return applied[name]
+        return None
 
     def record_char_property(self, start, end, name, value):
         """Remember a character property applied to a span."""
