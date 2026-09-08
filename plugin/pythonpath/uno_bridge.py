@@ -177,6 +177,58 @@ def _comment_date(note: Any) -> Optional[str]:
         return None
 
 
+def _comment_language(note: Any) -> Optional[str]:
+    """
+    The language of a comment's own text
+
+    Writer spell checks the note in the margin against this, so a Russian
+    comment left at en-US is underlined word by word. It lives on the runs
+    of the annotation's own text, not on the field.
+    """
+    body = _get_property(note, "TextRange", None)
+    if body is None:
+        return None
+    try:
+        paragraphs = body.createEnumeration()
+        while paragraphs.hasMoreElements():
+            portions = paragraphs.nextElement().createEnumeration()
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if portion.getString():
+                    return _locale_name(_get_property(portion, "CharLocale",
+                                                      None))
+    except Exception as e:
+        logger.info(f"Could not read a comment's language: {e}")
+    return _locale_name(_get_property(body, "CharLocale", None))
+
+
+# How the language of a comment's text is set, all of it measured on a live
+# LibreOffice because none of it is guessable:
+#
+#   * Not on the annotation. Its TextRange hands out a detached copy: a
+#     locale written through a cursor over it reads back from that cursor,
+#     is gone from the next enumeration, and leaves no trace in content.xml.
+#   * The "Comment" paragraph style is where it comes from, and a note takes
+#     it when the note is *created* — not when the style changes. Setting the
+#     style therefore leaves every existing note exactly as it was.
+#   * Writing a note's text again with the style set does not restamp it
+#     either: tried, and the note kept its old language. So the language of a
+#     comment already in the document can only be changed by making the
+#     comment again, which is what update_comment does — and says.
+#   * Setting the style for the moment of creation and putting it back
+#     afterwards does *not* work: the note then reports the language the
+#     style was put back to. The style has to stay set. So asking for a
+#     comment in a language sets the language of the document's comments,
+#     and every tool that takes one says so in its result.
+COMMENT_STYLE = "Comment"
+
+
+def _write_comment_text(note: Any, text: str):
+    """Put `text` in the note; Writer ignores a write of the same string"""
+    if text != (_get_property(note, "Content", "") or ""):
+        note.Content = text
+
+
 def _stamp_comment(note: Any):
     """
     Date a comment, the way Writer dates the ones made in its interface
@@ -215,6 +267,7 @@ def _describe_comment(note: Any) -> Dict[str, Any]:
         "content": _get_property(note, "Content", "") or "",
         "resolved": bool(_get_property(note, "Resolved", False)),
         "initials": _get_property(note, "Initials", "") or "",
+        "language": _comment_language(note),
         "date": _comment_date(note),
         "reply_to": _get_property(note, "ParentName", "") or None
     }
@@ -1523,6 +1576,93 @@ class UNOBridge:
             "character_style": _get_property(portion, "CharStyleName", "") or None
         }
 
+    def _plan_run_rewrite(self, existing_runs: List[Dict[str, Any]],
+                          prepared: List[tuple]) -> Dict[str, Any]:
+        """
+        Work out which runs to leave alone so their comments survive
+
+        Rewriting text under a comment destroys the comment: the annotation
+        must be created again, and a new one cannot carry back its id, its
+        date, or the language its text was typed in. So a run whose text has
+        not changed and which carries a comment is left alone.
+
+        Two boundary facts, both measured on a live LibreOffice:
+
+        * A stretch that begins exactly where a comment's anchor ends
+          swallows the AnnotationEnd marker, and the comment goes with it.
+          Beginning one character later keeps it, which is possible when that
+          first character does not change; when it does, the comment cannot
+          be kept and is written again instead.
+        * A stretch that *ends* where a comment's anchor begins is harmless.
+        """
+        notes = []
+        for note in _distinct_comments(existing_runs):
+            covered = {position for position, run in enumerate(existing_runs)
+                       if any(other is note for other in run.get("comments") or [])}
+            if covered:
+                notes.append((note, covered))
+
+        if not existing_runs or len(existing_runs) != len(prepared):
+            return {"keep": set(), "kept": [],
+                    "at_risk": [note for note, _ in notes],
+                    "segments": [{"first": 0, "last": len(prepared) - 1,
+                                  "skip_first": False}]}
+
+        unchanged = {position for position, (old, new)
+                     in enumerate(zip(existing_runs, prepared))
+                     if old["text"] == new[0]}
+        candidates = [(note, covered) for note, covered in notes
+                      if covered <= unchanged]
+
+        while True:
+            keep = set()
+            for _note, covered in candidates:
+                keep |= covered
+            # A comment only partly inside the kept runs would have its
+            # markers rewritten anyway, so none of its runs may be kept.
+            for note, covered in notes:
+                if covered - keep and covered & keep:
+                    keep -= covered
+
+            segments = []
+            for position in range(len(prepared)):
+                if position in keep:
+                    continue
+                if segments and segments[-1]["last"] == position - 1:
+                    segments[-1]["last"] = position
+                else:
+                    segments.append({"first": position, "last": position,
+                                     "skip_first": False})
+
+            ends = {}
+            for note, covered in candidates:
+                if covered <= keep:
+                    last = max(covered)
+                    ends[existing_runs[last]["address"]["offset"]
+                         + existing_runs[last]["length"]] = note
+
+            giving_up = None
+            for segment in segments:
+                offset = existing_runs[segment["first"]]["address"]["offset"]
+                if offset not in ends:
+                    continue
+                old_first = existing_runs[segment["first"]]["text"][:1]
+                new_first = prepared[segment["first"]][0][:1]
+                if old_first and old_first == new_first:
+                    segment["skip_first"] = True
+                else:
+                    giving_up = ends[offset]
+                    break
+
+            if giving_up is None:
+                kept = [note for note, covered in candidates if covered <= keep]
+                at_risk = [note for note, covered in notes
+                           if note not in kept or covered - keep]
+                return {"keep": keep, "kept": kept, "at_risk": at_risk,
+                        "segments": segments}
+            candidates = [(note, covered) for note, covered in candidates
+                          if note is not giving_up]
+
     def replace_runs(self, address: Any, runs: Any,
                      track_changes: Optional[bool] = None,
                      doc: Any = None) -> Dict[str, Any]:
@@ -1572,66 +1712,113 @@ class UNOBridge:
         paragraph = located["paragraph"]
         start = located["offset"]
 
-        # Comments are anchored to text, so rewriting the text drops them
-        # unless they are written again. Refusing beats losing them quietly.
-        existing = 0
+        # Rewriting text under a comment destroys the comment: the annotation
+        # has to be created again, and a new annotation cannot carry back
+        # everything the old one had — its date, its id, and the language its
+        # text was typed in, which UNO cannot write at all. So a run that
+        # carries a comment and whose text has not changed is left alone, and
+        # only what actually changes is rewritten. In a translation the
+        # commented terms are usually the ones that stay.
         try:
-            existing = len(_distinct_comments(
-                self._runs_in(doc, located, located_cursor)))
+            existing_runs = self._runs_in(doc, located, located_cursor)
         except Exception as e:
-            logger.info(f"Could not count the comments before replacing: {e}")
-        # A comment read from several runs comes back on each of them. Anchor
-        # it once, over the consecutive stretch that carries it, so the range
-        # it covered is restored instead of one copy appearing per run.
-        placements = []
-        cursor_offset = start
-        for text, _formatting, _language, comments in prepared:
-            run_end = cursor_offset + len(text)
-            for comment in comments:
-                key = _comment_key(comment)
-                extended = False
-                for placement in placements:
-                    if placement["key"] == key and placement["end"] == cursor_offset:
-                        placement["end"] = run_end
-                        extended = True
-                        break
-                if not extended:
-                    placements.append({"key": key, "comment": comment,
-                                       "start": cursor_offset, "end": run_end})
-            cursor_offset = run_end
-        carried = len(placements)
-        if existing and not carried:
+            logger.info(f"Could not read the runs before replacing: {e}")
+            existing_runs = []
+
+        plan = self._plan_run_rewrite(existing_runs, prepared)
+        keep, segments = plan["keep"], plan["segments"]
+        kept_notes, at_risk = plan["kept"], plan["at_risk"]
+
+        def placements_for(positions, first_offset):
+            """Where each carried comment goes, once per stretch it covers"""
+            placed = []
+            offset = first_offset
+            for position in positions:
+                text, _formatting, _language, comments = prepared[position]
+                run_end = offset + len(text)
+                for comment in comments:
+                    key = _comment_key(comment)
+                    extended = False
+                    for placement in placed:
+                        if placement["key"] == key and placement["end"] == offset:
+                            placement["end"] = run_end
+                            extended = True
+                            break
+                    if not extended:
+                        placed.append({"key": key, "comment": comment,
+                                       "start": offset, "end": run_end})
+                offset = run_end
+            return placed
+
+        carried = sum(len(prepared[position][3]) for position in range(len(prepared))
+                      if position not in keep)
+        if at_risk and not carried:
             return {
                 "success": False,
-                "error": f"This range carries {existing} comment"
-                         f"{'s' if existing > 1 else ''} and none of the runs "
-                         f"you passed carries one, so they would be lost. Take "
-                         f"the comments from read_runs and pass them back on "
-                         f"the runs they belong to."
+                "error": f"This range carries {len(at_risk)} comment"
+                         f"{'s' if len(at_risk) > 1 else ''} on text you are "
+                         f"changing, and none of the runs you passed carries "
+                         f"one, so they would be lost. Take the comments from "
+                         f"read_runs and pass them back on the runs they "
+                         f"belong to."
             }
 
         def edit():
-            target.setString("".join(text for text, _, _, _ in prepared))
-            offset = start
             written_comments = 0
-            for text, formatting, language, _comments in prepared:
-                if text and (formatting or language):
+            rewritten = 0
+            # Right to left, so the offsets of the earlier segments still hold
+            # after a segment has been replaced with text of another length.
+            for segment in reversed(segments):
+                first, last = segment["first"], segment["last"]
+                positions = list(range(first, last + 1))
+                new_text = "".join(prepared[position][0]
+                                   for position in positions)
+                if keep:
+                    span_start = existing_runs[first]["address"]["offset"]
+                    span_length = sum(existing_runs[position]["length"]
+                                      for position in positions)
+                    # Rewriting a stretch that begins exactly where a kept
+                    # comment's anchor ends swallows its AnnotationEnd marker
+                    # and the comment with it, so such a stretch starts one
+                    # character later — which the planner only allows when
+                    # that character does not change.
+                    written_from = span_start + (1 if segment["skip_first"] else 0)
                     span = self._resolve_address(
-                        doc, {"paragraph": paragraph, "offset": offset,
-                              "length": len(text)})
-                    if formatting:
-                        self._apply_character_formatting(span, formatting)
-                    if language is not None:
-                        span.CharLocale = language
-                offset += len(text)
-            for placement in placements:
-                span = self._resolve_address(
-                    doc, {"paragraph": paragraph, "offset": placement["start"],
-                          "length": placement["end"] - placement["start"]})
-                self._anchor_comment(doc, span, placement["comment"])
-                written_comments += 1
-            return {"runs": len(prepared), "paragraph": paragraph,
-                    "characters": offset - start,
+                        doc, {"paragraph": paragraph, "offset": written_from,
+                              "length": span_length
+                                        - (1 if segment["skip_first"] else 0)})
+                    span.setString(new_text[1:] if segment["skip_first"]
+                                   else new_text)
+                else:
+                    span_start = start
+                    target.setString(new_text)
+                rewritten += len(positions)
+
+                offset = span_start
+                for position in positions:
+                    text, formatting, language, _comments = prepared[position]
+                    if text and (formatting or language):
+                        run_span = self._resolve_address(
+                            doc, {"paragraph": paragraph, "offset": offset,
+                                  "length": len(text)})
+                        if formatting:
+                            self._apply_character_formatting(run_span, formatting)
+                        if language is not None:
+                            run_span.CharLocale = language
+                    offset += len(text)
+
+                for placement in placements_for(positions, span_start):
+                    span = self._resolve_address(
+                        doc, {"paragraph": paragraph,
+                              "offset": placement["start"],
+                              "length": placement["end"] - placement["start"]})
+                    self._anchor_comment(doc, span, placement["comment"])
+                    written_comments += 1
+
+            return {"runs": len(prepared), "runs_rewritten": rewritten,
+                    "runs_kept": len(keep), "paragraph": paragraph,
+                    "characters": sum(len(text) for text, _, _, _ in prepared),
+                    "comments_kept": len(kept_notes),
                     "comments_written": written_comments}
 
         return self._guarded_edit(doc, "MCP: replace runs", track_changes, edit)
@@ -1766,20 +1953,36 @@ class UNOBridge:
     def update_comment(self, comment_id: str, text: Optional[str] = None,
                        author: Optional[str] = None,
                        resolved: Optional[bool] = None,
+                       language: Optional[str] = None,
                        doc: Any = None) -> Dict[str, Any]:
         """
-        Change a comment's text, author or resolved state
+        Change a comment's text, author, language or resolved state
 
         The text the comment is anchored to is untouched: this edits the note
         in the margin, not the document.
+
+        Text, author and resolved are changed in place, so the comment keeps
+        its id and its date. A `language` cannot be: Writer marks a note when
+        the note is created, so the comment is made again on the same anchor —
+        with a new id and today's date — and the language of the document's
+        comments is set along with it, since one comment cannot have its own.
+        The result says both.
         """
         doc, error = self._writer_document(doc, "Editing a comment")
         if error:
             return error
 
-        if text is None and author is None and resolved is None:
+        if text is None and author is None and resolved is None \
+                and language is None:
             return {"success": False,
-                    "error": "Nothing to change: pass text, author or resolved"}
+                    "error": "Nothing to change: pass text, author, language "
+                             "or resolved"}
+        if language is not None:
+            try:
+                _locale(language)
+                self._comment_style(doc)
+            except AddressError as e:
+                return {"success": False, "error": str(e)}
         if text is not None and (not isinstance(text, str) or not text):
             return {"success": False,
                     "error": "text must be a non-empty string; to remove a "
@@ -1794,10 +1997,58 @@ class UNOBridge:
                     "error": f"No comment with id {comment_id} in this "
                              f"document. Take an id from list_comments."}
 
+        was = _describe_comment(note)
+        anchor_address = None
+        if language is not None:
+            try:
+                located, _, _ = self._locate_range(doc, note.getAnchor())
+                anchor_address = located
+            except Exception as e:
+                logger.info(f"Could not locate a comment's anchor: {e}")
+            if anchor_address is None or anchor_address.get("paragraph") is None:
+                return {"success": False,
+                        "error": "This comment's anchor is outside the body "
+                                 "text, so it cannot be made again in another "
+                                 "language"}
+
         def edit():
             changed = []
+            remade = None
+
+            if language is not None:
+                # Only a new note can carry a language, so make this one
+                # again on the same anchor.
+                wanted = {"author": author if author is not None
+                          else was["author"],
+                          "content": text if text is not None else was["content"],
+                          "resolved": was["resolved"] if resolved is None
+                          else bool(resolved)}
+                previous_language = self._set_comment_style_language(doc,
+                                                                     language)
+                note.getAnchor().getText().removeTextContent(note)
+                span = self._resolve_address(doc, anchor_address)
+                remade = self._anchor_comment(doc, span, wanted)
+                changed.append("language")
+                if text is not None:
+                    changed.append("text")
+                if author is not None:
+                    changed.append("author")
+                if resolved is not None:
+                    changed.append("resolved")
+                described = _describe_comment(remade)
+                return {"id": described["id"], "previous_id": was["id"],
+                        "recreated": True, "changed": changed,
+                        "author": described["author"],
+                        "content": described["content"],
+                        "resolved": described["resolved"],
+                        "language": described["language"],
+                        "comment_language_set": {
+                            "language": language, "was": previous_language,
+                            "scope": "the document's comments: a language "
+                                     "cannot be given to one comment alone"}}
+
             if text is not None:
-                note.Content = text
+                _write_comment_text(note, text)
                 changed.append("text")
             if author is not None:
                 note.Author = str(author)
@@ -1807,9 +2058,11 @@ class UNOBridge:
                 changed.append("resolved")
             described = _describe_comment(note)
             return {"id": described["id"], "changed": changed,
+                    "recreated": False,
                     "author": described["author"],
                     "content": described["content"],
-                    "resolved": described["resolved"]}
+                    "resolved": described["resolved"],
+                    "language": described["language"]}
 
         return self._guarded_edit(doc, "MCP: edit comment", None, edit)
 
@@ -1848,6 +2101,81 @@ class UNOBridge:
                     "anchor_text": anchor_text}
 
         return self._guarded_edit(doc, "MCP: delete comment", None, edit)
+
+    def _comment_style(self, doc: Any) -> Any:
+        """The "Comment" paragraph style, which notes take their language from"""
+        family = doc.StyleFamilies.getByName("ParagraphStyles")
+        if not family.hasByName(COMMENT_STYLE):
+            raise AddressError(f'this document has no "{COMMENT_STYLE}" '
+                               f'paragraph style, so the language of its '
+                               f'comments cannot be set')
+        return family.getByName(COMMENT_STYLE)
+
+    def _set_comment_style_language(self, doc: Any, language: str) -> Any:
+        """
+        Set the language the document's comments are written in
+
+        It has to stay set: a note whose style is put back afterwards reports
+        the language it was put back to, so there is no way to give one
+        comment a language of its own.
+        """
+        style = self._comment_style(doc)
+        was = _locale_name(_get_property(style, "CharLocale", None))
+        style.CharLocale = _locale(language)
+        return was
+
+    def set_comment_language(self, language: str,
+                             doc: Any = None) -> Dict[str, Any]:
+        """
+        Set the language the document's comments are written in
+
+        Writer spell checks a note in the margin against the language of the
+        note's own text, which it takes from the "Comment" paragraph style
+        when the note is created. Setting the style therefore marks the
+        comments added from now on and leaves the ones already there as they
+        are — update_comment changes one of those, by making it again.
+        """
+        doc, error = self._writer_document(doc, "Setting the comment language")
+        if error:
+            return error
+
+        try:
+            locale = _locale(language)
+            style = self._comment_style(doc)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Could not reach the comment style: {e}")
+            return {"success": False, "error": str(e)}
+
+        was = _locale_name(_get_property(style, "CharLocale", None))
+
+        def edit():
+            style.CharLocale = locale
+            return {"language": _locale_name(_get_property(style, "CharLocale",
+                                                           None)),
+                    "was": was,
+                    "comments_already_there": len(self._annotations(doc)),
+                    "scope": "the comments added from now on; the ones "
+                             "already in the document keep the language they "
+                             "were written in, and update_comment can change "
+                             "one of those"}
+
+        return self._guarded_edit(doc, "MCP: set comment language", None, edit)
+
+    def _annotations(self, doc: Any) -> List[Any]:
+        """Every comment field in the document"""
+        found = []
+        try:
+            fields = doc.getTextFields().createEnumeration()
+        except Exception as e:
+            logger.error(f"Could not enumerate comments: {e}")
+            return found
+        while fields.hasMoreElements():
+            field = fields.nextElement()
+            if _supports(field, ANNOTATION_SERVICE):
+                found.append(field)
+        return found
 
     def list_comments(self, address: Any = None,
                       doc: Any = None) -> Dict[str, Any]:
@@ -1900,8 +2228,17 @@ class UNOBridge:
                 "scope": scope}
 
     def add_comment(self, address: Any, text: str, author: str = "",
+                    language: Optional[str] = None,
                     doc: Any = None) -> Dict[str, Any]:
-        """Anchor a new comment to the text at an address"""
+        """
+        Anchor a new comment to the text at an address
+
+        `language` marks the note's own text, which is what Writer spell
+        checks: a Russian note left at the document's language is underlined
+        word by word in the margin. It cannot be given to one comment alone,
+        so passing it also sets the language of the document's comments —
+        which the result says.
+        """
         doc, error = self._writer_document(doc, "Adding a comment")
         if error:
             return error
@@ -1914,12 +2251,29 @@ class UNOBridge:
         except AddressError as e:
             return {"success": False, "error": str(e)}
 
+        if language is not None:
+            try:
+                _locale(language)          # refuse a bad tag before editing
+                self._comment_style(doc)
+            except AddressError as e:
+                return {"success": False, "error": str(e)}
+
         def edit():
+            was = None
+            if language is not None:
+                was = self._set_comment_style_language(doc, language)
             note = self._anchor_comment(doc, target,
                                         {"author": author, "content": text})
-            return {"id": _get_property(note, "Name", "") or "",
-                    "anchor_text": _text_payload(target.getString())["text"],
-                    "author": author, "content": text}
+            result = {"id": _get_property(note, "Name", "") or "",
+                      "anchor_text": _text_payload(target.getString())["text"],
+                      "author": author, "content": text,
+                      "language": _comment_language(note)}
+            if language is not None:
+                result["comment_language_set"] = {
+                    "language": language, "was": was,
+                    "scope": "the document's comments: a language cannot be "
+                             "given to one comment alone"}
+            return result
 
         return self._guarded_edit(doc, "MCP: add comment", None, edit)
 
@@ -2175,6 +2529,51 @@ class UNOBridge:
             position += 1
         return None
 
+    def _position_in(self, paragraph: Any, offset: int) -> Any:
+        """
+        A collapsed cursor at a character offset inside a paragraph
+
+        Counting the offset with goRight from the paragraph start drifts in a
+        paragraph that carries comments: an annotation is anchored
+        AS_CHARACTER, so it counts as one position for cursor movement while
+        contributing nothing to the string — measured, one position per
+        comment before the offset. That is how a comment on the second term
+        of a paragraph came to sit over " subscriptio" instead of
+        "subscription". Walking the text portions and moving only *inside*
+        one keeps positions and characters in step, since portions are split
+        at every marker.
+        """
+        text = paragraph.getText()
+        if offset <= 0:
+            return text.createTextCursorByRange(paragraph.getStart())
+
+        seen = 0
+        try:
+            portions = paragraph.createEnumeration()
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if _get_property(portion, "TextPortionType", "Text") != "Text":
+                    continue
+                body = portion.getString()
+                if not body:
+                    continue
+                if seen + len(body) >= offset:
+                    cursor = text.createTextCursorByRange(portion.getStart())
+                    if offset - seen:
+                        cursor.goRight(offset - seen, False)
+                    return cursor
+                seen += len(body)
+        except Exception as e:
+            # Better a possibly drifted cursor than no edit at all, but say so.
+            logger.info(f"Could not walk the portions of a paragraph: {e}")
+            cursor = text.createTextCursorByRange(paragraph.getStart())
+            cursor.goRight(offset, False)
+            return cursor
+
+        cursor = text.createTextCursorByRange(paragraph.getStart())
+        cursor.gotoEndOfParagraph(False)
+        return cursor
+
     def _resolve_address(self, doc: Any, address: Any) -> Any:
         """
         Turn an address into a text range
@@ -2222,9 +2621,7 @@ class UNOBridge:
                 f"offset {offset!r} is outside paragraph {address['paragraph']}, "
                 f"which holds {paragraph_length} characters")
 
-        cursor = paragraph.getText().createTextCursorByRange(paragraph.getStart())
-        if offset:
-            cursor.goRight(offset, False)
+        cursor = self._position_in(paragraph, offset)
 
         if length is None:
             cursor.gotoEndOfParagraph(True)
@@ -2234,7 +2631,9 @@ class UNOBridge:
                 raise AddressError(
                     f"length {length!r} from offset {offset} runs past the end of "
                     f"paragraph {address['paragraph']}")
-            cursor.goRight(length, True)
+            if length:
+                cursor.gotoRange(self._position_in(paragraph, offset + length),
+                                 True)
         return cursor
 
     def _locate_paragraph(self, text: Any, paragraph_start: Any) -> tuple:

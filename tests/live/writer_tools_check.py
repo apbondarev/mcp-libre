@@ -724,14 +724,26 @@ try:
            bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]],
           ["Source Text", None, "Source Text", None])
 
-    print("\n--- replace_runs without the comments is refused ---")
-    stripped = [dict(run, comments=[]) for run in
-                bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]]
+    print("\n--- rewriting commented text without the comments is refused ---")
+    current = bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]
+    stripped = [dict(run, comments=[], text=run["text"].upper())
+                for run in current]
     dropped = bridge.replace_runs({"paragraph": 3}, stripped, doc=doc)
     print(dropped)
     check("refused", dropped.get("success"), False)
     check("saying what would be lost", "comment" in dropped["error"].lower(), True)
     check("the comment is still there", bridge.list_comments(doc=doc)["count"], 1)
+
+    print("\n--- leaving the commented text alone needs no comments back ---")
+    same = [dict(run, comments=[]) for run in current]
+    allowed = bridge.replace_runs({"paragraph": 3}, same, doc=doc)
+    print(allowed)
+    check("allowed, since nothing under a comment changes",
+          allowed.get("success"), True)
+    check("the comment was kept rather than written again",
+          (allowed.get("comments_kept"), allowed.get("comments_written")),
+          (1, 0))
+    check("and it is still there", bridge.list_comments(doc=doc)["count"], 1)
 
     print("\n--- flatten=true drops it and says so ---")
     flat = bridge.replace_range({"paragraph": 3}, "перевод", language="ru-RU",
@@ -891,6 +903,159 @@ try:
     reopened.setModified(False)
     reopened.close(True)
     os.unlink(saved_at)
+
+    print("\n--- an address in a commented paragraph does not drift ---")
+    body = doc.getText()
+    plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("query is the entry point")
+
+    def at(offset, length):
+        return bridge._resolve_address(
+            doc, {"paragraph": 1, "offset": offset, "length": length}
+        ).getString()
+
+    check("before any comment", (at(0, 5), at(6, 2), at(10, 3)),
+          ("query", "is", "he "))
+    first_note = bridge.add_comment({"paragraph": 1, "offset": 0, "length": 5},
+                                    "про query", doc=doc)
+    check("the anchor is the term", first_note.get("anchor_text"), "query")
+    check("an offset past one comment still lands right",
+          (at(0, 5), at(6, 2), at(10, 3)), ("query", "is", "he "))
+
+    second_note = bridge.add_comment({"paragraph": 1, "offset": 6, "length": 2},
+                                     "про is", doc=doc)
+    check("the second anchor is right too", second_note.get("anchor_text"), "is")
+    check("an offset past two comments still lands right",
+          (at(0, 5), at(6, 2), at(10, 3), at(14, 5)),
+          ("query", "is", "he ", "ntry "))
+    check("and the comments are where they say they are",
+          [(c["address"]["offset"], c["anchor_text"])
+           for c in bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]],
+          [(0, "query"), (6, "is")])
+
+    edited = bridge.replace_range({"paragraph": 1, "offset": 9, "length": 3},
+                                  "THE", doc=doc)
+    check("an edit through such an address hits the right characters",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "query is THE entry point")
+    check("the edit was allowed", edited.get("success"), True)
+
+    print("\n--- a rewrite keeps a comment on text it does not change ---")
+    before = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+    print([(c["id"], c["content"], c["anchor_text"], c["date"]) for c in before])
+    runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
+    print("runs:", [(r["text"], len(r["comments"])) for r in runs])
+
+    # A translation that leaves the commented terms alone: only the rest
+    # changes, so the annotations must survive untouched.
+    translation = {"query": "query", " ": " ", "is": "is",
+                   " THE entry point": " — точка входа"}
+    translated = [dict(run, text=translation.get(run["text"], run["text"]),
+                       language="ru-RU" if run["text"] == " THE entry point"
+                       else None)
+                  for run in runs]
+    kept = bridge.replace_runs({"paragraph": 1}, translated, doc=doc)
+    print(kept)
+    check("the text was translated",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "query is — точка входа")
+    check("both comments were kept, not written again",
+          (kept.get("comments_kept"), kept.get("comments_written")), (2, 0))
+    check("only the runs outside the comments were rewritten",
+          kept.get("runs_rewritten"), 2)
+
+    after = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+    print([(c["id"], c["content"], c["anchor_text"], c["date"]) for c in after])
+    check("the same comments, by id", [c["id"] for c in after],
+          [c["id"] for c in before])
+    check("with their dates", [c["date"] for c in after],
+          [c["date"] for c in before])
+    check("still on their own terms", [c["anchor_text"] for c in after],
+          ["query", "is"])
+
+    print("\n--- a rewrite of commented text has to write it again ---")
+    runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
+    retranslated = [dict(run, text="запрос" if run["text"] == "query"
+                         else run["text"]) for run in runs]
+    again = bridge.replace_runs({"paragraph": 1}, retranslated, doc=doc)
+    print(again)
+    check("the comment on the changed term was written again",
+          again.get("comments_written"), 1)
+    check("and the untouched one was kept", again.get("comments_kept"), 1)
+    rewritten = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+    print([(c["id"], c["content"], c["anchor_text"]) for c in rewritten])
+    check("both are there", len(rewritten), 2)
+    check("anchored on the new text",
+          sorted(c["anchor_text"] for c in rewritten), ["is", "запрос"])
+
+    print("\n--- the language a note's text is written in ---")
+    existing = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+    check("they are English to begin with",
+          sorted({c["language"] for c in existing}), ["en-US"])
+
+    marked = bridge.set_comment_language("ru-RU", doc=doc)
+    print(marked)
+    check("set", marked.get("success"), True)
+    check("reporting the new language", marked.get("language"), "ru-RU")
+    check("and what it was", marked.get("was"), "en-US")
+    check("counting the ones it does not touch",
+          marked.get("comments_already_there"), 3)
+    check("the notes already there keep their language",
+          sorted({c["language"] for c in
+                  bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]}),
+          ["en-US"])
+    fresh = bridge.add_comment({"paragraph": 3}, "по-русски", doc=doc)
+    check("but a note added now is Russian", fresh.get("language"), "ru-RU")
+    check("a bad tag is refused",
+          bridge.set_comment_language("русский", doc=doc).get("success"), False)
+    check("and it can be set back",
+          bridge.set_comment_language("en-US", doc=doc).get("language"), "en-US")
+    bridge.delete_comment(fresh["id"], doc=doc)
+
+    print("\n--- changing one comment's language means making it again ---")
+    target = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
+    other = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][1]
+    remade = bridge.update_comment(target["id"], language="ru-RU", doc=doc)
+    print(remade)
+    check("done", remade.get("success"), True)
+    check("saying it was made again", remade.get("recreated"), True)
+    check("naming the comment it replaced", remade.get("previous_id"),
+          target["id"])
+    check("in the language asked for", remade.get("language"), "ru-RU")
+    check("saying the document's comment language went with it",
+          remade.get("comment_language_set", {}).get("language"), "ru-RU")
+    check("and what it was before", remade.get("comment_language_set",
+                                               {}).get("was"), "en-US")
+    after = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+    print([(c["id"], c["content"], c["language"], c["anchor_text"])
+           for c in after])
+    check("still two comments", len(after), 2)
+    remade_note = [c for c in after if c["id"] == remade["id"]]
+    check("the text came with it", [c["content"] for c in remade_note],
+          [target["content"]])
+    check("the author came with it", [c["author"] for c in remade_note],
+          [target["author"]])
+    check("and the anchor", [c["anchor_text"] for c in remade_note],
+          [target["anchor_text"]])
+    check("the other comment is untouched",
+          [(c["id"], c["language"]) for c in after if c["id"] != remade["id"]],
+          [(other["id"], other["language"])])
+    check("the document text is untouched",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "запрос is — точка входа")
+    plain = bridge.add_comment({"paragraph": 3}, "как получится", doc=doc)
+    check("a comment added afterwards follows that setting",
+          plain.get("language"), "ru-RU")
+    asked = bridge.add_comment({"paragraph": 3, "offset": 0, "length": 3},
+                               "in English", language="en-US", doc=doc)
+    check("and asking for another language works, document-wide",
+          (asked.get("language"),
+           asked.get("comment_language_set", {}).get("language")),
+          ("en-US", "en-US"))
 
     doc.setModified(False)
     doc.close(True)

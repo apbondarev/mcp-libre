@@ -123,6 +123,16 @@ class FakeTextCursor:
             self.mark = self.pos
         return True
 
+    def gotoRange(self, other, expand):
+        """Send the cursor to another range in the same text."""
+        if getattr(other, "model", None) is not self.model:
+            raise RuntimeError(
+                "End of content node doesn't have the proper start node")
+        self.pos = other.end if hasattr(other, "end") else other.start
+        if not expand:
+            self.mark = self.pos
+        return True
+
     def goRight(self, count, expand):
         """Move right by count characters, a paragraph break counting as one."""
         paragraph, offset = self.pos
@@ -169,10 +179,15 @@ class FakeParagraph(FakeRange):
         self.model.fills.setdefault(self.index, {})["FillColor"] = value
 
     def createEnumeration(self):
-        return FakeEnumeration(
-            FakeTextPortion(text, locale, properties, kind, field)
-            for text, locale, properties, kind, field
-            in self.model.portions_of(self.index))
+        portions = []
+        offset = 0
+        for text, locale, properties, kind, field in self.model.portions_of(
+                self.index):
+            portions.append(FakeTextPortion(text, locale, properties, kind,
+                                            field, self.model, self.index,
+                                            offset))
+            offset += len(text)
+        return FakeEnumeration(portions)
 
 
 class FakeEnum:
@@ -207,6 +222,53 @@ class FakeDateTime:
 _annotation_serial = itertools.count(1)
 
 
+class FakeNoteCursor:
+    """A cursor over a comment's own text, which is all the bridge needs."""
+
+    def __init__(self, note):
+        self._note = note
+
+    def gotoStart(self, expand):
+        return True
+
+    def gotoEnd(self, expand):
+        return True
+
+    @property
+    def CharLocale(self):
+        return self._note.locale
+
+    @CharLocale.setter
+    def CharLocale(self, value):
+        self._note.locale = value
+
+
+class FakeNoteParagraph:
+    def __init__(self, note):
+        self._note = note
+
+    def createEnumeration(self):
+        return FakeEnumeration([FakeTextPortion(self._note.Content,
+                                                self._note.locale)])
+
+
+class FakeNoteText:
+    """The annotation's TextRange: the note in the margin, spell checked."""
+
+    def __init__(self, note):
+        self._note = note
+
+    def createEnumeration(self):
+        return FakeEnumeration([FakeNoteParagraph(self._note)])
+
+    def createTextCursor(self):
+        return FakeNoteCursor(self._note)
+
+    @property
+    def CharLocale(self):
+        return self._note.locale
+
+
 class FakeAnnotation:
     """com.sun.star.text.textfield.Annotation, as the bridge touches it.
 
@@ -216,9 +278,9 @@ class FakeAnnotation:
     """
 
     def __init__(self, author="", content="", resolved=False, initials="",
-                 parent="", named=True):
+                 parent="", named=True, language=None):
         self.Author = author
-        self.Content = content
+        self._content = content
         self.Resolved = resolved
         self.Initials = initials
         self.ParentName = parent
@@ -230,6 +292,46 @@ class FakeAnnotation:
         self.DateTimeValue = (FakeDateTime() if named
                               else FakeDateTime(year=0, month=0, day=0, hours=0,
                                                 minutes=0, seconds=0))
+        # A comment typed in Writer carries its own language; one created
+        # through the API has none and follows the "Comment" paragraph style,
+        # which is the only place a language can be written at all.
+        self._own_locale = FakeLocale(*language.split("-")) if language else None
+        self.document = None
+
+    @property
+    def Content(self):
+        return self._content
+
+    @Content.setter
+    def Content(self, value):
+        """Writing the text does not change the note's language.
+
+        A note is marked with the "Comment" style's language when it is
+        created, and writing its text again afterwards leaves that language
+        alone — measured on a live LibreOffice, after a fake that restamped
+        on every write had made an unusable feature look like it worked.
+        """
+        if not value or value == self._content:
+            return
+        self._content = value
+        if self._own_locale is None:
+            self._own_locale = self._style_locale()
+
+    def _style_locale(self):
+        if self.document is None:
+            return FakeLocale("en", "US")
+        return self.document.StyleFamilies.getByName(
+            "ParagraphStyles").getByName("Comment").CharLocale
+
+    @property
+    def locale(self):
+        if self._own_locale is not None:
+            return self._own_locale
+        return self._style_locale()
+
+    @locale.setter
+    def locale(self, value):
+        self._own_locale = value
         self._anchor = None
         self.disposed = False
 
@@ -238,6 +340,10 @@ class FakeAnnotation:
 
     def getAnchor(self):
         return self._anchor
+
+    @property
+    def TextRange(self):
+        return FakeNoteText(self)
 
     def dispose(self):
         self.disposed = True
@@ -257,16 +363,27 @@ class FakeTextPortion:
                 "CharColor": -1, "CharBackColor": -1, "HyperLinkURL": "",
                 "HyperLinkTarget": "", "CharStyleName": ""}
 
-    def __init__(self, text, locale, properties=None, kind="Text", field=None):
+    def __init__(self, text, locale, properties=None, kind="Text", field=None,
+                 model=None, paragraph=0, offset=0):
         self._text = text
         self.CharLocale = locale
         self.TextPortionType = kind
         self.TextField = field
+        self.model = model
+        self.paragraph = paragraph
+        self.offset = offset
         for name, value in dict(self.DEFAULTS, **(properties or {})).items():
             setattr(self, name, value)
 
     def getString(self):
         return self._text
+
+    def getStart(self):
+        return FakeRange(self.model, (self.paragraph, self.offset))
+
+    def getEnd(self):
+        return FakeRange(self.model,
+                         (self.paragraph, self.offset + len(self._text)))
 
 
 class FakeSpellChecker:
@@ -361,9 +478,18 @@ for _range_type in (FakeRange, FakeTextCursor):
     setattr(_range_type, "ParaStyleName", _para_style_property())
 
 
+class FakeStyle:
+    """A style whose properties a test can read back after a write."""
+
+    def __init__(self, name, locale=None):
+        self.name = name
+        self.CharLocale = locale or FakeLocale("en", "US")
+
+
 class FakeStyleFamily:
     def __init__(self, names):
         self.names = list(names)
+        self.styles = {}
 
     def hasByName(self, name):
         return name in self.names
@@ -371,14 +497,20 @@ class FakeStyleFamily:
     def getElementNames(self):
         return tuple(self.names)
 
+    def getByName(self, name):
+        if name not in self.names:
+            raise RuntimeError(f"no style {name}")
+        return self.styles.setdefault(name, FakeStyle(name))
+
 
 class FakeStyleFamilies:
     """doc.StyleFamilies, with the families a Writer document has."""
 
     def __init__(self, families=None):
+        self._built = {}
         self.families = families or {
             "ParagraphStyles": ["Standard", "Text body", "Heading 1", "Heading 2",
-                                "Preformatted Text", "Quotations"],
+                                "Preformatted Text", "Quotations", "Comment"],
             "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
         }
 
@@ -391,7 +523,9 @@ class FakeStyleFamilies:
     def getByName(self, name):
         if name not in self.families:
             raise RuntimeError(f"no style family {name}")
-        return FakeStyleFamily(self.families[name])
+        if name not in self._built:
+            self._built[name] = FakeStyleFamily(self.families[name])
+        return self._built[name]
 
 
 class FakeTextTable:
@@ -525,20 +659,32 @@ class FakeText:
             from_offset = start_offset if paragraph == start_para else 0
             to_offset = end_offset if paragraph == end_para else len(body)
             rebuilt, position = [], 0
-            for text, existing, properties, _kind, _field in \
+            for text, existing, properties, kind, field in \
                     self.portions_of(paragraph):
-                for character, index in zip(text, range(position, position + len(text))):
+                if kind != "Text":
+                    # A comment marker is not text: marking a language must
+                    # not sweep it away, or a fake would hide a rewrite that
+                    # keeps a comment.
+                    rebuilt.append({"kind": kind, "text": "", "field": field})
+                    continue
+                for index, character in enumerate(text, start=position):
                     marked = from_offset <= index < to_offset
                     chosen = locale if marked else existing
-                    if rebuilt and rebuilt[-1][1] is chosen \
-                            and rebuilt[-1][2] == properties:
-                        rebuilt[-1] = (rebuilt[-1][0] + character, chosen, properties)
+                    previous = rebuilt[-1] if rebuilt else None
+                    if previous is not None and previous.get("kind") == "Text" \
+                            and previous["locale"] is chosen \
+                            and previous["properties"] == properties:
+                        previous["text"] += character
                     else:
-                        rebuilt.append((character, chosen, properties))
+                        rebuilt.append({"kind": "Text", "text": character,
+                                        "locale": chosen,
+                                        "properties": properties})
                 position += len(text)
             self.portions[paragraph] = [
-                {"text": text, "locale": marked_locale, **properties}
-                for text, marked_locale, properties in rebuilt]
+                entry if entry["kind"] != "Text"
+                else {"text": entry["text"], "locale": entry["locale"],
+                      **entry["properties"]}
+                for entry in rebuilt]
 
     def portions_of(self, paragraph):
         """
@@ -594,10 +740,20 @@ class FakeText:
         runs that no longer exist. What the new text looks like is a question
         only a live LibreOffice answers, so the read-after-write round trip is
         checked in tests/live/writer_tools_check.py instead.
+
+        Comment markers *outside* the replaced span survive, as they do in
+        Writer: that is what lets a rewrite leave a comment on text it did
+        not change. Markers inside the span are destroyed, which is what
+        makes rewriting commented text lose the comment.
         """
         (first, _), (last, _) = sorted([start, end])
         for paragraph in range(first, last + 1):
-            self.portions.pop(paragraph, None)
+            declared = self.portions.pop(paragraph, None)
+            if declared is None or paragraph != first or first != last:
+                continue
+            kept = self._markers_outside(declared, start[1], end[1], value)
+            if kept is not None:
+                self.portions[paragraph] = kept
         (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
         if start_para == end_para:
             paragraph = self.paragraphs[start_para]
@@ -610,6 +766,50 @@ class FakeText:
         del self.styles[start_para + 1:end_para + 1]
         del self.outline_levels[start_para + 1:end_para + 1]
         self.enumeration_items = list(range(len(self.paragraphs)))
+
+    def _markers_outside(self, declared, start_offset, end_offset, value):
+        """The paragraph's portions after a span was replaced, markers kept.
+
+        Returns None when the span cannot be described this way, so the
+        caller falls back to dropping the portions.
+        """
+        start_offset, end_offset = sorted([start_offset, end_offset])
+        rebuilt = []
+        offset = 0
+        wrote = False
+        for portion in declared:
+            if not isinstance(portion, dict):
+                return None
+            kind = portion.get("kind", "Text")
+            text = portion.get("text", "")
+            if kind != "Text":
+                # Measured on a live LibreOffice: an AnnotationEnd marker is
+                # destroyed by a replacement that reaches either of its
+                # boundaries, while an opening Annotation only dies when it
+                # is strictly inside. That is why a rewrite of the stretch
+                # right after a comment took the comment with it.
+                if kind == "AnnotationEnd":
+                    doomed = start_offset <= offset <= end_offset
+                else:
+                    doomed = start_offset < offset < end_offset
+                if doomed:
+                    continue
+                rebuilt.append(portion)
+                continue
+            head = text[:max(0, min(len(text), start_offset - offset))]
+            tail = text[max(0, min(len(text), end_offset - offset)):]
+            if head:
+                rebuilt.append(dict(portion, text=head))
+            if not wrote and offset + len(text) >= start_offset:
+                rebuilt.append({"text": value})
+                wrote = True
+            if tail:
+                rebuilt.append(dict(portion, text=tail))
+            offset += len(text)
+        if not wrote:
+            rebuilt.append({"text": value})
+        return [portion for portion in rebuilt
+                if portion.get("kind", "Text") != "Text" or portion.get("text")]
 
     def createTextCursorByRange(self, text_range):
         self._own(text_range)
@@ -724,7 +924,9 @@ class FakeDoc:
 
     def createInstance(self, service):
         if service == "com.sun.star.text.textfield.Annotation":
-            return FakeAnnotation(named=False)
+            note = FakeAnnotation(named=False)
+            note.document = self
+            return note
         raise RuntimeError(f"no such service in the fake: {service}")
 
     def getTextFields(self):
@@ -751,7 +953,9 @@ class FakeDoc:
 
     @property
     def StyleFamilies(self):
-        return FakeStyleFamilies()
+        if not hasattr(self, "_style_families"):
+            self._style_families = FakeStyleFamilies()
+        return self._style_families
 
     def supportsService(self, name):
         return name in self.services
@@ -771,6 +975,16 @@ class FakeWriterDoc(FakeDoc):
         self._text = text
         self._controller = controller
         self.UndoManager = FakeUndoManager()
+        # A comment belongs to the document it is in, and follows its
+        # "Comment" style unless its own text was typed in a language.
+        for paragraph in range(len(text.paragraphs)):
+            for _t, _l, _p, _kind, field in text.portions_of(paragraph):
+                if isinstance(field, FakeAnnotation):
+                    field.document = self
+                    if field._own_locale is None:
+                        # A note already in a document was marked when it was
+                        # created, so it no longer follows the style.
+                        field._own_locale = field._style_locale()
 
     def getText(self):
         return self._text

@@ -422,6 +422,11 @@ def test_the_editing_tools_are_registered_and_dispatch():
                                 "resolved": True}))
     assert changed["success"] is True
 
+    marked = asyncio.run(server.execute_tool("set_comment_language_live",
+                                             {"language": "ru-RU"}))
+    assert marked["language"] == "ru-RU"
+    assert marked["success"] is True
+
     removed = asyncio.run(server.execute_tool(
         "delete_comment_live", {"comment_id": listed["comments"][0]["id"]}))
     assert removed["success"] is True
@@ -456,3 +461,217 @@ def test_a_comment_the_tool_adds_is_dated(bridge, section_doc):
     assert listed[0]["date"] is not None
     assert listed[0]["date"][:2] == "20"
     assert added["success"] is True
+
+
+# --- the language of the note in the margin ---------------------------------
+# Writer spell checks a comment against the language of the comment's own
+# text. A comment created through the API is marked with the document's
+# language, so a Russian note carried through a translation came back
+# underlined word by word as English.
+
+RUSSIAN_NOTE = FakeAnnotation("Aleksandr", "Термин – не переводится",
+                              language="ru-RU")
+RUSSIAN_COMMENTED = [
+    {"kind": "Annotation", "text": "", "field": RUSSIAN_NOTE},
+    {"text": "query", "locale": EN},
+    {"kind": "AnnotationEnd", "text": ""},
+    {"text": " is the entry point", "locale": EN},
+]
+
+
+@pytest.fixture
+def russian_doc():
+    return writer_doc(["Heading", COMMENTED_TEXT], caret=(1, 0),
+                      portions={1: RUSSIAN_COMMENTED})
+
+
+def test_reports_the_language_of_a_comment(bridge, russian_doc):
+    listed = bridge.list_comments(doc=russian_doc)["comments"]
+
+    assert listed[0]["language"] == "ru-RU"
+
+
+def test_a_comment_on_unchanged_text_is_kept_whole(bridge, russian_doc):
+    """A translation leaves the commented term alone, so the annotation must
+    not be re-created: a new one loses the id, the date and the language its
+    text was typed in, which UNO cannot write back."""
+    runs = bridge.read_runs({"paragraph": 1}, doc=russian_doc)["runs"]
+    before = bridge.list_comments(doc=russian_doc)["comments"][0]
+    translated = [dict(run, text=run["text"] if run["text"] == "query"
+                       else " — точка входа", language="ru-RU")
+                  for run in runs]
+
+    written = bridge.replace_runs({"paragraph": 1}, translated, doc=russian_doc)
+
+    assert written["success"] is True
+    assert written["comments_kept"] == 1
+    assert written["comments_written"] == 0
+    assert written["runs_kept"] == 1
+    after = bridge.list_comments(doc=russian_doc)["comments"]
+    assert len(after) == 1
+    assert after[0]["id"] == before["id"]          # the very same comment
+    assert after[0]["language"] == "ru-RU"         # what was typed, kept
+    assert after[0]["date"] == before["date"]
+    assert bridge.read_paragraphs(start=1, count=1,
+                                  doc=russian_doc)["paragraphs"][0]["text"] \
+        == "query — точка входа"
+
+
+def test_a_comment_on_changed_text_is_written_again(bridge, russian_doc):
+    runs = bridge.read_runs({"paragraph": 1}, doc=russian_doc)["runs"]
+    translated = [dict(run, text="запрос" if run["text"] == "query"
+                       else " — точка входа") for run in runs]
+
+    written = bridge.replace_runs({"paragraph": 1}, translated, doc=russian_doc)
+
+    assert written["comments_kept"] == 0
+    assert written["comments_written"] == 1
+    after = bridge.list_comments(doc=russian_doc)["comments"]
+    assert after[0]["content"] == "Термин – не переводится"
+    assert after[0]["anchor_text"] == "запрос"
+
+
+def test_the_comment_language_is_set_for_the_comments_to_come(bridge, doc):
+    """Writer marks a note with a language when the note is created, so
+    setting the style reaches the comments added from then on and leaves the
+    ones already there alone."""
+    before = bridge.list_comments(doc=doc)["comments"][0]
+
+    changed = bridge.set_comment_language("ru-RU", doc=doc)
+
+    assert changed["success"] is True
+    assert changed["language"] == "ru-RU"
+    assert changed["was"] == before["language"]
+    assert changed["comments_already_there"] == 1
+    assert bridge.list_comments(doc=doc)["comments"][0]["language"] \
+        == before["language"]              # untouched, and the result says so
+
+    added = bridge.add_comment({"paragraph": 1, "offset": 6, "length": 2},
+                               "новое", doc=doc)
+    assert added["language"] == "ru-RU"
+
+
+def test_the_language_of_one_comment_means_making_it_again(bridge, doc):
+    target = bridge.list_comments(doc=doc)["comments"][0]
+
+    changed = bridge.update_comment(target["id"], language="ru-RU", doc=doc)
+
+    assert changed["success"] is True
+    assert changed["recreated"] is True
+    assert changed["changed"] == ["language"]
+    assert changed["previous_id"] == target["id"]
+    after = bridge.list_comments(doc=doc)["comments"]
+    assert len(after) == 1
+    assert after[0]["language"] == "ru-RU"
+    assert after[0]["content"] == target["content"]
+    assert after[0]["author"] == target["author"]
+    assert after[0]["anchor_text"] == target["anchor_text"]
+    assert after[0]["id"] != target["id"]     # a new note, honestly reported
+    # and the document's comment language went with it, which is said plainly
+    assert changed["comment_language_set"]["language"] == "ru-RU"
+    assert changed["comment_language_set"]["was"] == "en-US"
+    assert bridge.add_comment({"paragraph": 1, "offset": 6, "length": 2},
+                              "новое", doc=doc)["language"] == "ru-RU"
+
+
+def test_a_comment_can_be_added_in_a_language(bridge, doc):
+    added = bridge.add_comment({"paragraph": 1, "offset": 6, "length": 2},
+                               "Не переводить", language="ru-RU", doc=doc)
+
+    assert added["language"] == "ru-RU"
+    assert [c["language"] for c in
+            bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]
+            if c["content"] == "Не переводить"] == ["ru-RU"]
+    # the setting is the document's, so the next comment is Russian too, and
+    # the result of the first one says that is what happened
+    assert added["comment_language_set"]["language"] == "ru-RU"
+    assert bridge.add_comment({"paragraph": 1, "offset": 9, "length": 3},
+                              "ещё", doc=doc)["language"] == "ru-RU"
+
+
+def test_new_text_and_a_language_together(bridge, doc):
+    target = bridge.list_comments(doc=doc)["comments"][0]
+
+    changed = bridge.update_comment(target["id"], text="Оставить латиницей",
+                                    language="ru-RU", doc=doc)
+
+    assert sorted(changed["changed"]) == ["language", "text"]
+    after = bridge.list_comments(doc=doc)["comments"][0]
+    assert after["content"] == "Оставить латиницей"
+    assert after["language"] == "ru-RU"
+    assert changed["recreated"] is True
+
+
+def test_changing_only_the_text_keeps_the_comment_itself(bridge, doc):
+    target = bridge.list_comments(doc=doc)["comments"][0]
+
+    changed = bridge.update_comment(target["id"], text="иначе", doc=doc)
+
+    assert changed["recreated"] is False
+    assert changed["id"] == target["id"]
+    assert bridge.list_comments(doc=doc)["comments"][0]["date"] == target["date"]
+
+
+def test_a_bad_comment_language_tag_is_refused(bridge, doc):
+    refused = bridge.set_comment_language("русский", doc=doc)
+    assert refused["success"] is False
+    assert "language" in refused["error"]
+
+    refused = bridge.add_comment({"paragraph": 1}, "текст", language="русский",
+                                 doc=doc)
+
+    assert refused["success"] is False
+    assert "language" in refused["error"]
+
+
+def test_an_address_after_a_comment_still_points_at_the_right_text(bridge, doc):
+    """An annotation counts as a position for cursor movement while adding no
+    characters, so counting an offset with goRight drifted by one per comment.
+    Only the live harness can prove the fix; this holds the string model."""
+    span = bridge._resolve_address(doc, {"paragraph": 1, "offset": 6,
+                                         "length": 2})
+
+    assert span.getString() == "is"
+    assert bridge._locate_range(doc, span)[0] == {"paragraph": 1, "offset": 6,
+                                                  "length": 2}
+
+
+# Rewriting the stretch that begins exactly where a comment's anchor ends
+# swallows the AnnotationEnd marker and the comment with it, measured on a
+# live LibreOffice. Starting one character later keeps it, which works when
+# that character does not change.
+
+def test_the_run_after_a_kept_comment_is_rewritten_from_one_character_in(
+        bridge, russian_doc):
+    runs = bridge.read_runs({"paragraph": 1}, doc=russian_doc)["runs"]
+    # " is the entry point" -> " — точка входа": the leading space stays
+    translated = [dict(run, text=run["text"] if run["text"] == "query"
+                       else " — точка входа") for run in runs]
+
+    written = bridge.replace_runs({"paragraph": 1}, translated, doc=russian_doc)
+
+    assert written["comments_kept"] == 1
+    assert written["comments_written"] == 0
+    assert bridge.list_comments(doc=russian_doc)["count"] == 1
+    assert bridge.read_paragraphs(start=1, count=1,
+                                  doc=russian_doc)["paragraphs"][0]["text"] \
+        == "query — точка входа"
+
+
+def test_when_that_character_changes_the_comment_is_written_again(bridge,
+                                                                  russian_doc):
+    before = bridge.list_comments(doc=russian_doc)["comments"][0]
+    runs = bridge.read_runs({"paragraph": 1}, doc=russian_doc)["runs"]
+    # "— точка входа" with no leading space: the character right after the
+    # comment changes, so the comment cannot be left in place
+    translated = [dict(run, text=run["text"] if run["text"] == "query"
+                       else "— точка входа") for run in runs]
+
+    written = bridge.replace_runs({"paragraph": 1}, translated, doc=russian_doc)
+
+    assert written["comments_kept"] == 0
+    assert written["comments_written"] == 1
+    after = bridge.list_comments(doc=russian_doc)["comments"]
+    assert len(after) == 1
+    assert after[0]["content"] == before["content"]
+    assert after[0]["id"] != before["id"]      # a new annotation, honestly

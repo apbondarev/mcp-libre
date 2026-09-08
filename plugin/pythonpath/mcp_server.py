@@ -448,6 +448,10 @@ class LibreOfficeMCPServer:
                         "type": "string",
                         "description": "Name shown as the comment's author; defaults to LibreOffice's own user name"
                     },
+                    "language": {
+                        "type": "string",
+                        "description": "Language of the comment's own text, as a tag like \"ru-RU\". Writer spell checks the note in the margin against it, so a Russian comment left at the document's language is underlined word by word"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -479,6 +483,10 @@ class LibreOfficeMCPServer:
                         "type": "boolean",
                         "description": "Mark the comment resolved, or reopen it"
                     },
+                    "language": {
+                        "type": "string",
+                        "description": "Language of the comment's own text, as a tag like \"ru-RU\". Writer marks a note with a language only when the note is created, so this makes the comment again on the same anchor: the text, author and resolved state are kept, the id and the date are new, and the result says so"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -506,6 +514,25 @@ class LibreOfficeMCPServer:
                 "required": ["comment_id"]
             },
             "handler": self.delete_comment_live
+        }
+        
+        self.tools["set_comment_language_live"] = {
+            "description": "Set the language the document's comments are written in, so Writer stops underlining Russian notes as misspelled English. This reaches the comments added from then on: Writer marks a note when it is created, so the ones already in the document keep their language and update_comment_live changes one of those",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "description": "Language tag, e.g. \"ru-RU\" or \"en-US\""
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["language"]
+            },
+            "handler": self.set_comment_language_live
         }
         
         # Formatting tools
@@ -877,24 +904,36 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.list_comments(address=address, doc=doc)
 
     def add_comment_live(self, address: Any, text: str, author: str = "",
+                         language: Optional[str] = None,
                          document: Optional[str] = None) -> Dict[str, Any]:
         """Anchor a new comment to the text at an address"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.add_comment(address, text, author=author, doc=doc)
+        return self.uno_bridge.add_comment(address, text, author=author,
+                                           language=language, doc=doc)
 
     def update_comment_live(self, comment_id: str, text: Optional[str] = None,
                             author: Optional[str] = None,
                             resolved: Optional[bool] = None,
+                            language: Optional[str] = None,
                             document: Optional[str] = None) -> Dict[str, Any]:
-        """Change a comment's text, author or resolved state"""
+        """Change a comment's text, author, language or resolved state"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.update_comment(comment_id, text=text,
                                               author=author, resolved=resolved,
-                                              doc=doc)
+                                              language=language, doc=doc)
+
+    def set_comment_language_live(self, language: str,
+                                  document: Optional[str] = None
+                                  ) -> Dict[str, Any]:
+        """Set the language the document's comments are written in"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.set_comment_language(language, doc=doc)
 
     def delete_comment_live(self, comment_id: str,
                             document: Optional[str] = None) -> Dict[str, Any]:
