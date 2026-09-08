@@ -133,6 +133,44 @@ def _border_line(colour: int, points: float) -> Any:
     return line
 
 
+ANNOTATION_SERVICE = "com.sun.star.text.textfield.Annotation"
+
+
+def _comment_key(comment: Dict[str, Any]) -> tuple:
+    """What makes two comment descriptions the same comment"""
+    return (comment.get("author", "") or "", comment.get("content", "") or "",
+            bool(comment.get("resolved")))
+
+
+def _distinct_comments(runs: Any) -> list:
+    """
+    The comments covering a stretch of runs, each counted once
+
+    read_runs reports a comment on every run its anchor covers, so summing
+    the per-run lists counted a comment spanning three runs three times —
+    which turned up as "3 comments" in a refusal about one.
+    """
+    found = []
+    seen = set()
+    for run in runs:
+        for note in run.get("comments", []) or []:
+            marker = id(note)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            found.append(note)
+    return found
+
+
+def _describe_comment(note: Any) -> Dict[str, Any]:
+    """A comment as a caller sees it"""
+    return {
+        "author": _get_property(note, "Author", "") or "",
+        "content": _get_property(note, "Content", "") or "",
+        "resolved": bool(_get_property(note, "Resolved", False))
+    }
+
+
 def _is_italic(posture: Any) -> bool:
     """
     Whether a CharPosture means italic
@@ -1100,6 +1138,9 @@ class UNOBridge:
             if loss["links"]:
                 details.append(f"{loss['links']} hyperlink"
                                f"{'s' if loss['links'] > 1 else ''}")
+            if loss["comments"]:
+                details.append(f"{loss['comments']} comment"
+                               f"{'s' if loss['comments'] > 1 else ''}")
             if loss["styles"]:
                 details.append(f"{loss['styles']} with character styles")
             return {
@@ -1151,7 +1192,8 @@ class UNOBridge:
             "tracked": wanted,
             "language": _locale_name(locale) if locale is not None else None,
             "runs_flattened": loss["runs"] if loss else None,
-            "links_dropped": loss["links"] if loss else None
+            "links_dropped": loss["links"] if loss else None,
+            "comments_dropped": loss["comments"] if loss else None
         }
 
     def _guarded_edit(self, doc: Any, undo_title: str,
@@ -1322,25 +1364,59 @@ class UNOBridge:
             span_end = span_start + len(paragraph_cursor.getString())
 
         paragraph = self._paragraph_at(doc.getText(), index)
-        runs = []
+
+        # Comments are empty marker portions — Annotation ... AnnotationEnd
+        # around a commented range, or a lone Annotation for a point anchor —
+        # and they occupy no characters. Collect the portions first, then work
+        # out which comment covers which stretch; attaching them while walking
+        # counted a range comment twice.
+        collected = []
         offset = 0
         portions = paragraph.createEnumeration()
         while portions.hasMoreElements():
             portion = portions.nextElement()
+            kind = _get_property(portion, "TextPortionType", "Text")
+            if kind in ("Annotation", "AnnotationEnd"):
+                collected.append((kind, offset, portion, ""))
+                continue
             try:
                 body = portion.getString()
             except Exception:
                 continue
-            start, end = offset, offset + len(body)
-            offset = end
-            if not body or end <= span_start or start >= span_end:
+            collected.append(("Text", offset, portion, body))
+            offset += len(body)
+
+        spans = []
+        pending = []
+        for kind, at, portion, _body in collected:
+            if kind == "Annotation":
+                note = _get_property(portion, "TextField", None)
+                if note is not None:
+                    pending.append((note, at))
+            elif kind == "AnnotationEnd" and pending:
+                note, opened = pending.pop()
+                spans.append((_describe_comment(note), opened, at))
+        for note, at in pending:            # never closed: a point anchor
+            spans.append((_describe_comment(note), at, at))
+
+        runs = []
+        for kind, start_at, portion, body in collected:
+            if kind != "Text" or not body:
+                continue
+            end_at = start_at + len(body)
+            if end_at <= span_start or start_at >= span_end:
                 continue
 
-            clipped_start = max(start, span_start)
-            clipped_end = min(end, span_end)
-            runs.append(self._describe_run(
-                portion, body[clipped_start - start:clipped_end - start],
-                index, clipped_start))
+            clipped_start = max(start_at, span_start)
+            clipped_end = min(end_at, span_end)
+            described_run = self._describe_run(
+                portion, body[clipped_start - start_at:clipped_end - start_at],
+                index, clipped_start)
+            described_run["comments"] = [
+                note for note, opened, closed in spans
+                if (opened < end_at and closed > start_at)
+                or (opened == closed and start_at <= opened < end_at)]
+            runs.append(described_run)
         return runs
 
     def _flattening_loss(self, doc: Any, located: Dict[str, Any],
@@ -1361,9 +1437,11 @@ class UNOBridge:
             return None
 
         links = [run for run in runs if run.get("link")]
-        if len(runs) <= 1 and not links:
+        comments = _distinct_comments(runs)
+        if len(runs) <= 1 and not links and not comments:
             return None
         return {"runs": len(runs), "links": len(links),
+                "comments": len(comments),
                 "styles": len([r for r in runs if r.get("character_style")])}
 
     def _describe_run(self, portion: Any, body: str, paragraph: int,
@@ -1425,11 +1503,15 @@ class UNOBridge:
                 language = _locale(run["language"]) if run.get("language") else None
             except AddressError as e:
                 return {"success": False, "error": f"run {position}: {e}"}
-            prepared.append((run["text"], formatting, language))
+            comments = run.get("comments") or []
+            if not isinstance(comments, (list, tuple)):
+                return {"success": False,
+                        "error": f"run {position}: comments must be a list"}
+            prepared.append((run["text"], formatting, language, list(comments)))
 
         try:
             target = self._resolve_address(doc, address)
-            located, _, _ = self._locate_range(doc, target)
+            located, located_cursor, _ = self._locate_range(doc, target)
         except AddressError as e:
             return {"success": False, "error": str(e)}
 
@@ -1441,10 +1523,49 @@ class UNOBridge:
         paragraph = located["paragraph"]
         start = located["offset"]
 
+        # Comments are anchored to text, so rewriting the text drops them
+        # unless they are written again. Refusing beats losing them quietly.
+        existing = 0
+        try:
+            existing = len(_distinct_comments(
+                self._runs_in(doc, located, located_cursor)))
+        except Exception as e:
+            logger.info(f"Could not count the comments before replacing: {e}")
+        # A comment read from several runs comes back on each of them. Anchor
+        # it once, over the consecutive stretch that carries it, so the range
+        # it covered is restored instead of one copy appearing per run.
+        placements = []
+        cursor_offset = start
+        for text, _formatting, _language, comments in prepared:
+            run_end = cursor_offset + len(text)
+            for comment in comments:
+                key = _comment_key(comment)
+                extended = False
+                for placement in placements:
+                    if placement["key"] == key and placement["end"] == cursor_offset:
+                        placement["end"] = run_end
+                        extended = True
+                        break
+                if not extended:
+                    placements.append({"key": key, "comment": comment,
+                                       "start": cursor_offset, "end": run_end})
+            cursor_offset = run_end
+        carried = len(placements)
+        if existing and not carried:
+            return {
+                "success": False,
+                "error": f"This range carries {existing} comment"
+                         f"{'s' if existing > 1 else ''} and none of the runs "
+                         f"you passed carries one, so they would be lost. Take "
+                         f"the comments from read_runs and pass them back on "
+                         f"the runs they belong to."
+            }
+
         def edit():
-            target.setString("".join(text for text, _, _ in prepared))
+            target.setString("".join(text for text, _, _, _ in prepared))
             offset = start
-            for text, formatting, language in prepared:
+            written_comments = 0
+            for text, formatting, language, _comments in prepared:
                 if text and (formatting or language):
                     span = self._resolve_address(
                         doc, {"paragraph": paragraph, "offset": offset,
@@ -1454,10 +1575,99 @@ class UNOBridge:
                     if language is not None:
                         span.CharLocale = language
                 offset += len(text)
+            for placement in placements:
+                span = self._resolve_address(
+                    doc, {"paragraph": paragraph, "offset": placement["start"],
+                          "length": placement["end"] - placement["start"]})
+                self._anchor_comment(doc, span, placement["comment"])
+                written_comments += 1
             return {"runs": len(prepared), "paragraph": paragraph,
-                    "characters": offset - start}
+                    "characters": offset - start,
+                    "comments_written": written_comments}
 
         return self._guarded_edit(doc, "MCP: replace runs", track_changes, edit)
+
+    def _anchor_comment(self, doc: Any, span: Any, comment: Dict[str, Any]):
+        """Put a comment back on a range, keeping its author and text"""
+        note = doc.createInstance(ANNOTATION_SERVICE)
+        note.Author = str(comment.get("author", "") or "")
+        note.Content = str(comment.get("content", "") or "")
+        if comment.get("resolved"):
+            try:
+                note.Resolved = True
+            except Exception as e:
+                logger.info(f"Could not mark a comment resolved: {e}")
+        span.getText().insertTextContent(span, note, True)
+
+    def list_comments(self, address: Any = None,
+                      doc: Any = None) -> Dict[str, Any]:
+        """
+        Every comment in the document, or in one paragraph
+
+        Each carries the address of the text it is anchored to, so a caller
+        can see what a comment is about without reading the whole document.
+        """
+        doc, error = self._writer_document(doc, "Listing comments")
+        if error:
+            return error
+
+        wanted = None
+        if address is not None:
+            try:
+                wanted = self._paragraph_index_of(doc, address)
+            except AddressError as e:
+                return {"success": False, "error": str(e)}
+
+        comments = []
+        try:
+            fields = doc.getTextFields().createEnumeration()
+        except Exception as e:
+            logger.error(f"Could not enumerate comments: {e}")
+            return {"success": False, "error": str(e)}
+
+        while fields.hasMoreElements():
+            field = fields.nextElement()
+            if not _supports(field, ANNOTATION_SERVICE):
+                continue
+            described = _describe_comment(field)
+            try:
+                anchor = field.getAnchor()
+                located, _, _ = self._locate_range(doc, anchor)
+                described["address"] = located
+                described["anchor_text"] = _text_payload(anchor.getString())["text"]
+            except Exception as e:
+                logger.info(f"Could not locate a comment: {e}")
+                described["address"] = None
+                described["anchor_text"] = None
+            if wanted is not None and (described["address"] or {}).get(
+                    "paragraph") != wanted:
+                continue
+            comments.append(described)
+
+        return {"success": True, "comments": comments, "count": len(comments)}
+
+    def add_comment(self, address: Any, text: str, author: str = "",
+                    doc: Any = None) -> Dict[str, Any]:
+        """Anchor a new comment to the text at an address"""
+        doc, error = self._writer_document(doc, "Adding a comment")
+        if error:
+            return error
+
+        if not isinstance(text, str) or not text:
+            return {"success": False, "error": "text must be a non-empty string"}
+
+        try:
+            target = self._resolve_address(doc, address)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        def edit():
+            self._anchor_comment(doc, target,
+                                 {"author": author, "content": text})
+            return {"anchor_text": _text_payload(target.getString())["text"],
+                    "author": author, "content": text}
+
+        return self._guarded_edit(doc, "MCP: add comment", None, edit)
 
     def _formatting_of(self, run: Dict[str, Any]) -> Dict[str, Any]:
         """The character properties a run asked for, validated"""

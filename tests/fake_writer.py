@@ -169,8 +169,9 @@ class FakeParagraph(FakeRange):
 
     def createEnumeration(self):
         return FakeEnumeration(
-            FakeTextPortion(text, locale, properties)
-            for text, locale, properties in self.model.portions_of(self.index))
+            FakeTextPortion(text, locale, properties, kind, field)
+            for text, locale, properties, kind, field
+            in self.model.portions_of(self.index))
 
 
 class FakeEnum:
@@ -187,17 +188,41 @@ class FakeEnum:
         return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
 
 
+class FakeAnnotation:
+    """com.sun.star.text.textfield.Annotation, as the bridge touches it."""
+
+    def __init__(self, author="", content="", resolved=False):
+        self.Author = author
+        self.Content = content
+        self.Resolved = resolved
+        self._anchor = None
+
+    def supportsService(self, name):
+        return name == "com.sun.star.text.textfield.Annotation"
+
+    def getAnchor(self):
+        return self._anchor
+
+
 class FakeTextPortion:
-    """A run inside a paragraph, carrying its own language and formatting."""
+    """A run inside a paragraph, carrying its own language and formatting.
+
+    A comment is not text: Writer represents one as empty marker portions —
+    Annotation ... AnnotationEnd around the commented range, or a lone
+    Annotation for a comment anchored to a point. TextPortionType tells them
+    apart, and skipping them as "empty runs" is how a rewrite destroys them.
+    """
 
     DEFAULTS = {"CharWeight": 100.0, "CharPosture": "NONE", "CharUnderline": 0,
                 "CharHeight": 12.0, "CharFontName": "Liberation Serif",
                 "CharColor": -1, "CharBackColor": -1, "HyperLinkURL": "",
                 "HyperLinkTarget": "", "CharStyleName": ""}
 
-    def __init__(self, text, locale, properties=None):
+    def __init__(self, text, locale, properties=None, kind="Text", field=None):
         self._text = text
         self.CharLocale = locale
+        self.TextPortionType = kind
+        self.TextField = field
         for name, value in dict(self.DEFAULTS, **(properties or {})).items():
             setattr(self, name, value)
 
@@ -279,7 +304,13 @@ def _para_style_property():
     return property(getter, setter)
 
 
+def _insert_text_content(self, text_range, content, absorb):
+    """Anchoring an annotation to a range, as insertTextContent does."""
+    self.model.insert_comment(text_range.start, text_range.end, content)
+
+
 for _range_type in (FakeRange, FakeTextCursor):
+    setattr(_range_type, "insertTextContent", _insert_text_content)
     for _property_name in ("CharWeight", "CharPosture", "CharUnderline",
                            "CharHeight", "CharFontName", "CharColor",
                            "CharBackColor", "HyperLinkURL", "HyperLinkTarget",
@@ -342,6 +373,9 @@ class FakeEnumeration:
 class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
+    def insertTextContent(self, text_range, content, absorb):
+        self.insert_comment(text_range.start, text_range.end, content)
+
     def __init__(self, paragraphs, enumeration_items=None, styles=None,
                  outline_levels=None, expose_outline_level=True,
                  default_locale=None, portions=None):
@@ -353,6 +387,7 @@ class FakeText:
         self.default_locale = default_locale or ("en", "US")
         self.char_formatting = []
         self.border_formatting = []
+        self.created_comments = []
         self.fills = {}
         self.portions = dict(portions) if portions else {}
         self.enumeration_items = (
@@ -360,6 +395,19 @@ class FakeText:
             if enumeration_items is None
             else list(enumeration_items)
         )
+
+    def insert_comment(self, start, end, note):
+        """What insertTextContent(range, annotation, True) does to the runs."""
+        self.created_comments.append({"span": (start, end), "note": note})
+        (start_para, start_offset), (_, end_offset) = sorted([start, end])
+        body = self.paragraphs[start_para]
+        self.portions[start_para] = [
+            {"text": body[:start_offset]},
+            {"kind": "Annotation", "text": "", "field": note},
+            {"text": body[start_offset:end_offset]},
+            {"kind": "AnnotationEnd", "text": ""},
+            {"text": body[end_offset:]},
+        ]
 
     def record_border_property(self, start, end, name, value):
         self.border_formatting.append({"span": (start, end), name: value})
@@ -389,7 +437,7 @@ class FakeText:
     def locale_at(self, position):
         """The locale of the portion holding a position."""
         paragraph, offset = position
-        for text, locale, _ in self.portions_of(paragraph):
+        for text, locale, _, _kind, _field in self.portions_of(paragraph):
             if offset < len(text) or (offset == len(text) and len(text)):
                 return locale
             offset -= len(text)
@@ -409,7 +457,8 @@ class FakeText:
             from_offset = start_offset if paragraph == start_para else 0
             to_offset = end_offset if paragraph == end_para else len(body)
             rebuilt, position = [], 0
-            for text, existing, properties in self.portions_of(paragraph):
+            for text, existing, properties, _kind, _field in \
+                    self.portions_of(paragraph):
                 for character, index in zip(text, range(position, position + len(text))):
                     marked = from_offset <= index < to_offset
                     chosen = locale if marked else existing
@@ -433,19 +482,21 @@ class FakeText:
         declared = self.portions.get(paragraph)
         if declared is None:
             return [(self.paragraphs[paragraph],
-                     FakeLocale(*self.default_locale), {})]
+                     FakeLocale(*self.default_locale), {}, "Text", None)]
         normalised = []
         for run in declared:
             if isinstance(run, dict):
                 properties = {k: v for k, v in run.items()
-                              if k not in ("text", "locale")}
-                normalised.append((run["text"],
+                              if k not in ("text", "locale", "kind", "field")}
+                normalised.append((run.get("text", ""),
                                    run.get("locale",
                                            FakeLocale(*self.default_locale)),
-                                   properties))
+                                   properties,
+                                   run.get("kind", "Text"),
+                                   run.get("field")))
             else:
                 text, locale = run
-                normalised.append((text, locale, {}))
+                normalised.append((text, locale, {}, "Text", None))
         return normalised
 
     def _own(self, text_range):
@@ -602,6 +653,33 @@ class FakeDoc:
 
     def getRedlines(self):
         return FakeRedlines(getattr(self, "redline_count", 0))
+
+    def createInstance(self, service):
+        if service == "com.sun.star.text.textfield.Annotation":
+            return FakeAnnotation()
+        raise RuntimeError(f"no such service in the fake: {service}")
+
+    def getTextFields(self):
+        """The annotations the document holds, anchored where their markers are."""
+        found = []
+        for index in range(len(self._text.paragraphs)):
+            offset = 0
+            opened = []
+            for text, _locale, _props, kind, field in self._text.portions_of(index):
+                if kind == "Annotation":
+                    opened.append((field, offset))
+                elif kind == "AnnotationEnd" and opened:
+                    field, start = opened.pop()
+                    field._anchor = FakeRange(self._text, (index, start),
+                                              (index, offset))
+                    found.append(field)
+                else:
+                    offset += len(text)
+            for field, start in opened:
+                field._anchor = FakeRange(self._text, (index, start),
+                                          (index, start))
+                found.append(field)
+        return FakeComponents(found)
 
     @property
     def StyleFamilies(self):

@@ -399,6 +399,64 @@ class LibreOfficeMCPServer:
             "handler": self.replace_runs_live
         }
         
+        # Comments
+        self.tools["list_comments_live"] = {
+            "description": "List the comments (annotations) of the active Writer document, each with its author, text, resolved state, the address of the text it is anchored to, and that text itself. Use it to see what a reviewer asked for, and to check which text carries a comment before rewriting it",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Limit the listing to one paragraph, e.g. {\"paragraph\": 12}. Omit to list the whole document",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.list_comments_live
+        }
+        
+        self.tools["add_comment_live"] = {
+            "description": "Anchor a new comment to the text at an address, the way a reviewer's margin note is anchored. Use it to answer a question or flag a passage without changing the text itself",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Which text the comment is about: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The comment's text"
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "Name shown as the comment's author; defaults to LibreOffice's own user name"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address", "text"]
+            },
+            "handler": self.add_comment_live
+        }
+        
         # Formatting tools
         self.tools["format_range_live"] = {
             "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
@@ -758,6 +816,22 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.check_spelling(address=address,
                                               max_results=max_results, doc=doc)
+
+    def list_comments_live(self, address: Any = None,
+                           document: Optional[str] = None) -> Dict[str, Any]:
+        """List the comments of a Writer document with their anchors"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.list_comments(address=address, doc=doc)
+
+    def add_comment_live(self, address: Any, text: str, author: str = "",
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """Anchor a new comment to the text at an address"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.add_comment(address, text, author=author, doc=doc)
 
     def set_language_live(self, address: Any, language: str,
                           document: Optional[str] = None) -> Dict[str, Any]:

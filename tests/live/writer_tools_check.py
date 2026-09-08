@@ -643,6 +643,114 @@ try:
     check("allowed", plain.get("success"), True)
     check("nothing was flattened", plain.get("runs_flattened"), None)
 
+    print("\n--- comments: a comment occupies no characters ---")
+    body = doc.getText()
+    paragraph = bridge._paragraph_at(body, 3)
+    span = body.createTextCursorByRange(paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.setString("query and mutation are roots")
+    for offset, length in ((0, 5), (10, 8)):
+        code = body.createTextCursorByRange(paragraph.getStart())
+        code.goRight(offset, False)
+        code.goRight(length, True)
+        code.CharStyleName = "Source Text"
+
+    anchored = bridge.add_comment({"paragraph": 3, "offset": 0, "length": 18},
+                                  "Термин – не переводится",
+                                  author="Ревьюер", doc=doc)
+    print(anchored)
+    check("the comment was anchored", anchored.get("success"), True)
+    check("over the text it is about", anchored.get("anchor_text"),
+          "query and mutation")
+    check("the text is unchanged",
+          bridge.read_paragraphs(start=3, count=1, doc=doc)["paragraphs"][0]["text"],
+          "query and mutation are roots")
+
+    listed = bridge.list_comments(doc=doc)
+    print(listed)
+    check("it is listed once", listed.get("count"), 1)
+    check("with its author", listed["comments"][0]["author"], "Ревьюер")
+    check("with its text", listed["comments"][0]["content"],
+          "Термин – не переводится")
+    check("and the address of the text it covers",
+          listed["comments"][0]["address"],
+          {"paragraph": 3, "offset": 0, "length": 18})
+    check("listing one paragraph finds it",
+          bridge.list_comments({"paragraph": 3}, doc=doc)["count"], 1)
+    check("listing another paragraph does not",
+          bridge.list_comments({"paragraph": 1}, doc=doc)["count"], 0)
+
+    print("\n--- read_runs reports it on every run its anchor covers ---")
+    runs = bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]
+    print([(r["text"], len(r["comments"])) for r in runs])
+    covered = [r for r in runs if r["comments"]]
+    check("the covered runs carry it", [r["text"] for r in covered],
+          ["query", " and ", "mutation"])
+    check("all reporting the same comment",
+          all(r["comments"][0]["content"] == "Термин – не переводится"
+              for r in covered), True)
+    check("the run past the anchor carries none",
+          [r["comments"] for r in runs if r["text"] == " are roots"], [[]])
+
+    print("\n--- a flat replacement is refused, and counts it once ---")
+    refused = bridge.replace_range({"paragraph": 3}, "перевод", doc=doc)
+    print(refused)
+    check("refused", refused.get("success"), False)
+    check("naming one comment, not one per run",
+          "1 comment" in refused["error"], True)
+    check("the comment is still there", bridge.list_comments(doc=doc)["count"], 1)
+
+    print("\n--- translating through replace_runs keeps the comment ---")
+    translated = [dict(run, text={"query": "query", " and ": " и ",
+                                  "mutation": "mutation",
+                                  " are roots": " — корневые типы"}[run["text"]],
+                       language="ru-RU" if run["text"] in (" and ", " are roots")
+                       else None)
+                  for run in runs]
+    written = bridge.replace_runs({"paragraph": 3}, translated, doc=doc)
+    print(written)
+    check("written", written.get("success"), True)
+    check("the comment was written once", written.get("comments_written"), 1)
+    after = bridge.list_comments(doc=doc)
+    print(after)
+    check("one comment afterwards, not three", after.get("count"), 1)
+    check("its text survived", after["comments"][0]["content"],
+          "Термин – не переводится")
+    check("its author survived", after["comments"][0]["author"], "Ревьюер")
+    check("and it still covers the translated stretch",
+          after["comments"][0]["anchor_text"], "query и mutation")
+    check("the monospace runs survived the translation",
+          [r["character_style"] for r in
+           bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]],
+          ["Source Text", None, "Source Text", None])
+
+    print("\n--- replace_runs without the comments is refused ---")
+    stripped = [dict(run, comments=[]) for run in
+                bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]]
+    dropped = bridge.replace_runs({"paragraph": 3}, stripped, doc=doc)
+    print(dropped)
+    check("refused", dropped.get("success"), False)
+    check("saying what would be lost", "comment" in dropped["error"].lower(), True)
+    check("the comment is still there", bridge.list_comments(doc=doc)["count"], 1)
+
+    print("\n--- flatten=true drops it and says so ---")
+    flat = bridge.replace_range({"paragraph": 3}, "перевод", language="ru-RU",
+                                flatten=True, doc=doc)
+    print(flat)
+    check("went ahead", flat.get("success"), True)
+    check("reported the comment it dropped", flat.get("comments_dropped"), 1)
+    check("no comments left", bridge.list_comments(doc=doc)["count"], 0)
+
+    print("\n--- a comment on a point, with no text under it ---")
+    point = bridge.add_comment({"paragraph": 3, "offset": 3, "length": 0},
+                               "здесь", doc=doc)
+    check("anchored", point.get("success"), True)
+    point_listed = bridge.list_comments(doc=doc)
+    check("listed", point_listed.get("count"), 1)
+    check("with an empty anchor", point_listed["comments"][0]["anchor_text"], "")
+    check("adding a comment with no text is refused",
+          bridge.add_comment({"paragraph": 3}, "", doc=doc).get("success"), False)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()
