@@ -51,9 +51,10 @@ def test_a_comment_occupies_no_characters(bridge, doc):
 def test_reports_the_comment_on_the_run_it_covers(bridge, doc):
     runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
 
-    assert runs[0]["comments"] == [
-        {"author": "Aleksandr", "content": "Термин – не переводится",
-         "resolved": False}]
+    note, = runs[0]["comments"]
+    assert (note["author"], note["content"], note["resolved"]) == (
+        "Aleksandr", "Термин – не переводится", False)
+    assert note["id"]                    # names it for update_comment
     assert runs[1]["comments"] == []
 
 
@@ -223,3 +224,235 @@ def test_carrying_a_spanning_comment_back_recreates_one_comment(
     assert listed["comments"][0]["content"] == "Уточнить"
     # anchored over the whole stretch it covered, not just its first run
     assert listed["comments"][0]["anchor_text"] == "QUERY AND MUTATION"
+
+
+# --- scoping: document, section, paragraph, range, selection -----------------
+
+def commented_section():
+    """A heading, two commented paragraphs under it, then another section."""
+    query_note = FakeAnnotation("Aleksandr", "Термин – не переводится")
+    mutation_note = FakeAnnotation("Ревьюер", "Уточнить", resolved=True)
+    stray_note = FakeAnnotation("Aleksandr", "Не про этот раздел")
+    doc = writer_doc(
+        ["GraphQL", "The Query type", "query is the entry point",
+         "mutation writes data", "Errors", "unrelated text"],
+        caret=(2, 0),
+        selection_spans=[((2, 0), (2, 5))],
+        styles=["Heading 1", "Heading 2", "Standard", "Standard",
+                "Heading 2", "Standard"],
+        outline_levels=[1, 2, 0, 0, 2, 0],
+        portions={
+            2: [{"kind": "Annotation", "text": "", "field": query_note},
+                {"text": "query", "locale": EN},
+                {"kind": "AnnotationEnd", "text": ""},
+                {"text": " is the entry point", "locale": EN}],
+            3: [{"kind": "Annotation", "text": "", "field": mutation_note},
+                {"text": "mutation", "locale": EN},
+                {"kind": "AnnotationEnd", "text": ""},
+                {"text": " writes data", "locale": EN}],
+            5: [{"kind": "Annotation", "text": "", "field": stray_note},
+                {"text": "unrelated", "locale": EN},
+                {"kind": "AnnotationEnd", "text": ""},
+                {"text": " text", "locale": EN}],
+        })
+    return doc
+
+
+@pytest.fixture
+def section_doc():
+    return commented_section()
+
+
+def test_lists_every_comment_of_the_document(bridge, section_doc):
+    listed = bridge.list_comments(doc=section_doc)
+
+    assert listed["count"] == 3
+    assert [c["content"] for c in listed["comments"]] == [
+        "Термин – не переводится", "Уточнить", "Не про этот раздел"]
+    assert [c["address"]["paragraph"] for c in listed["comments"]] == [2, 3, 5]
+
+
+def test_reports_the_identity_and_state_of_a_comment(bridge, section_doc):
+    first = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    assert first["id"]                       # names one comment, for editing
+    assert first["resolved"] is False
+    assert first["date"] == "2026-09-08T09:32:29"
+    assert first["reply_to"] is None
+    assert bridge.list_comments(doc=section_doc)["comments"][1]["resolved"] is True
+
+
+def test_lists_the_comments_of_a_section(bridge, section_doc):
+    listed = bridge.list_comments({"heading": 1}, doc=section_doc)
+
+    assert [c["content"] for c in listed["comments"]] == [
+        "Термин – не переводится", "Уточнить"]
+    assert listed["scope"] == {"heading": 1, "paragraphs": [1, 3]}
+
+
+def test_a_section_of_a_higher_level_holds_the_lot(bridge, section_doc):
+    listed = bridge.list_comments({"heading": 0}, doc=section_doc)
+
+    assert listed["count"] == 3
+
+
+def test_lists_the_comments_of_one_paragraph(bridge, section_doc):
+    assert bridge.list_comments({"paragraph": 3}, doc=section_doc)["count"] == 1
+    assert bridge.list_comments({"paragraph": 4}, doc=section_doc)["count"] == 0
+
+
+def test_lists_the_comments_overlapping_a_range(bridge, section_doc):
+    on_the_term = bridge.list_comments({"paragraph": 2, "offset": 0,
+                                        "length": 5}, doc=section_doc)
+    past_it = bridge.list_comments({"paragraph": 2, "offset": 6, "length": 10},
+                                   doc=section_doc)
+
+    assert on_the_term["count"] == 1
+    assert past_it["count"] == 0
+
+
+def test_lists_the_comments_of_the_selection(bridge, section_doc):
+    listed = bridge.list_comments({"selection": True}, doc=section_doc)
+
+    assert listed["count"] == 1
+    assert listed["comments"][0]["content"] == "Термин – не переводится"
+
+
+def test_an_unknown_section_is_refused(bridge, section_doc):
+    refused = bridge.list_comments({"heading": 2}, doc=section_doc)
+
+    assert refused["success"] is False
+    assert "heading" in refused["error"].lower()
+
+
+# --- editing and deleting ----------------------------------------------------
+
+def test_edits_the_text_of_a_comment(bridge, section_doc):
+    target = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    changed = bridge.update_comment(target["id"], text="Оставить как есть",
+                                    doc=section_doc)
+
+    assert changed["success"] is True
+    assert changed["changed"] == ["text"]
+    after = bridge.list_comments(doc=section_doc)["comments"][0]
+    assert after["content"] == "Оставить как есть"
+    assert after["author"] == "Aleksandr"          # untouched
+    assert after["id"] == target["id"]             # still the same comment
+
+
+def test_resolves_a_comment_without_touching_its_text(bridge, section_doc):
+    target = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    changed = bridge.update_comment(target["id"], resolved=True, doc=section_doc)
+
+    assert changed["changed"] == ["resolved"]
+    after = bridge.list_comments(doc=section_doc)["comments"][0]
+    assert after["resolved"] is True
+    assert after["content"] == "Термин – не переводится"
+
+
+def test_editing_a_comment_leaves_the_text_it_is_anchored_to(bridge, section_doc):
+    target = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    bridge.update_comment(target["id"], text="иначе", author="Клод",
+                          doc=section_doc)
+
+    assert bridge.read_paragraphs(start=2, count=1,
+                                  doc=section_doc)["paragraphs"][0]["text"] \
+        == "query is the entry point"
+    after = bridge.list_comments(doc=section_doc)["comments"][0]
+    assert after["author"] == "Клод"
+
+
+def test_editing_needs_something_to_change(bridge, section_doc):
+    target = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    refused = bridge.update_comment(target["id"], doc=section_doc)
+
+    assert refused["success"] is False
+    assert "nothing" in refused["error"].lower()
+
+
+def test_editing_an_unknown_comment_is_refused(bridge, section_doc):
+    refused = bridge.update_comment("__Annotation__nope", text="x",
+                                    doc=section_doc)
+
+    assert refused["success"] is False
+    assert "__Annotation__nope" in refused["error"]
+
+
+def test_deletes_a_comment_and_keeps_its_text(bridge, section_doc):
+    target = bridge.list_comments(doc=section_doc)["comments"][0]
+
+    removed = bridge.delete_comment(target["id"], doc=section_doc)
+
+    assert removed["success"] is True
+    assert removed["content"] == "Термин – не переводится"
+    remaining = bridge.list_comments(doc=section_doc)
+    assert remaining["count"] == 2
+    assert target["id"] not in [c["id"] for c in remaining["comments"]]
+    assert bridge.read_paragraphs(start=2, count=1,
+                                  doc=section_doc)["paragraphs"][0]["text"] \
+        == "query is the entry point"
+    assert bridge.read_runs({"paragraph": 2}, doc=section_doc)["runs"][0][
+        "comments"] == []
+
+
+def test_deleting_an_unknown_comment_is_refused(bridge, section_doc):
+    refused = bridge.delete_comment("__Annotation__nope", doc=section_doc)
+
+    assert refused["success"] is False
+    assert "__Annotation__nope" in refused["error"]
+
+
+def test_the_editing_tools_are_registered_and_dispatch():
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = commented_section()
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    listed = asyncio.run(server.execute_tool("list_comments_live",
+                                             {"address": {"heading": 1}}))
+    assert listed["count"] == 2
+
+    changed = asyncio.run(server.execute_tool(
+        "update_comment_live", {"comment_id": listed["comments"][0]["id"],
+                                "resolved": True}))
+    assert changed["success"] is True
+
+    removed = asyncio.run(server.execute_tool(
+        "delete_comment_live", {"comment_id": listed["comments"][0]["id"]}))
+    assert removed["success"] is True
+    assert asyncio.run(server.execute_tool("list_comments_live", {}))["count"] == 2
+
+
+def test_a_comment_the_tool_adds_can_be_edited_and_deleted(bridge, section_doc):
+    """Writer leaves Name empty on an annotation made through the API, so a
+    comment the tool added was unaddressable until the bridge named it."""
+    added = bridge.add_comment({"paragraph": 4}, "новое замечание",
+                               author="Клод", doc=section_doc)
+
+    assert added["success"] is True
+    assert added["id"]
+
+    listed = bridge.list_comments({"paragraph": 4}, doc=section_doc)
+    assert listed["count"] == 1
+    assert listed["comments"][0]["id"] == added["id"]
+
+    assert bridge.update_comment(added["id"], text="иначе",
+                                 doc=section_doc)["success"] is True
+    assert bridge.delete_comment(added["id"], doc=section_doc)["success"] is True
+    assert bridge.list_comments({"paragraph": 4}, doc=section_doc)["count"] == 0
+
+
+def test_a_comment_the_tool_adds_is_dated(bridge, section_doc):
+    """An annotation made through the API carries a zeroed date, which shows
+    in Writer's margin as no date at all."""
+    added = bridge.add_comment({"paragraph": 4}, "новое", doc=section_doc)
+
+    listed = bridge.list_comments({"paragraph": 4}, doc=section_doc)["comments"]
+    assert listed[0]["date"] is not None
+    assert listed[0]["date"][:2] == "20"
+    assert added["success"] is True

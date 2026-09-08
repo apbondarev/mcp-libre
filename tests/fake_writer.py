@@ -10,6 +10,7 @@ wrong assumption — only a live LibreOffice can. They do pin down the offset an
 index arithmetic, the selection handling, and the error paths.
 """
 
+import itertools
 from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
@@ -188,20 +189,58 @@ class FakeEnum:
         return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
 
 
-class FakeAnnotation:
-    """com.sun.star.text.textfield.Annotation, as the bridge touches it."""
+class FakeDateTime:
+    """com.sun.star.util.DateTime, the struct an annotation's date is."""
 
-    def __init__(self, author="", content="", resolved=False):
+    def __init__(self, year=2026, month=9, day=8, hours=9, minutes=32,
+                 seconds=29):
+        self.Year = year
+        self.Month = month
+        self.Day = day
+        self.Hours = hours
+        self.Minutes = minutes
+        self.Seconds = seconds
+        self.NanoSeconds = 0
+        self.IsUTC = False
+
+
+_annotation_serial = itertools.count(1)
+
+
+class FakeAnnotation:
+    """com.sun.star.text.textfield.Annotation, as the bridge touches it.
+
+    Writer mints a unique Name per comment ("__Annotation__16442_3809372040"),
+    which is the only stable way to name one for editing or deleting: two
+    comments can share an author, a text and an anchor.
+    """
+
+    def __init__(self, author="", content="", resolved=False, initials="",
+                 parent="", named=True):
         self.Author = author
         self.Content = content
         self.Resolved = resolved
+        self.Initials = initials
+        self.ParentName = parent
+        # Writer names the comments made in its own interface; one created
+        # through the API comes back with an empty Name, so createInstance
+        # hands out an unnamed one and whoever inserts it must name it.
+        self.Name = (f"__Annotation__{next(_annotation_serial)}_fake"
+                     if named else "")
+        self.DateTimeValue = (FakeDateTime() if named
+                              else FakeDateTime(year=0, month=0, day=0, hours=0,
+                                                minutes=0, seconds=0))
         self._anchor = None
+        self.disposed = False
 
     def supportsService(self, name):
         return name == "com.sun.star.text.textfield.Annotation"
 
     def getAnchor(self):
         return self._anchor
+
+    def dispose(self):
+        self.disposed = True
 
 
 class FakeTextPortion:
@@ -375,6 +414,35 @@ class FakeText:
 
     def insertTextContent(self, text_range, content, absorb):
         self.insert_comment(text_range.start, text_range.end, content)
+
+    def removeTextContent(self, content):
+        """Dropping a comment drops its markers, never the text under them."""
+        removed = False
+        for index, portions in list(self.portions.items()):
+            kept = []
+            depth = None
+            open_notes = []
+            for portion in portions:
+                kind = portion.get("kind", "Text") if isinstance(portion, dict) \
+                    else "Text"
+                if kind == "Annotation":
+                    note = portion.get("field")
+                    open_notes.append(note)
+                    if note is content:
+                        depth = len(open_notes)
+                        removed = True
+                        continue
+                elif kind == "AnnotationEnd":
+                    closing = len(open_notes)
+                    if open_notes:
+                        open_notes.pop()
+                    if depth == closing:
+                        depth = None
+                        continue
+                kept.append(portion)
+            self.portions[index] = kept
+        if not removed:
+            raise RuntimeError("that text content is not in this text")
 
     def __init__(self, paragraphs, enumeration_items=None, styles=None,
                  outline_levels=None, expose_outline_level=True,
@@ -656,7 +724,7 @@ class FakeDoc:
 
     def createInstance(self, service):
         if service == "com.sun.star.text.textfield.Annotation":
-            return FakeAnnotation()
+            return FakeAnnotation(named=False)
         raise RuntimeError(f"no such service in the fake: {service}")
 
     def getTextFields(self):

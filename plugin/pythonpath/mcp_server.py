@@ -407,8 +407,9 @@ class LibreOfficeMCPServer:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Limit the listing to one paragraph, e.g. {\"paragraph\": 12}. Omit to list the whole document",
+                        "description": "Which comments: omit for the whole document, {\"heading\": N} for a section (the heading's paragraph index from get_outline_live, covering everything under it), {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for the comments overlapping that range, or {\"selection\": true} for what is selected",
                         "properties": {
+                            "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -455,6 +456,56 @@ class LibreOfficeMCPServer:
                 "required": ["address", "text"]
             },
             "handler": self.add_comment_live
+        }
+        
+        self.tools["update_comment_live"] = {
+            "description": "Change a comment's text, author or resolved state. The comment is named by the id list_comments_live reports; the text it is anchored to is left alone, since this edits the note in the margin and not the document",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "comment_id": {
+                        "type": "string",
+                        "description": "The comment's id, from list_comments_live"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "New text for the comment"
+                    },
+                    "author": {
+                        "type": "string",
+                        "description": "New author name"
+                    },
+                    "resolved": {
+                        "type": "boolean",
+                        "description": "Mark the comment resolved, or reopen it"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["comment_id"]
+            },
+            "handler": self.update_comment_live
+        }
+        
+        self.tools["delete_comment_live"] = {
+            "description": "Delete a comment, named by the id list_comments_live reports. The text it was anchored to stays; the result says what was removed, so it can be put back if that was a mistake",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "comment_id": {
+                        "type": "string",
+                        "description": "The comment's id, from list_comments_live"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["comment_id"]
+            },
+            "handler": self.delete_comment_live
         }
         
         # Formatting tools
@@ -832,6 +883,26 @@ class LibreOfficeMCPServer:
         if error:
             return error
         return self.uno_bridge.add_comment(address, text, author=author, doc=doc)
+
+    def update_comment_live(self, comment_id: str, text: Optional[str] = None,
+                            author: Optional[str] = None,
+                            resolved: Optional[bool] = None,
+                            document: Optional[str] = None) -> Dict[str, Any]:
+        """Change a comment's text, author or resolved state"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.update_comment(comment_id, text=text,
+                                              author=author, resolved=resolved,
+                                              doc=doc)
+
+    def delete_comment_live(self, comment_id: str,
+                            document: Optional[str] = None) -> Dict[str, Any]:
+        """Delete a comment, leaving the text it was anchored to"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.delete_comment(comment_id, doc=doc)
 
     def set_language_live(self, address: Any, language: str,
                           document: Optional[str] = None) -> Dict[str, Any]:

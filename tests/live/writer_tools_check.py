@@ -751,6 +751,147 @@ try:
     check("adding a comment with no text is refused",
           bridge.add_comment({"paragraph": 3}, "", doc=doc).get("success"), False)
 
+    print("\n--- deleting a comment leaves the text it was anchored to ---")
+    point_id = bridge.list_comments(doc=doc)["comments"][0]["id"]
+    check("the comment has an id", bool(point_id), True)
+    text_before = bridge.read_paragraphs(start=3, count=1,
+                                         doc=doc)["paragraphs"][0]["text"]
+    removed = bridge.delete_comment(point_id, doc=doc)
+    print(removed)
+    check("deleted", removed.get("success"), True)
+    check("saying what it removed", removed.get("content"), "здесь")
+    check("no comments left", bridge.list_comments(doc=doc)["count"], 0)
+    check("the text is untouched",
+          bridge.read_paragraphs(start=3, count=1,
+                                 doc=doc)["paragraphs"][0]["text"], text_before)
+    check("deleting an unknown comment is refused",
+          bridge.delete_comment("__Annotation__nope", doc=doc).get("success"),
+          False)
+
+    print("\n--- comments by document, section, paragraph, range, selection ---")
+    body = doc.getText()
+    plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("Alpha beta alpha.")
+    plain.HyperLinkURL = ""
+    plain.CharStyleName = "Standard"
+
+    first = bridge.add_comment({"paragraph": 1, "offset": 0, "length": 5},
+                               "про Alpha", author="Ревьюер", doc=doc)
+    second = bridge.add_comment({"paragraph": 3}, "про весь абзац",
+                                author="Клод", doc=doc)
+    check("both anchored", (first.get("success"), second.get("success")),
+          (True, True))
+
+    everything = bridge.list_comments(doc=doc)
+    print(everything)
+    check("the document holds two", everything.get("count"), 2)
+    ids = [c["id"] for c in everything["comments"]]
+    check("with ids of their own", len(set(ids)) == 2 and all(ids), True)
+    check("dated with a real date, not a zeroed one",
+          all((c["date"] or "").startswith("20")
+              for c in everything["comments"]), True)
+    check("scope says the whole document", everything.get("scope"),
+          {"document": True})
+
+    outline = bridge.get_outline(doc=doc)
+    print("headings:", [(h["paragraph"], h["level"], h["text"])
+                        for h in outline["headings"]])
+    section = bridge.list_comments({"heading": 2}, doc=doc)
+    check("the section under 'Section A' holds one", section.get("count"), 1)
+    check("which one", section["comments"][0]["content"], "про весь абзац")
+    check("and the scope names its paragraphs", section["scope"]["paragraphs"][0], 2)
+    check("the chapter above holds both",
+          bridge.list_comments({"heading": 0}, doc=doc)["count"], 2)
+    not_a_heading = bridge.list_comments({"heading": 1}, doc=doc)
+    check("a body paragraph is not a section", not_a_heading.get("success"), False)
+    check("and says so", "not a heading" in not_a_heading["error"], True)
+
+    check("one paragraph", bridge.list_comments({"paragraph": 1},
+                                                doc=doc)["count"], 1)
+    check("a paragraph with none", bridge.list_comments({"paragraph": 0},
+                                                        doc=doc)["count"], 0)
+    check("a range over the anchor",
+          bridge.list_comments({"paragraph": 1, "offset": 0, "length": 5},
+                               doc=doc)["count"], 1)
+    check("a range past it",
+          bridge.list_comments({"paragraph": 1, "offset": 6, "length": 4},
+                               doc=doc)["count"], 0)
+
+    selectable = body.createTextCursorByRange(
+        bridge._paragraph_at(body, 1).getStart())
+    selectable.goRight(5, True)
+    doc.getCurrentController().select(selectable)
+    selected = bridge.list_comments({"selection": True}, doc=doc)
+    print(selected)
+    check("the selection holds one", selected.get("count"), 1)
+    check("the one over the selected words", selected["comments"][0]["content"],
+          "про Alpha")
+
+    print("\n--- editing a comment, not the document ---")
+    target = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
+    changed = bridge.update_comment(target["id"], text="переформулировано",
+                                    doc=doc)
+    print(changed)
+    check("changed", changed.get("success"), True)
+    check("reporting what changed", changed.get("changed"), ["text"])
+    after = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
+    check("the new text is there", after["content"], "переформулировано")
+    check("the author is untouched", after["author"], "Ревьюер")
+    check("it is the same comment", after["id"], target["id"])
+    check("the document text is untouched",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "Alpha beta alpha.")
+    check("its anchor still covers the same words",
+          after["anchor_text"], "Alpha")
+
+    resolved = bridge.update_comment(target["id"], resolved=True, author="Клод",
+                                     doc=doc)
+    check("resolved and reassigned", resolved.get("success"), True)
+    settled = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
+    check("resolved", settled["resolved"], True)
+    check("reassigned", settled["author"], "Клод")
+    check("reopened again",
+          bridge.update_comment(target["id"], resolved=False,
+                                doc=doc).get("resolved"), False)
+    check("nothing to change is refused",
+          bridge.update_comment(target["id"], doc=doc).get("success"), False)
+    check("an unknown id is refused",
+          bridge.update_comment("__Annotation__nope", text="x",
+                                doc=doc).get("success"), False)
+
+    print("\n--- deleting one comment leaves the others ---")
+    survivor = bridge.list_comments({"paragraph": 3}, doc=doc)["comments"][0]
+    bridge.delete_comment(target["id"], doc=doc)
+    left = bridge.list_comments(doc=doc)
+    check("one left", left.get("count"), 1)
+    check("the other one", left["comments"][0]["id"], survivor["id"])
+    check("its text intact",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "Alpha beta alpha.")
+    check("and read_runs no longer reports a comment there",
+          [r["comments"] for r in
+           bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]], [[]])
+
+    print("\n--- an id survives saving and reopening ---")
+    saved_at = "/tmp/mcp_live_comment_ids.odt"
+    doc.storeToURL(f"file://{saved_at}", ())
+    reopened = desktop.loadComponentFromURL(f"file://{saved_at}", "_blank", 0, ())
+    reloaded = bridge.list_comments(doc=reopened)
+    print(reloaded)
+    check("the comment came back", reloaded.get("count"), 1)
+    check("with the same id", reloaded["comments"][0]["id"], survivor["id"])
+    check("with the same text", reloaded["comments"][0]["content"],
+          survivor["content"])
+    check("editing it by that id works after reopening",
+          bridge.update_comment(survivor["id"], text="после перезагрузки",
+                                doc=reopened).get("success"), True)
+    reopened.setModified(False)
+    reopened.close(True)
+    os.unlink(saved_at)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

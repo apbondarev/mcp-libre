@@ -11,6 +11,8 @@ from com.sun.star.beans import PropertyValue
 from com.sun.star.document import XDocumentEventListener
 from com.sun.star.awt import XActionListener
 from typing import Any, Optional, Dict, List
+import datetime
+import uuid
 import logging
 import re
 import traceback
@@ -162,12 +164,59 @@ def _distinct_comments(runs: Any) -> list:
     return found
 
 
+def _comment_date(note: Any) -> Optional[str]:
+    """The comment's timestamp as ISO 8601, from the DateTimeValue struct"""
+    stamp = _get_property(note, "DateTimeValue", None)
+    if stamp is None or not getattr(stamp, "Year", 0):
+        return None                      # Writer leaves it zeroed until set
+    try:
+        return (f"{stamp.Year:04d}-{stamp.Month:02d}-{stamp.Day:02d}"
+                f"T{stamp.Hours:02d}:{stamp.Minutes:02d}:{stamp.Seconds:02d}")
+    except Exception as e:
+        logger.info(f"Could not read a comment's date: {e}")
+        return None
+
+
+def _stamp_comment(note: Any):
+    """
+    Date a comment, the way Writer dates the ones made in its interface
+
+    An annotation created through the API carries a zeroed DateTimeValue —
+    measured — so the comment shows up in the margin with no date until it
+    is set.
+    """
+    try:
+        if getattr(_get_property(note, "DateTimeValue", None), "Year", 0):
+            return
+        now = datetime.datetime.now()
+        stamp = uno.createUnoStruct("com.sun.star.util.DateTime")
+        stamp.Year, stamp.Month, stamp.Day = now.year, now.month, now.day
+        stamp.Hours, stamp.Minutes, stamp.Seconds = (now.hour, now.minute,
+                                                     now.second)
+        stamp.NanoSeconds = 0
+        stamp.IsUTC = False
+        note.DateTimeValue = stamp
+    except Exception as e:
+        logger.info(f"Could not date a comment: {e}")
+
+
 def _describe_comment(note: Any) -> Dict[str, Any]:
-    """A comment as a caller sees it"""
+    """
+    A comment as a caller sees it
+
+    `id` is the annotation's own Name, which Writer mints per comment. It is
+    the only stable way to name one for editing or deleting: author, text and
+    anchor can all coincide. It does not survive a rewrite that re-anchors the
+    comment — replace_runs creates a new annotation, hence a new id.
+    """
     return {
+        "id": _get_property(note, "Name", "") or "",
         "author": _get_property(note, "Author", "") or "",
         "content": _get_property(note, "Content", "") or "",
-        "resolved": bool(_get_property(note, "Resolved", False))
+        "resolved": bool(_get_property(note, "Resolved", False)),
+        "initials": _get_property(note, "Initials", "") or "",
+        "date": _comment_date(note),
+        "reply_to": _get_property(note, "ParentName", "") or None
     }
 
 
@@ -1588,35 +1637,236 @@ class UNOBridge:
         return self._guarded_edit(doc, "MCP: replace runs", track_changes, edit)
 
     def _anchor_comment(self, doc: Any, span: Any, comment: Dict[str, Any]):
-        """Put a comment back on a range, keeping its author and text"""
+        """
+        Put a comment on a range, keeping its author and text
+
+        Gives it a Name if it has none. Writer names the comments made in its
+        own interface, but one created through the API comes back with an
+        empty Name — measured — and a comment with no name cannot be picked
+        out for editing or deleting later.
+        """
         note = doc.createInstance(ANNOTATION_SERVICE)
         note.Author = str(comment.get("author", "") or "")
         note.Content = str(comment.get("content", "") or "")
+        _stamp_comment(note)
         if comment.get("resolved"):
             try:
                 note.Resolved = True
             except Exception as e:
                 logger.info(f"Could not mark a comment resolved: {e}")
         span.getText().insertTextContent(span, note, True)
+        if not (_get_property(note, "Name", "") or ""):
+            try:
+                note.Name = f"__Annotation__mcp_{uuid.uuid4().hex[:16]}"
+            except Exception as e:
+                logger.info(f"Could not name a comment: {e}")
+        return note
+
+    def _section_bounds(self, doc: Any, index: Any) -> tuple:
+        """
+        (first, last) body paragraph of the section a heading opens
+
+        A section runs from its heading to the paragraph before the next
+        heading of the same or a higher level, which is what a reader means
+        by "this section" — the sub-sections under it included.
+        """
+        if not isinstance(index, int) or isinstance(index, bool):
+            raise AddressError(f"heading must be a paragraph index, "
+                               f"got {index!r}")
+
+        levels = []
+        enumeration = doc.getText().createEnumeration()
+        while enumeration.hasMoreElements():
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            levels.append(_heading_level(element))
+
+        if index < 0 or index >= len(levels):
+            raise AddressError(f"no body paragraph {index}, so no heading there")
+        level = levels[index]
+        if level <= 0:
+            raise AddressError(f"paragraph {index} is not a heading, so it "
+                               f"opens no section — take a heading's paragraph "
+                               f"index from get_outline")
+
+        last = len(levels) - 1
+        for position in range(index + 1, len(levels)):
+            if 0 < levels[position] <= level:
+                last = position - 1
+                break
+        return index, last
+
+    def _comment_scope(self, doc: Any, address: Any) -> tuple:
+        """
+        (predicate on a comment's address, description of the scope)
+
+        Comments can be asked for by document, by section, by paragraph, by an
+        exact range or by what is selected. A comment matches a range when its
+        anchor overlaps it; a point anchor matches when it sits inside.
+        """
+        if address is None:
+            return (lambda located: True), {"document": True}
+        if not isinstance(address, dict):
+            raise AddressError(f"address must be an object, got {address!r}")
+
+        if "heading" in address:
+            first, last = self._section_bounds(doc, address["heading"])
+            def in_section(located):
+                return located is not None and located.get("paragraph") \
+                    is not None and first <= located["paragraph"] <= last
+            return in_section, {"heading": address["heading"],
+                                "paragraphs": [first, last]}
+
+        asks_for_a_range = (address.get("selection")
+                            or address.get("offset") is not None
+                            or address.get("length") is not None)
+        if asks_for_a_range:
+            located, _, _ = self._locate_range(
+                doc, self._resolve_address(doc, address))
+            if located.get("paragraph") is None:
+                raise AddressError("that address is outside the body text")
+            paragraph = located["paragraph"]
+            start = located["offset"]
+            end = start + located["length"]
+            if end == start and address.get("selection"):
+                # Nothing selected, only a caret: the paragraph is what the
+                # caller can have meant.
+                return (lambda l: l is not None
+                        and l.get("paragraph") == paragraph), \
+                    {"paragraph": paragraph}
+
+            def overlaps(l):
+                if l is None or l.get("paragraph") != paragraph:
+                    return False
+                if l["length"] == 0:
+                    return start <= l["offset"] <= end
+                return l["offset"] < end and l["offset"] + l["length"] > start
+            return overlaps, {"paragraph": paragraph, "offset": start,
+                              "length": end - start}
+
+        index = self._paragraph_index_of(doc, address)
+        return (lambda l: l is not None and l.get("paragraph") == index), \
+            {"paragraph": index}
+
+    def _find_comment(self, doc: Any, comment_id: Any) -> Any:
+        """The annotation whose Name is comment_id, or None"""
+        if not isinstance(comment_id, str) or not comment_id:
+            raise AddressError("comment_id must be the id of a comment, as "
+                               "list_comments reports it")
+        fields = doc.getTextFields().createEnumeration()
+        while fields.hasMoreElements():
+            field = fields.nextElement()
+            if not _supports(field, ANNOTATION_SERVICE):
+                continue
+            if (_get_property(field, "Name", "") or "") == comment_id:
+                return field
+        return None
+
+    def update_comment(self, comment_id: str, text: Optional[str] = None,
+                       author: Optional[str] = None,
+                       resolved: Optional[bool] = None,
+                       doc: Any = None) -> Dict[str, Any]:
+        """
+        Change a comment's text, author or resolved state
+
+        The text the comment is anchored to is untouched: this edits the note
+        in the margin, not the document.
+        """
+        doc, error = self._writer_document(doc, "Editing a comment")
+        if error:
+            return error
+
+        if text is None and author is None and resolved is None:
+            return {"success": False,
+                    "error": "Nothing to change: pass text, author or resolved"}
+        if text is not None and (not isinstance(text, str) or not text):
+            return {"success": False,
+                    "error": "text must be a non-empty string; to remove a "
+                             "comment use delete_comment"}
+
+        try:
+            note = self._find_comment(doc, comment_id)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        if note is None:
+            return {"success": False,
+                    "error": f"No comment with id {comment_id} in this "
+                             f"document. Take an id from list_comments."}
+
+        def edit():
+            changed = []
+            if text is not None:
+                note.Content = text
+                changed.append("text")
+            if author is not None:
+                note.Author = str(author)
+                changed.append("author")
+            if resolved is not None:
+                note.Resolved = bool(resolved)
+                changed.append("resolved")
+            described = _describe_comment(note)
+            return {"id": described["id"], "changed": changed,
+                    "author": described["author"],
+                    "content": described["content"],
+                    "resolved": described["resolved"]}
+
+        return self._guarded_edit(doc, "MCP: edit comment", None, edit)
+
+    def delete_comment(self, comment_id: str, doc: Any = None) -> Dict[str, Any]:
+        """
+        Remove a comment, leaving the text it was anchored to
+
+        Returns what was deleted, so an assistant can say what it removed —
+        and so the text can be commented again if that was a mistake.
+        """
+        doc, error = self._writer_document(doc, "Deleting a comment")
+        if error:
+            return error
+
+        try:
+            note = self._find_comment(doc, comment_id)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        if note is None:
+            return {"success": False,
+                    "error": f"No comment with id {comment_id} in this "
+                             f"document. Take an id from list_comments."}
+
+        described = _describe_comment(note)
+        anchor_text = None
+        try:
+            anchor_text = _text_payload(note.getAnchor().getString())["text"]
+        except Exception as e:
+            logger.info(f"Could not read a comment's anchor: {e}")
+
+        def edit():
+            anchor = note.getAnchor()
+            anchor.getText().removeTextContent(note)
+            return {"id": described["id"], "author": described["author"],
+                    "content": described["content"],
+                    "anchor_text": anchor_text}
+
+        return self._guarded_edit(doc, "MCP: delete comment", None, edit)
 
     def list_comments(self, address: Any = None,
                       doc: Any = None) -> Dict[str, Any]:
         """
-        Every comment in the document, or in one paragraph
+        The comments of a document, a section, a paragraph, a range or the
+        selection
 
-        Each carries the address of the text it is anchored to, so a caller
-        can see what a comment is about without reading the whole document.
+        Each carries the address of the text it is anchored to and that text
+        itself, so a caller can see what a comment is about without reading
+        the whole document, plus the id that names it for editing.
         """
         doc, error = self._writer_document(doc, "Listing comments")
         if error:
             return error
 
-        wanted = None
-        if address is not None:
-            try:
-                wanted = self._paragraph_index_of(doc, address)
-            except AddressError as e:
-                return {"success": False, "error": str(e)}
+        try:
+            covers, scope = self._comment_scope(doc, address)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
 
         comments = []
         try:
@@ -1639,12 +1889,15 @@ class UNOBridge:
                 logger.info(f"Could not locate a comment: {e}")
                 described["address"] = None
                 described["anchor_text"] = None
-            if wanted is not None and (described["address"] or {}).get(
-                    "paragraph") != wanted:
+            if not covers(described["address"]):
                 continue
             comments.append(described)
 
-        return {"success": True, "comments": comments, "count": len(comments)}
+        comments.sort(key=lambda c: (
+            (c["address"] or {}).get("paragraph", 10 ** 9),
+            (c["address"] or {}).get("offset", 0)))
+        return {"success": True, "comments": comments, "count": len(comments),
+                "scope": scope}
 
     def add_comment(self, address: Any, text: str, author: str = "",
                     doc: Any = None) -> Dict[str, Any]:
@@ -1662,9 +1915,10 @@ class UNOBridge:
             return {"success": False, "error": str(e)}
 
         def edit():
-            self._anchor_comment(doc, target,
-                                 {"author": author, "content": text})
-            return {"anchor_text": _text_payload(target.getString())["text"],
+            note = self._anchor_comment(doc, target,
+                                        {"author": author, "content": text})
+            return {"id": _get_property(note, "Name", "") or "",
+                    "anchor_text": _text_payload(target.getString())["text"],
                     "author": author, "content": text}
 
         return self._guarded_edit(doc, "MCP: add comment", None, edit)
