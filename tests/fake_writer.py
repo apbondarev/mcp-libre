@@ -173,6 +173,20 @@ class FakeParagraph(FakeRange):
             for text, locale, properties in self.model.portions_of(self.index))
 
 
+class FakeEnum:
+    """A pyuno enum: it stringifies as a wrapper, never as its own value.
+
+    The bridge has to read `.value`; a fake that handed back a plain string
+    hid a defect where every run was reported upright.
+    """
+
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
+
+
 class FakeTextPortion:
     """A run inside a paragraph, carrying its own language and formatting."""
 

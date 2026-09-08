@@ -133,6 +133,21 @@ def _border_line(colour: int, points: float) -> Any:
     return line
 
 
+def _is_italic(posture: Any) -> bool:
+    """
+    Whether a CharPosture means italic
+
+    A pyuno enum stringifies as "<Enum instance com.sun.star.awt.FontSlant
+    ('ITALIC')>", so testing str(...) for a suffix reported every run as
+    upright — caught by the live harness after the fakes, which hand back a
+    plain string, had passed. The enum's own value is the thing to read.
+    """
+    if posture is None:
+        return False
+    name = getattr(posture, "value", None) or str(posture)
+    return "ITALIC" in name
+
+
 def _is_readonly(doc: Any) -> bool:
     """Whether the document refuses edits, False when it cannot be asked"""
     try:
@@ -785,6 +800,7 @@ class UNOBridge:
 
     def replace_selection(self, text: str, track_changes: Optional[bool] = None,
                           language: Optional[str] = None,
+                          flatten: bool = False,
                           doc: Any = None) -> Dict[str, Any]:
         """
         Replace the selected text
@@ -800,7 +816,7 @@ class UNOBridge:
             undo_title="MCP: replace selection",
             empty_error="Nothing is selected, so there is nothing to replace. "
                         "Select the text first, or use a tool that inserts.",
-            language=language)
+            language=language, flatten=flatten)
 
     def check_spelling(self, address: Any = None,
                        max_results: int = DEFAULT_SPELLING_RESULTS,
@@ -1011,6 +1027,7 @@ class UNOBridge:
     def replace_range(self, address: Any, text: str,
                       track_changes: Optional[bool] = None,
                       language: Optional[str] = None,
+                      flatten: bool = False,
                       doc: Any = None) -> Dict[str, Any]:
         """
         Replace the text at an address
@@ -1024,12 +1041,14 @@ class UNOBridge:
         return self._replace(address, text, track_changes, doc,
                              what="Replacing text",
                              undo_title="MCP: replace text",
-                             empty_error=None, language=language)
+                             empty_error=None, language=language,
+                             flatten=flatten)
 
     def _replace(self, address: Any, text: str, track_changes: Optional[bool],
                  doc: Any, what: str, undo_title: str,
                  empty_error: Optional[str],
-                 language: Optional[str] = None) -> Dict[str, Any]:
+                 language: Optional[str] = None,
+                 flatten: bool = False) -> Dict[str, Any]:
         """
         Rewrite the range an address points at, as a single undo step
 
@@ -1064,14 +1083,34 @@ class UNOBridge:
         if empty_error and not replaced:
             return {"success": False, "error": empty_error}
 
+        loss = None
         try:
-            located, _, _ = self._locate_range(doc, target)
+            located, paragraph_cursor, _ = self._locate_range(doc, target)
             paragraph_index = located["paragraph"]
+            if paragraph_index is not None:
+                loss = self._flattening_loss(doc, located, paragraph_cursor)
         except Exception as e:
             # Naming the paragraph is a nicety; failing to do so must not stop
             # the edit, and must not escape as an exception either.
             logger.info(f"Could not locate the range: {e}")
             paragraph_index = None
+
+        if loss and not flatten:
+            details = [f"{loss['runs']} formatted runs"]
+            if loss["links"]:
+                details.append(f"{loss['links']} hyperlink"
+                               f"{'s' if loss['links'] > 1 else ''}")
+            if loss["styles"]:
+                details.append(f"{loss['styles']} with character styles")
+            return {
+                "success": False,
+                "error": f"This range holds {', '.join(details)}. Replacing it "
+                         f"with one string would flatten them: inline code, "
+                         f"italics and hyperlinks would be lost. Read it with "
+                         f"read_runs, translate each run's text, and write it "
+                         f"back with replace_runs — or pass flatten=true to "
+                         f"accept the loss."
+            }
 
         recording = bool(_get_property(doc, "RecordChanges", False))
         wanted = recording if track_changes is None else bool(track_changes)
@@ -1110,7 +1149,9 @@ class UNOBridge:
             "paragraph": paragraph_index,
             "total_paragraphs": self._count_body_paragraphs(doc),
             "tracked": wanted,
-            "language": _locale_name(locale) if locale is not None else None
+            "language": _locale_name(locale) if locale is not None else None,
+            "runs_flattened": loss["runs"] if loss else None,
+            "links_dropped": loss["links"] if loss else None
         }
 
     def _guarded_edit(self, doc: Any, undo_title: str,
@@ -1262,6 +1303,19 @@ class UNOBridge:
                     "error": "That address is outside the body text, so its "
                              "runs cannot be read"}
 
+        try:
+            runs = self._runs_in(doc, located, paragraph_cursor)
+        except Exception as e:
+            logger.error(f"Could not read the runs: {e}")
+            return {"success": False, "error": str(e)}
+
+        return {"success": True, "runs": runs, "count": len(runs),
+                "paragraph": index}
+
+    def _runs_in(self, doc: Any, located: Dict[str, Any],
+                 paragraph_cursor: Any) -> List[Dict[str, Any]]:
+        """The runs a located range covers, clipped to it"""
+        index = located["paragraph"]
         span_start = located["offset"]
         span_end = span_start + max(located["length"], 0)
         if span_end == span_start:
@@ -1270,12 +1324,7 @@ class UNOBridge:
         paragraph = self._paragraph_at(doc.getText(), index)
         runs = []
         offset = 0
-        try:
-            portions = paragraph.createEnumeration()
-        except Exception as e:
-            logger.error(f"Could not read the runs: {e}")
-            return {"success": False, "error": str(e)}
-
+        portions = paragraph.createEnumeration()
         while portions.hasMoreElements():
             portion = portions.nextElement()
             try:
@@ -1292,9 +1341,30 @@ class UNOBridge:
             runs.append(self._describe_run(
                 portion, body[clipped_start - start:clipped_end - start],
                 index, clipped_start))
+        return runs
 
-        return {"success": True, "runs": runs, "count": len(runs),
-                "paragraph": index}
+    def _flattening_loss(self, doc: Any, located: Dict[str, Any],
+                         paragraph_cursor: Any) -> Optional[Dict[str, Any]]:
+        """
+        What a flat replacement of this range would destroy, or None
+
+        setString over a range of several runs collapses them into one, and a
+        hyperlink is lost even when it is the only run — both measured. A
+        character style on a single run survives, so it is not a loss.
+        """
+        try:
+            runs = self._runs_in(doc, located, paragraph_cursor)
+        except Exception as e:
+            # Unable to tell: better to let the edit through than to block it
+            # on a failure to introspect.
+            logger.info(f"Could not count the runs before replacing: {e}")
+            return None
+
+        links = [run for run in runs if run.get("link")]
+        if len(runs) <= 1 and not links:
+            return None
+        return {"runs": len(runs), "links": len(links),
+                "styles": len([r for r in runs if r.get("character_style")])}
 
     def _describe_run(self, portion: Any, body: str, paragraph: int,
                       offset: int) -> Dict[str, Any]:
@@ -1309,7 +1379,7 @@ class UNOBridge:
             "address": {"paragraph": paragraph, "offset": offset,
                         "length": len(body)},
             "bold": weight > 120.0,
-            "italic": str(posture).endswith("ITALIC"),
+            "italic": _is_italic(posture),
             "underline": bool(_get_property(portion, "CharUnderline", 0)),
             "font_name": _get_property(portion, "CharFontName"),
             "font_size": _get_property(portion, "CharHeight"),

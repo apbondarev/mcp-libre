@@ -281,3 +281,18 @@ def test_a_run_read_out_can_be_written_straight_back(bridge, linked_doc):
     assert text.char_property((1, 0), (1, 9), "CharStyleName") == "Source Text"
     assert text.char_property((1, 15), (1, 34), "HyperLinkURL") == \
         "https://graphql.org/learn/schema/"
+
+
+def test_reports_italic_from_a_uno_enum_not_from_its_repr(bridge):
+    """A pyuno enum stringifies as a wrapper; only its value says ITALIC."""
+    from tests.fake_writer import FakeEnum
+
+    doc = writer_doc(["Heading", "plain italic"], caret=(1, 0), portions={1: [
+        {"text": "plain ", "locale": EN, "CharPosture": FakeEnum("NONE")},
+        {"text": "italic", "locale": EN, "CharPosture": FakeEnum("ITALIC")},
+    ]})
+
+    runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
+
+    assert runs[0]["italic"] is False
+    assert runs[1]["italic"] is True

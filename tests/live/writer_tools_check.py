@@ -579,6 +579,70 @@ try:
           next((r["link"] for r in round_trip if r["link"]), None),
           "https://graphql.org/learn/schema/")
 
+    print("\n--- a flat replacement of formatted text is refused ---")
+    body = doc.getText()
+    paragraph = bridge._paragraph_at(body, 3)
+    span = body.createTextCursorByRange(paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.setString("")
+    cursor = body.createTextCursorByRange(paragraph.getStart())
+    body.insertString(cursor, "query is an entry point for reads.", False)
+    code = body.createTextCursorByRange(paragraph.getStart())
+    code.goRight(5, True)
+    code.CharStyleName = "Source Text"
+    italic = body.createTextCursorByRange(paragraph.getStart())
+    italic.goRight(12, False)
+    italic.goRight(11, True)
+    italic.CharPosture = uno.Enum("com.sun.star.awt.FontSlant", "ITALIC")
+
+    before = bridge.read_runs({"paragraph": 3}, doc=doc)
+    print("runs:", [(r["text"], r["character_style"], r["italic"])
+                    for r in before["runs"]])
+    check("the paragraph really holds several runs", before["count"] > 1, True)
+    check("the italic run is reported as italic",
+          [r["italic"] for r in before["runs"]], [False, False, True, False])
+
+    refused = bridge.replace_range({"paragraph": 3}, "перевод", doc=doc)
+    print(refused)
+    check("refused", refused.get("success"), False)
+    check("the refusal names the run count",
+          str(before["count"]) in refused["error"], True)
+    check("and points at the safe route",
+          "read_runs" in refused["error"] and "replace_runs" in refused["error"],
+          True)
+    check("the document is untouched",
+          bridge.read_paragraphs(start=3, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "query is an entry point for reads.")
+
+    print("\n--- a single run with a hyperlink is refused too ---")
+    linked_paragraph = bridge._paragraph_at(body, 1)
+    span = body.createTextCursorByRange(linked_paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.setString("the schema docs")
+    span = body.createTextCursorByRange(linked_paragraph.getStart())
+    span.gotoEndOfParagraph(True)
+    span.HyperLinkURL = "https://graphql.org/learn/schema/"
+    linked_refused = bridge.replace_range({"paragraph": 1}, "документация", doc=doc)
+    check("refused because of the link", linked_refused.get("success"), False)
+    check("the refusal mentions the link",
+          "hyperlink" in linked_refused["error"].lower(), True)
+
+    print("\n--- flatten=true goes ahead and reports the damage ---")
+    flattened = bridge.replace_range({"paragraph": 3}, "перевод",
+                                     language="ru-RU", flatten=True, doc=doc)
+    print(flattened)
+    check("went ahead", flattened.get("success"), True)
+    check("reported the runs it flattened", flattened.get("runs_flattened"),
+          before["count"])
+    check("one run left afterwards",
+          bridge.read_runs({"paragraph": 3}, doc=doc)["count"], 1)
+
+    print("\n--- a uniform paragraph is replaced without ceremony ---")
+    plain = bridge.replace_range({"paragraph": 3}, "простой текст", doc=doc)
+    check("allowed", plain.get("success"), True)
+    check("nothing was flattened", plain.get("runs_flattened"), None)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

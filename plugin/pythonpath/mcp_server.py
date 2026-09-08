@@ -192,7 +192,7 @@ class LibreOfficeMCPServer:
         
         # Editing tools
         self.tools["replace_selection_live"] = {
-            "description": "Replace the text currently selected in the active Writer document. Fails when nothing is selected",
+            "description": "Replace the selected text with a plain string. Fails when nothing is selected, and is refused when the selection holds several formatted runs or a hyperlink, since one string cannot carry their formatting — use read_runs_live and replace_runs_live for that",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -208,6 +208,11 @@ class LibreOfficeMCPServer:
                         "type": "string",
                         "description": "Language tag for the new text, such as \"ru-RU\". ALWAYS set this when writing text in a different language from what it replaces — translating, for instance. Without it the new text keeps the locale of the text it replaced, Writer spell-checks it against the wrong dictionary, and every single word appears underlined in red even though it is spelled correctly"
                     },
+                    "flatten": {
+                        "type": "boolean",
+                        "description": "Accept losing the formatting. Without it the call is refused when the range holds more than one formatted run, or a hyperlink, because replacing such a range with one string destroys inline code, italics and links. The safe route is read_runs_live, then replace_runs_live",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -219,7 +224,7 @@ class LibreOfficeMCPServer:
         }
         
         self.tools["replace_range_live"] = {
-            "description": "Replace the text at an address in the active Writer document. Use the addresses returned by get_outline_live, read_paragraphs_live and find_text_live — this is how text is rewritten without a human selecting it first",
+            "description": "Replace the text at an address with a plain string. Use the addresses returned by get_outline_live, read_paragraphs_live and find_text_live. This writes ONE stretch of uniform text, so it is refused when the range holds several formatted runs or a hyperlink — for those use read_runs_live and replace_runs_live, which keep each run's look",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -244,6 +249,11 @@ class LibreOfficeMCPServer:
                     "language": {
                         "type": "string",
                         "description": "Language tag for the new text, such as \"ru-RU\". ALWAYS set this when writing text in a different language from what it replaces — translating, for instance. Without it the new text keeps the locale of the text it replaced, Writer spell-checks it against the wrong dictionary, and every single word appears underlined in red even though it is spelled correctly"
+                    },
+                    "flatten": {
+                        "type": "boolean",
+                        "description": "Accept losing the formatting. Without it the call is refused when the range holds more than one formatted run, or a hyperlink, because replacing such a range with one string destroys inline code, italics and links. The safe route is read_runs_live, then replace_runs_live",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -716,17 +726,20 @@ class LibreOfficeMCPServer:
     def replace_selection_live(self, text: str,
                                track_changes: Optional[bool] = None,
                                language: Optional[str] = None,
+                               flatten: bool = False,
                                document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the selected text in a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.replace_selection(text, track_changes=track_changes,
-                                                 language=language, doc=doc)
+                                                 language=language,
+                                                 flatten=flatten, doc=doc)
     
     def replace_range_live(self, address: Any, text: str,
                            track_changes: Optional[bool] = None,
                            language: Optional[str] = None,
+                           flatten: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address in a Writer document"""
         doc, error = self._target_document(document)
@@ -734,7 +747,8 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.replace_range(address, text,
                                              track_changes=track_changes,
-                                             language=language, doc=doc)
+                                             language=language,
+                                             flatten=flatten, doc=doc)
 
     def check_spelling_live(self, address: Any = None, max_results: int = 50,
                             document: Optional[str] = None) -> Dict[str, Any]:
