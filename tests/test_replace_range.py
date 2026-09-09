@@ -139,3 +139,34 @@ def test_tool_is_registered_and_replaces_through_the_dispatcher():
 
     assert result["success"] is True
     assert doc.getText().paragraphs[2] == "Система типов"
+
+
+def test_an_empty_range_is_refused_rather_than_inserted_into():
+    """A replacement over nothing is an insertion, and calling it a
+    replacement hid one: a probe meant to test a refusal wrote text into a
+    document instead, because the selection was only a caret."""
+    doc = writer_doc(["Heading", "Learn about GraphQL, how it works"],
+                     caret=(1, 33))
+    bridge = UNOBridge()
+
+    refused = bridge.replace_range({"paragraph": 1, "offset": 33, "length": 0},
+                                   "ПРОБА", doc=doc)
+
+    assert refused["success"] is False
+    assert "nothing to replace" in refused["error"]
+    assert "insert_text" in refused["error"]
+    assert bridge.read_paragraphs(start=1, count=1,
+                                  doc=doc)["paragraphs"][0]["text"] \
+        == "Learn about GraphQL, how it works"
+
+
+def test_a_caret_is_not_a_selection_to_replace():
+    doc = writer_doc(["Heading", "Learn about GraphQL"], caret=(1, 19))
+    bridge = UNOBridge()
+
+    refused = bridge.replace_range({"selection": True}, "ПРОБА", doc=doc)
+
+    assert refused["success"] is False
+    assert bridge.read_paragraphs(start=1, count=1,
+                                  doc=doc)["paragraphs"][0]["text"] \
+        == "Learn about GraphQL"

@@ -1229,6 +1229,24 @@ try:
     check("and it survived", bridge.list_images(doc=doc)["count"], 1)
     os.unlink(picture_file)
 
+    print("\n--- a replacement over a point is refused, not written ---")
+    before_text = bridge.read_paragraphs(start=1, count=1,
+                                         doc=doc)["paragraphs"][0]["text"]
+    caret = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    caret.goRight(3, False)
+    doc.getCurrentController().select(caret)
+    point = bridge.replace_range({"selection": True}, "ПРОБА", doc=doc)
+    print(point)
+    check("refused", point.get("success"), False)
+    check("saying there is nothing to replace",
+          "nothing to replace" in point["error"], True)
+    explicit = bridge.replace_range({"paragraph": 1, "offset": 3, "length": 0},
+                                    "ПРОБА", doc=doc)
+    check("an explicit zero length too", explicit.get("success"), False)
+    check("and nothing was written",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"], before_text)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

@@ -1237,10 +1237,22 @@ class UNOBridge:
         An empty paragraph is a legitimate target, so emptiness is no error
         here, unlike with a selection.
         """
+        # A replacement over a point is an insertion, and calling it a
+        # replacement hides one: it wrote text into a document that was only
+        # meant to be asked whether the edit would be refused. Filling an
+        # empty *paragraph* is still a replacement, so only an address that
+        # asks for a point is refused.
+        asks_for_a_point = isinstance(address, dict) and (
+            bool(address.get("selection")) or address.get("length") == 0)
         return self._replace(address, text, track_changes, doc,
                              what="Replacing text",
                              undo_title="MCP: replace text",
-                             empty_error=None, language=language,
+                             empty_error=("That address points at no text — a "
+                                          "range of length 0 — so there is "
+                                          "nothing to replace. Use insert_text "
+                                          "to add text at a point, or give a "
+                                          "length" if asks_for_a_point else None),
+                             language=language,
                              flatten=flatten)
 
     def _replace(self, address: Any, text: str, track_changes: Optional[bool],
