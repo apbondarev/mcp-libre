@@ -204,6 +204,21 @@ class FakeEnum:
         return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
 
 
+# The bytes a PNG filter writes in the fakes: a real, if tiny, PNG.
+FakeGraphicProviderPNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+    "01f15c4890000000a49444154789c630001000005000101"
+    "0d0a2db40000000049454e44ae426082")
+
+
+class FakeProperty:
+    """A com.sun.star.beans.PropertyValue as a plain pair."""
+
+    def __init__(self, name, value):
+        self.Name = name
+        self.Value = value
+
+
 class FakeSize:
     """com.sun.star.awt.Size, in whatever unit the caller means."""
 
@@ -928,12 +943,39 @@ class FakeFindResults:
 
 
 class FakeViewCursor(FakeRange):
-    def __init__(self, model, start, end=None, page=1):
+    """The view cursor, which is also where Writer keeps the page number.
+
+    Jumping it to a page is how a page is rendered: the PNG filter renders
+    the page the view is on, and the FilterData's page properties are
+    ignored — measured on a live LibreOffice.
+    """
+
+    def __init__(self, model, start, end=None, page=1, pages=1):
         super().__init__(model, start, end)
         self.page = page
+        self.pages = pages
+        self.jumps = []
 
     def getPage(self):
         return self.page
+
+    def jumpToPage(self, page):
+        self.jumps.append(page)
+        if 1 <= page <= self.pages:
+            self.page = page
+            return True
+        return False
+
+    def gotoRange(self, other, expand):
+        if getattr(other, "model", None) is not self.model:
+            raise RuntimeError(
+                "End of content node doesn't have the proper start node")
+        self.start = other.start
+        self.end = other.end if hasattr(other, "end") else other.start
+        # A cursor sent into the text is on the page that text is on; the
+        # fake keeps it simple and says the paragraph's index decides.
+        self.page = min(self.pages, 1 + self.start[0] // 2)
+        return True
 
 
 class FakeController:
@@ -1055,6 +1097,33 @@ class FakeWriterDoc(FakeDoc):
     def getGraphicObjects(self):
         return FakeNameAccess(getattr(self, "images", ()))
 
+    # --- rendering: what XRenderable and the picture filters answer ---
+    pages = 1
+    render_failures = ()
+
+    def getRendererCount(self, selection, options):
+        return self.pages
+
+    def getRenderer(self, index, selection, options):
+        size = FakeSize(21000, 29700)          # A4 in 1/100 mm
+        page_size = FakeProperty("PageSize", size)
+        return (page_size,)
+
+    def storeToURL(self, url, arguments):
+        """Write what the filter would write, so a test can find the file."""
+        from urllib.parse import unquote, urlparse
+
+        settings = {argument.Name: argument.Value for argument in arguments}
+        filter_name = settings.get("FilterName", "")
+        if filter_name in self.render_failures:
+            raise RuntimeError(f"{filter_name} refused")
+        path = unquote(urlparse(url).path)
+        self.stored = getattr(self, "stored", [])
+        self.stored.append((filter_name, path, settings))
+        with open(path, "wb") as handle:
+            handle.write(FakeGraphicProviderPNG if filter_name.endswith(
+                "png_Export") else b"%PDF-1.5 fake\n")
+
     def getCurrentController(self):
         return self._controller
 
@@ -1111,17 +1180,47 @@ class FakeModalDialog:
         return False
 
 
+class FakeDrawDoc:
+    """A Draw document holding an imported PDF page, which exports a PNG."""
+
+    def __init__(self):
+        self.closed = False
+        self.stored = []
+
+    def storeToURL(self, url, arguments):
+        from urllib.parse import unquote, urlparse
+
+        settings = {argument.Name: argument.Value for argument in arguments}
+        path = unquote(urlparse(url).path)
+        self.stored.append((settings.get("FilterName", ""), path, settings))
+        with open(path, "wb") as handle:
+            handle.write(FakeGraphicProviderPNG)
+
+    def close(self, save):
+        self.closed = True
+
+
 class FakeDesktop:
     def __init__(self, documents, current=None):
         self._documents = list(documents)
         self._current = current if current is not None else (
             documents[0] if documents else None)
+        self.loaded = []
 
     def getCurrentComponent(self):
         return self._current
 
     def getComponents(self):
         return FakeComponents(self._documents)
+
+    def loadComponentFromURL(self, url, target, flags, arguments):
+        """Only the PDF-into-Draw import is modelled, which is all that uses it."""
+        settings = {argument.Name: argument.Value for argument in arguments}
+        self.loaded.append((url, settings.get("FilterName")))
+        drawing = FakeDrawDoc()
+        self.drawings = getattr(self, "drawings", [])
+        self.drawings.append(drawing)
+        return drawing
 
 
 def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page=1):
@@ -1135,7 +1234,7 @@ def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page
 
 
 def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
-               **text_kwargs):
+               pages=1, **text_kwargs):
     """Build a Writer document whose caret sits at `caret` = (paragraph, offset).
 
     `images` describes the pictures in it, each a dict of the arguments
@@ -1146,8 +1245,10 @@ def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
     selection_end = caret
     if selection_spans:
         selection_end = max(max(span) for span in selection_spans)
-    view_cursor = FakeViewCursor(text, caret, selection_end, page=page)
+    view_cursor = FakeViewCursor(text, caret, selection_end, page=page,
+                                 pages=pages)
     selection = FakeSelection(text, selection_spans or [(caret, caret)])
     doc = FakeWriterDoc(text, FakeController(view_cursor, selection))
     doc.images = [FakeImage(model=text, **described) for described in images]
+    doc.pages = pages
     return doc

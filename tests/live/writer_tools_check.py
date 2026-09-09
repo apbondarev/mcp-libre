@@ -1247,6 +1247,72 @@ try:
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"], before_text)
 
+    print("\n--- rendering a page, with LibreOffice alone ---")
+    # Enough text for a second page, so page selection can be checked.
+    tail = body.createTextCursorByRange(body.getEnd())
+    for _ in range(220):
+        body.insertString(tail, "Filling the page so that a second one exists. ",
+                          False)
+    view = doc.getCurrentController().getViewCursor()
+    view.jumpToPage(1)
+
+    pages = doc.getRendererCount(doc, ())
+    print("   pages:", pages)
+    check("the document has more than one page", pages > 1, True)
+
+    first = bridge.render_page(page=1, dpi=90, path="/tmp/mcp_live_page1.png",
+                               inline=False, doc=doc)
+    print({k: v for k, v in first.items() if k != "_image_content"})
+    check("rendered", first.get("success"), True)
+    check("by LibreOffice's own filter", first.get("rendered_by"),
+          "writer_png_Export")
+    check("as a PNG", open(first["path"], "rb").read(8), b"\x89PNG\r\n\x1a\x0a")
+    check("of the size it reports", first.get("bytes"),
+          os.path.getsize(first["path"]))
+    check("with the pixels of an A4 page at 90 dpi", first.get("pixels"),
+          {"width": 744, "height": 1052})
+    check("saying what it does not show",
+          "spell checker" in first["shows"], True)
+
+    second = bridge.render_page(page=2, dpi=90, path="/tmp/mcp_live_page2.png",
+                                inline=False, doc=doc)
+    check("the second page rendered too", second.get("success"), True)
+    check("and it is a different page",
+          open("/tmp/mcp_live_page1.png", "rb").read()
+          != open("/tmp/mcp_live_page2.png", "rb").read(), True)
+    check("the reader's cursor is back on page 1", view.getPage(), 1)
+
+    by_address = bridge.render_page(address={"paragraph": 3}, dpi=60,
+                                    path="/tmp/mcp_live_addr.png",
+                                    inline=False, doc=doc)
+    print({k: v for k, v in by_address.items() if k != "_image_content"})
+    check("a page found from an address", by_address.get("success"), True)
+    check("which page ¶3 is on", by_address.get("page"), 1)
+
+    looked_at = bridge.render_page(dpi=60, inline=True, doc=doc)
+    check("the page the reader is on, handed back",
+          (looked_at.get("page"), looked_at.get("inline")), (1, True))
+    check("as base64 of a PNG",
+          looked_at["_image_content"]["data"].startswith("iVBORw0KGgo"), True)
+    os.unlink(looked_at["path"])
+
+    check("a page the document has not is refused",
+          bridge.render_page(page=pages + 5, doc=doc).get("success"), False)
+    check("a silly resolution is refused",
+          bridge.render_page(page=1, dpi=5000, doc=doc).get("success"), False)
+
+    print("\n--- and the same page through the PDF route ---")
+    through_draw = bridge._render_through_draw(doc, 2, "/tmp/mcp_live_draw.png",
+                                               744, 1052)
+    check("the fallback wrote a picture too", through_draw is not None, True)
+    if through_draw:
+        check("as a PNG", open(through_draw, "rb").read(8),
+              b"\x89PNG\r\n\x1a\x0a")
+        os.unlink(through_draw)
+    for leftover in ("/tmp/mcp_live_page1.png", "/tmp/mcp_live_page2.png",
+                     "/tmp/mcp_live_addr.png"):
+        os.unlink(leftover)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

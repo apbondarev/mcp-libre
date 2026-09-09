@@ -5,8 +5,6 @@ This module implements an embedded MCP server that integrates with LibreOffice
 via the UNO API, providing real-time document manipulation capabilities.
 """
 
-import asyncio
-import json
 import logging
 from typing import Dict, Any, Optional, List
 from uno_bridge import UNOBridge
@@ -594,6 +592,48 @@ class LibreOfficeMCPServer:
             "handler": self.export_image_live
         }
         
+        self.tools["render_page_live"] = {
+            "description": "Render one page of the active Writer document as a picture and hand it back, so the layout can be looked at: fonts, spacing, borders, tables and pictures, with changes that have not been saved included. It is rendered by LibreOffice itself and shows the page as it prints — the spell checker's red underlines, the caret and the text boundary marks belong to Writer's window, not to the page. Give a page number, or an address to render the page that text is on, or neither for the page the reader is looking at",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {
+                        "type": "integer",
+                        "description": "Which page, counting from 1. Omit to render the page the cursor is on"
+                    },
+                    "address": {
+                        "type": "object",
+                        "description": "Render the page this text is on instead: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "dpi": {
+                        "type": "integer",
+                        "description": "Resolution, 20 to 300. 110 reads well; 200 shows fine detail and costs four times as much",
+                        "default": 110
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Where to write the picture; defaults to a file in the temporary directory"
+                    },
+                    "inline": {
+                        "type": "boolean",
+                        "description": "Return the picture in the reply as well, so it can be looked at rather than only saved",
+                        "default": True
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.render_page_live
+        }
+        
         # Formatting tools
         self.tools["format_range_live"] = {
             "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
@@ -1003,6 +1043,18 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.export_image(name, path=path,
                                             image_format=format,
                                             inline=inline, doc=doc)
+
+    def render_page_live(self, page: Optional[int] = None, address: Any = None,
+                         dpi: int = 110, path: Optional[str] = None,
+                         inline: bool = True,
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """Render one page as a picture, laid out as it would print"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.render_page(page=page, address=address, dpi=dpi,
+                                           path=path, inline=inline, doc=doc)
+
 
     def set_comment_language_live(self, language: str,
                                   document: Optional[str] = None

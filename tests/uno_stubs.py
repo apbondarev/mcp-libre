@@ -15,7 +15,7 @@ from pathlib import Path
 
 PLUGIN_PYTHONPATH = Path(__file__).resolve().parent.parent / "plugin" / "pythonpath"
 
-# Interfaces uno_bridge imports by name, per module.
+# Interfaces the plugin modules import by name, per module.
 _INTERFACES = {
     "com.sun.star.beans": ["PropertyValue"],
     "com.sun.star.text": ["XTextDocument"],
@@ -78,6 +78,9 @@ def install_uno_stubs():
         uno = types.ModuleType("uno")
         uno.getComponentContext = lambda: FakeComponentContext()
         uno.Enum = lambda type_name, value: f"{type_name}.{value}"
+        # uno.Any wraps a value in a typed Any for a UNO call; a fake only
+        # needs the value to arrive, so it passes straight through.
+        uno.Any = lambda type_name, value: value
 
         _STRUCT_FIELDS = {
             "com.sun.star.lang.Locale": ("Language", "Country", "Variant"),
