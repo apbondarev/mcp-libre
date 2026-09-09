@@ -178,6 +178,94 @@ def _distinct_comments(runs: Any) -> list:
     return found
 
 
+def _raw(value: Any) -> Any:
+    """The value as JSON can carry it, for a caller that wants the number"""
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    enum = getattr(value, "value", None)
+    if isinstance(enum, str):
+        return enum
+    # The structs a style actually carries, as fields rather than as the
+    # repr of a pyuno struct, which no caller can do anything with.
+    mode = _get_property(value, "Mode", None)
+    height = _get_property(value, "Height", None)
+    if mode is not None and height is not None:
+        return {"mode": LINE_SPACING_MODES.get(mode, mode), "height": height}
+    width = _get_property(value, "LineWidth", None)
+    if width is not None:
+        return {"line_width": width,
+                "color": _get_property(value, "Color", None),
+                "line_style": _raw(_get_property(value, "LineStyle", None))}
+    language = _get_property(value, "Language", None)
+    if language is not None:
+        return _locale_name(value)
+    return str(value)
+
+
+def _property_state_name(state: Any) -> Optional[str]:
+    """"DIRECT_VALUE" for a com.sun.star.beans.PropertyState"""
+    if state is None:
+        return None
+    return getattr(state, "value", None) or str(state)
+
+
+def _get_property_state(source: Any, name: str) -> Optional[str]:
+    """Whether `source` sets `name` itself, inherits it, or cannot say"""
+    try:
+        return _property_state_name(source.getPropertyState(name))
+    except Exception:
+        return None
+
+
+def _style_value(name: str, value: Any) -> Any:
+    """
+    A style property as a person would read it
+
+    Writer keeps lengths in 1/100 mm, weights as a number where 150 is bold,
+    colours as a signed integer and enums as pyuno wrappers, so the raw value
+    is kept alongside anything translated.
+    """
+    if value is None:
+        return None
+    enum = getattr(value, "value", None)
+    if isinstance(enum, str):                      # a pyuno enum
+        return enum
+    if name in STYLE_HUNDREDTHS_MM and isinstance(value, (int, float)):
+        return f"{round(value / 100.0, 2)} mm"
+    if name in STYLE_POINTS and isinstance(value, (int, float)):
+        return f"{round(float(value), 1)} pt"
+    if name in STYLE_COLOURS and isinstance(value, int):
+        return "automatic" if value == -1 else _colour_name(value & 0xFFFFFF)
+    if name.startswith("CharWeight") and isinstance(value, (int, float)):
+        return "bold" if value > 120 else "normal"
+    if name == "ParaAdjust" and isinstance(value, int):
+        return PARAGRAPH_ADJUST.get(value, value)
+    if name == "Category" and isinstance(value, int):
+        return STYLE_CATEGORIES.get(value, value)
+    if name.startswith("CharLocale"):
+        return _locale_name(value)
+    if name == "ParaLineSpacing":
+        mode = _get_property(value, "Mode", None)
+        height = _get_property(value, "Height", None)
+        if mode == 0:
+            return f"{height}%"
+        if isinstance(height, (int, float)):
+            return (f"{LINE_SPACING_MODES.get(mode, mode)} "
+                    f"{round(height / 100.0, 2)} mm")
+        return f"{LINE_SPACING_MODES.get(mode, mode)}"
+    if name.endswith("Border"):
+        width = _get_property(value, "LineWidth", None)
+        if not width:
+            return "none"
+        colour = _get_property(value, "Color", 0) or 0
+        return (f"{round(width / 100.0, 2)} mm, "
+                f"{_colour_name(colour & 0xFFFFFF)}")
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    # A struct or something else pyuno will not simplify: say what it is.
+    return str(value)
+
+
 def _file_url(path: str) -> str:
     """A file:// URL UNO accepts, with the odd character in a name escaped"""
     return "file://" + quote(os.path.abspath(path))
@@ -290,6 +378,47 @@ MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024
 #   * A page rendered this way is the page as it prints. The spell checker's
 #     red underlines, the caret and the text boundary marks live in Writer's
 #     window, not in the page, and no export shows them.
+# Describing a style. What a caller wants to know is not the 195 properties
+# a paragraph style carries but the handful it sets *itself* — and UNO says
+# which those are: getPropertyState is DIRECT_VALUE for a property the style
+# defines and DEFAULT_VALUE for one it inherits. For "Text body" that is 8 of
+# 195, and they match its definition in styles.xml exactly, which is why
+# nobody has to read the file to find out.
+STYLE_FAMILIES = {"paragraph": "ParagraphStyles", "character": "CharacterStyles",
+                  "page": "PageStyles", "frame": "FrameStyles",
+                  "numbering": "NumberingStyles", "table": "TableStyles",
+                  "cell": "CellStyles"}
+
+# Writer measures these in 1/100 mm, and font sizes in points.
+STYLE_HUNDREDTHS_MM = {
+    "ParaTopMargin", "ParaBottomMargin", "ParaLeftMargin", "ParaRightMargin",
+    "ParaFirstLineIndent", "TopBorderDistance", "BottomBorderDistance",
+    "LeftBorderDistance", "RightBorderDistance", "BorderDistance",
+    "ParaLineSpacingFix", "Width", "Height", "LeftMargin", "RightMargin",
+    "TopMargin", "BottomMargin", "ParaTabStopDefaultDistance"}
+STYLE_POINTS = {"CharHeight", "CharHeightAsian", "CharHeightComplex"}
+STYLE_COLOURS = {"CharColor", "CharBackColor", "ParaBackColor", "FillColor",
+                 "CharUnderlineColor", "BackColor"}
+
+PARAGRAPH_ADJUST = {0: "left", 1: "right", 2: "justified", 3: "centred",
+                    4: "stretched"}
+LINE_SPACING_MODES = {0: "proportional", 1: "at least", 2: "leading",
+                      3: "exactly"}
+STYLE_CATEGORIES = {0: "text", 1: "chapter", 2: "list", 3: "index",
+                    4: "extra", 5: "html"}
+
+# What "everything about this style" means in practice, in the order a reader
+# would want it. Anything else is reachable with all_properties=true.
+STYLE_EFFECTIVE = (
+    "CharFontName", "CharHeight", "CharWeight", "CharPosture",
+    "CharUnderline", "CharColor", "CharBackColor", "CharLocale",
+    "ParaAdjust", "ParaLineSpacing", "ParaTopMargin", "ParaBottomMargin",
+    "ParaLeftMargin", "ParaRightMargin", "ParaFirstLineIndent",
+    "ParaContextMargin", "ParaKeepTogether", "ParaSplit", "ParaOrphans",
+    "ParaWidows", "ParaBackColor", "FillStyle", "FillColor", "TopBorder",
+    "BottomBorder", "LeftBorder", "RightBorder", "NumberingStyleName",
+    "OutlineLevel", "PageDescName", "BreakType")
+
 MIN_RENDER_DPI, MAX_RENDER_DPI = 20, 300
 MAX_RENDER_PIXELS = 5000
 
@@ -2315,6 +2444,146 @@ class UNOBridge:
                              "one of those"}
 
         return self._guarded_edit(doc, "MCP: set comment language", None, edit)
+
+    def _style_family(self, doc: Any, family: str) -> tuple:
+        """(the UNO family, its name) for "paragraph", "character", …"""
+        if not isinstance(family, str) or family.lower() not in STYLE_FAMILIES:
+            raise AddressError(
+                f"family must be one of {', '.join(sorted(STYLE_FAMILIES))}, "
+                f"got {family!r}")
+        uno_name = STYLE_FAMILIES[family.lower()]
+        try:
+            return doc.StyleFamilies.getByName(uno_name), uno_name
+        except Exception as e:
+            raise AddressError(f"this document has no {uno_name}: {e}")
+
+    def _style_at(self, doc: Any, address: Any, family: str) -> str:
+        """The name of the style the text at an address uses"""
+        wanted = family.lower()
+        if wanted == "paragraph":
+            index = self._paragraph_index_of(doc, address)
+            paragraph = self._paragraph_at(doc.getText(), index)
+            return _get_property(paragraph, "ParaStyleName", "") or ""
+        if wanted == "character":
+            target = self._resolve_address(doc, address)
+            name = _get_property(target, "CharStyleName", "") or ""
+            if not name:
+                raise AddressError(
+                    "that text carries no character style of its own, so its "
+                    "look comes from its paragraph style — ask for family "
+                    "\"paragraph\"")
+            return name
+        if wanted == "page":
+            controller = doc.getCurrentController()
+            view = controller.getViewCursor() if controller else None
+            name = _get_property(view, "PageStyleName", "") or ""
+            if not name:
+                raise AddressError("the view does not say which page style is "
+                                   "in use")
+            return name
+        raise AddressError(f"a {family} style cannot be found from an address; "
+                           f"name it instead")
+
+    def describe_style(self, name: Optional[str] = None,
+                       family: str = "paragraph", address: Any = None,
+                       all_properties: bool = False,
+                       doc: Any = None) -> Dict[str, Any]:
+        """
+        Everything about one style: what it sets itself, and what is in force
+
+        `set_here` is the style's own definition — the properties UNO reports
+        as DIRECT_VALUE — which is the same handful that appears in the
+        document's styles.xml, without reading the file. `effective` is what
+        the text actually gets, each value saying whether it comes from this
+        style or is inherited, so the two questions a reader has are
+        answered separately.
+
+        With no `name`, the style used at `address` is described, or the one
+        at the caret — which is what "this style" means.
+        """
+        doc, error = self._writer_document(doc, "Describing a style")
+        if error:
+            return error
+
+        try:
+            styles, family_name = self._style_family(doc, family)
+            if not name:
+                name = self._style_at(doc, address
+                                      if address is not None
+                                      else {"selection": True}, family)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        if not styles.hasByName(name):
+            return {"success": False,
+                    "error": f"there is no {family} style called {name!r} in "
+                             f"this document; list_styles reports what there "
+                             f"is"}
+        style = styles.getByName(name)
+
+        described = {"name": name, "family": family.lower(),
+                     "uno_family": family_name}
+        for key, prop in (("display_name", "DisplayName"),
+                          ("parent", "ParentStyle"),
+                          ("next_style", "FollowStyle"),
+                          ("linked_style", "LinkStyle"),
+                          ("category", "Category"),
+                          ("auto_update", "IsAutoUpdate"),
+                          ("hidden", "Hidden")):
+            value = _get_property(style, prop, None)
+            described[key] = _style_value(prop, value) if value is not None \
+                else None
+        for key, method in (("user_defined", "isUserDefined"),
+                            ("in_use", "isInUse")):
+            try:
+                described[key] = bool(getattr(style, method)())
+            except Exception as e:
+                logger.info(f"Could not ask a style {method}: {e}")
+                described[key] = None
+
+        # The chain of parents, so "where does this come from" has an answer.
+        chain = []
+        current = style
+        while len(chain) < 20:
+            parent = _get_property(current, "ParentStyle", "") or ""
+            if not parent or not styles.hasByName(parent):
+                break
+            chain.append(parent)
+            current = styles.getByName(parent)
+        described["inherits_from"] = chain
+
+        try:
+            properties = [entry.Name for entry
+                          in style.getPropertySetInfo().getProperties()]
+        except Exception as e:
+            logger.error(f"Could not list the properties of {name}: {e}")
+            return {"success": False, "error": str(e)}
+
+        set_here, effective, everything = {}, {}, {}
+        for prop in sorted(properties):
+            state = None
+            try:
+                state = _get_property_state(style, prop)
+                value = getattr(style, prop)
+            except Exception:
+                continue                    # a property this style will not show
+            readable = _style_value(prop, value)
+            if state == "DIRECT_VALUE":
+                set_here[prop] = {"value": readable, "raw": _raw(value)}
+            if prop in STYLE_EFFECTIVE:
+                effective[prop] = {"value": readable,
+                                   "from": "this style"
+                                   if state == "DIRECT_VALUE" else "inherited"}
+            if all_properties:
+                everything[prop] = {"value": readable, "state": state}
+
+        result = {"success": True, "style": described,
+                  "set_here": set_here, "set_here_count": len(set_here),
+                  "effective": effective,
+                  "properties_in_all": len(properties)}
+        if all_properties:
+            result["all_properties"] = everything
+        return result
 
     def _selected_graphics(self, doc: Any) -> List[Any]:
         """

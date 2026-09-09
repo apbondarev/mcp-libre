@@ -1246,6 +1246,71 @@ try:
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"], before_text)
 
+    print("\n--- describing a style: its own definition, and what is in force ---")
+    described = bridge.describe_style("Text body", doc=doc)
+    print("   identity:", described["style"])
+    check("described", described.get("success"), True)
+    check("its parent", described["style"]["parent"], "Standard")
+    check("the chain it inherits from", described["style"]["inherits_from"],
+          ["Standard"])
+    check("the style that follows it", described["style"]["next_style"],
+          "Text body")
+    check("built in, not made by the user", described["style"]["user_defined"],
+          False)
+
+    print("   sets itself:", {name: entry["value"]
+                              for name, entry in described["set_here"].items()})
+    check("a handful of the lot, not all of it",
+          described["set_here_count"] < described["properties_in_all"] / 10,
+          True)
+    check("with the margin in millimetres",
+          described["set_here"]["ParaBottomMargin"]["value"], "2.47 mm")
+    check("and the raw hundredths kept",
+          described["set_here"]["ParaBottomMargin"]["raw"], 247)
+    check("the line spacing as a percentage",
+          described["set_here"]["ParaLineSpacing"]["value"], "115%")
+    check("its struct as fields, not as a repr",
+          described["set_here"]["ParaLineSpacing"]["raw"],
+          {"mode": "proportional", "height": 115})
+
+    check("the font is in force but inherited",
+          (described["effective"]["CharFontName"]["value"],
+           described["effective"]["CharFontName"]["from"]),
+          ("Liberation Serif", "inherited"))
+    check("the spacing is in force from this style",
+          described["effective"]["ParaLineSpacing"]["from"], "this style")
+    check("the size reads in points",
+          described["effective"]["CharHeight"]["value"], "12.0 pt")
+
+    print("\n   the same style, found from the text instead of named:")
+    from_text = bridge.describe_style(address={"paragraph": 1}, doc=doc)
+    print("      ¶1 uses", from_text["style"]["name"])
+    check("a style can be found from an address",
+          from_text.get("success"), True)
+    heading = bridge.describe_style(address={"paragraph": 0}, doc=doc)
+    check("and a heading is recognised as its own style",
+          heading["style"]["name"].startswith("Heading"), True)
+    check("with an outline level in force",
+          heading["effective"]["OutlineLevel"]["value"] > 0, True)
+
+    check("an unknown style is refused",
+          bridge.describe_style("Nope", doc=doc).get("success"), False)
+    check("an unknown family is refused",
+          bridge.describe_style("Text body", family="chair",
+                                doc=doc).get("success"), False)
+    everything = bridge.describe_style("Text body", all_properties=True,
+                                       doc=doc)
+    check("all_properties returns the lot with their states",
+          len(everything["all_properties"]),
+          everything["properties_in_all"])
+    check("and the states tell own from inherited",
+          (everything["all_properties"]["ParaBottomMargin"]["state"],
+           everything["all_properties"]["CharFontName"]["state"]),
+          ("DIRECT_VALUE", "DEFAULT_VALUE"))
+    check("a character style can be described too",
+          bridge.describe_style("Source Text", family="character",
+                                doc=doc).get("success"), True)
+
     print("\n--- a selected picture is not a text selection ---")
     picture_file = write_test_png("/tmp/mcp_live_source.png")   # the earlier
     plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())

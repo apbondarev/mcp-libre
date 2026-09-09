@@ -779,6 +779,44 @@ class LibreOfficeMCPServer:
             "handler": self.list_styles_live
         }
         
+        self.tools["describe_style_live"] = {
+            "description": "Report everything about one style: what the style sets itself — its own definition, the same handful of properties that stands in the document's styles.xml — and what is in force for text using it, with each value saying whether it comes from this style or is inherited. Also its parent, the chain it inherits from, the style that follows it, whether it is user-defined and whether it is in use. Name a style, or give an address (or nothing, for the caret) to describe the style the text there uses",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The style's name, as list_styles_live reports it. Omit it to describe the style used at the address, or at the caret"
+                    },
+                    "family": {
+                        "type": "string",
+                        "description": "Which kind of style: paragraph, character, page, frame, numbering, table or cell",
+                        "default": "paragraph"
+                    },
+                    "address": {
+                        "type": "object",
+                        "description": "Whose style to describe: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}. Only used when no name is given",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "all_properties": {
+                        "type": "boolean",
+                        "description": "Also return every property the style carries, with its state — around 200 for a paragraph style",
+                        "default": False
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.describe_style_live
+        }
+        
         # Document saving tools
         self.tools["save_document_live"] = {
             "description": "Save the currently active document",
@@ -1043,6 +1081,19 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.export_image(name, path=path,
                                             image_format=format,
                                             inline=inline, doc=doc)
+
+    def describe_style_live(self, name: Optional[str] = None,
+                            family: str = "paragraph", address: Any = None,
+                            all_properties: bool = False,
+                            document: Optional[str] = None) -> Dict[str, Any]:
+        """Report what a style sets itself and what is in force under it"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.describe_style(name=name, family=family,
+                                              address=address,
+                                              all_properties=all_properties,
+                                              doc=doc)
 
     def render_page_live(self, page: Optional[int] = None, address: Any = None,
                          dpi: int = 110, path: Optional[str] = None,
