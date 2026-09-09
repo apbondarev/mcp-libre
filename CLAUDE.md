@@ -65,6 +65,7 @@ Runs *inside* LibreOffice via UNO, so it acts on live open documents with no fil
 
 Hard constraints on plugin code:
 
+- **No external programs. A tool must work with nothing but LibreOffice and the Python standard library, on any machine where LibreOffice runs.** No `pdftoppm`, no ImageMagick, no `gs`, no screenshot utility — a capability that needs one of those is not a capability of this server. Whatever is wanted is either reachable through UNO (a filter, `XRenderable`, `GraphicProvider`) or it is not offered at all. This is a requirement on every tool, not a preference: the server is installed as a LibreOffice extension on machines whose contents nobody controls.
 - It runs under LibreOffice's bundled Python: **stdlib only**. No `pip` deps, no `mcp`, no `httpx`, no `pydantic`. That's why the SSE transport and JSON-RPC are hand-rolled.
 - Errors are returned as `{"success": False, "error": ...}` dicts rather than raised, since exceptions inside UNO callbacks vanish.
 - **Never do UNO work on a thread of your own while the main thread shows a modal dialog.** A dialog runs a nested event loop holding the SolarMutex; a Python thread cannot acquire it, and the process dies with no traceback — `/tmp/mcp_extension.log` simply stops. This crashed LibreOffice on "Start MCP Server" until `_execute_action` was made synchronous. UNO from an HTTP handler thread is fine while the main thread sits in its normal event loop, which is why tool calls work.
