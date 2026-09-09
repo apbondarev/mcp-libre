@@ -831,6 +831,19 @@ class UNOBridge:
                 return error
 
             controller = doc.getCurrentController()
+            pictures = self._selected_graphics(doc)
+            if pictures:
+                # Selecting a picture leaves no text selection at all, and
+                # asking for the view cursor throws; saying what is selected
+                # beats reporting nothing.
+                return {"success": True, "selection_kind": "picture",
+                        "selected_text": None, "paragraph_index": None,
+                        "images": [self._describe_image(doc, image)
+                                   for image in pictures],
+                        "note": "a picture is selected, not text; "
+                                "export_image writes it out and list_images "
+                                "describes it"}
+
             view_cursor = controller.getViewCursor() if controller else None
             if not view_cursor:
                 return {
@@ -2303,6 +2316,42 @@ class UNOBridge:
 
         return self._guarded_edit(doc, "MCP: set comment language", None, edit)
 
+    def _selected_graphics(self, doc: Any) -> List[Any]:
+        """
+        The pictures the reader has selected, if that is what is selected
+
+        Selecting a picture in Writer makes the selection the picture itself
+        — an SwXTextGraphicObject supporting com.sun.star.text.
+        TextGraphicObject, with a name and no getCount — where selecting text
+        makes it a collection of ranges. Asking it for a text range threw
+        "the selection is not a text range: getCount", which is how a caller
+        was left unable to say which of two pictures was in front of it.
+        """
+        controller = doc.getCurrentController()
+        if not controller:
+            return []
+        try:
+            selection = controller.getSelection()
+        except Exception as e:
+            logger.info(f"Could not read the selection: {e}")
+            return []
+        if selection is None:
+            return []
+
+        if _supports(selection, GRAPHIC_SERVICE):
+            return [selection]
+
+        # Several shapes selected together come as a collection.
+        found = []
+        try:
+            for index in range(selection.getCount()):
+                item = selection.getByIndex(index)
+                if _supports(item, GRAPHIC_SERVICE):
+                    found.append(item)
+        except Exception:
+            return []
+        return found
+
     def _graphics(self, doc: Any) -> List[Any]:
         """Every picture in the document, in the order it names them"""
         try:
@@ -2398,6 +2447,14 @@ class UNOBridge:
         if error:
             return error
 
+        selected = (self._selected_graphics(doc)
+                    if isinstance(address, dict) and address.get("selection")
+                    else [])
+        if selected:
+            images = [self._describe_image(doc, image) for image in selected]
+            return {"success": True, "images": images, "count": len(images),
+                    "scope": {"selection": "picture"}}
+
         try:
             covers, scope = self._comment_scope(doc, address)
         except AddressError as e:
@@ -2416,32 +2473,55 @@ class UNOBridge:
         return {"success": True, "images": images, "count": len(images),
                 "scope": scope}
 
-    def export_image(self, name: str, path: Optional[str] = None,
+    def export_image(self, name: Optional[str] = None,
+                     path: Optional[str] = None,
                      image_format: str = "png", inline: bool = False,
                      doc: Any = None) -> Dict[str, Any]:
         """
         Write a picture to a file, and hand back its bytes if asked
 
-        `name` is the picture's own name, as list_images reports it. The file
-        is what LibreOffice re-encodes the picture into, so the size on disk
-        is not the size it occupies in the document.
+        `name` is the picture's own name, as list_images reports it; leave it
+        out and the selected picture is taken, which is what "save the
+        selected picture" means. The file is what LibreOffice re-encodes the
+        picture into, so the size on disk is not the size it occupies in the
+        document.
         """
         doc, error = self._writer_document(doc, "Exporting a picture")
         if error:
             return error
 
-        if not isinstance(name, str) or not name:
-            return {"success": False,
-                    "error": "name must be the name of a picture, as "
-                             "list_images reports it"}
-
-        wanted = None
         known = []
+        by_name = {}
         for image in self._graphics(doc):
             image_name = _get_property(image, "Name", "") or ""
             known.append(image_name)
-            if image_name == name:
-                wanted = image
+            by_name[image_name] = image
+
+        wanted = None
+        selected = False
+        if name is None or name == "":
+            pictures = self._selected_graphics(doc)
+            if len(pictures) == 1:
+                wanted = pictures[0]
+                name = _get_property(wanted, "Name", "") or ""
+                selected = True
+            elif len(pictures) > 1:
+                names = ", ".join(_get_property(picture, "Name", "") or "?"
+                                  for picture in pictures)
+                return {"success": False,
+                        "error": f"{len(pictures)} pictures are selected "
+                                 f"({names}); name the one to write"}
+            else:
+                return {"success": False,
+                        "error": f"No picture is selected and none was named. "
+                                 f"This document holds: "
+                                 f"{', '.join(known) or 'none'}."}
+        elif not isinstance(name, str):
+            return {"success": False,
+                    "error": "name must be the name of a picture, as "
+                             "list_images reports it"}
+        else:
+            wanted = by_name.get(name)
         if wanted is None:
             return {"success": False,
                     "error": f"No picture named {name} in this document. "
@@ -2494,6 +2574,7 @@ class UNOBridge:
 
         described = self._describe_image(doc, wanted)
         result = {"success": True, "name": name, "path": target,
+                  "was_selected": selected,
                   "bytes": os.path.getsize(target), "mime_type": mime,
                   "pixels": described["pixels"], "address": described["address"],
                   "title": described["title"],
@@ -3192,6 +3273,14 @@ class UNOBridge:
                 selection = controller.getSelection()
                 count = selection.getCount()
             except Exception as e:
+                pictures = [_get_property(image, "Name", "") or "?"
+                            for image in self._selected_graphics(doc)]
+                if pictures:
+                    raise AddressError(
+                        f"a picture is selected, not text "
+                        f"({', '.join(pictures)}), so there is no text range "
+                        f"here — list_images and export_image work on the "
+                        f"selected picture")
                 raise AddressError(f"the selection is not a text range: {e}")
             if count < 1:
                 raise AddressError("nothing is selected")

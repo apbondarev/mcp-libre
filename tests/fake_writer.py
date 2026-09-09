@@ -262,6 +262,14 @@ class FakeImage:
     def getAnchor(self):
         return self._anchor
 
+    def getName(self):
+        return self.Name
+
+    def supportsService(self, name):
+        return name in ("com.sun.star.text.TextGraphicObject",
+                        "com.sun.star.text.TextContent",
+                        "com.sun.star.text.BaseFrame")
+
 
 class FakeNameAccess:
     """com.sun.star.container.XNameAccess over things that carry a Name."""
@@ -1234,7 +1242,7 @@ def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page
 
 
 def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
-               pages=1, **text_kwargs):
+               pages=1, selected_image=None, **text_kwargs):
     """Build a Writer document whose caret sits at `caret` = (paragraph, offset).
 
     `images` describes the pictures in it, each a dict of the arguments
@@ -1251,4 +1259,10 @@ def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
     doc = FakeWriterDoc(text, FakeController(view_cursor, selection))
     doc.images = [FakeImage(model=text, **described) for described in images]
     doc.pages = pages
+    if selected_image is not None:
+        # Selecting a picture in Writer makes the selection the picture
+        # itself, with no getCount and no text range in sight.
+        picture = next(image for image in doc.images
+                       if image.Name == selected_image)
+        doc._controller = FakeController(view_cursor, picture)
     return doc

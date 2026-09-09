@@ -1227,7 +1227,6 @@ try:
     check("the rewrite went ahead", allowed.get("success"), True)
     check("nothing was reported destroyed", allowed.get("images_dropped"), 0)
     check("and it survived", bridge.list_images(doc=doc)["count"], 1)
-    os.unlink(picture_file)
 
     print("\n--- a replacement over a point is refused, not written ---")
     before_text = bridge.read_paragraphs(start=1, count=1,
@@ -1246,6 +1245,60 @@ try:
     check("and nothing was written",
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"], before_text)
+
+    print("\n--- a selected picture is not a text selection ---")
+    picture_file = write_test_png("/tmp/mcp_live_source.png")   # the earlier
+    plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("query is the entry point")
+    put_picture(6, "Chosen", title="the chosen one", description="выделенная")
+    chosen = doc.getGraphicObjects().getByName("Chosen")
+    doc.getCurrentController().select(chosen)
+
+    selection = doc.getCurrentController().getSelection()
+    print("   the selection is:", selection.supportsService(
+        "com.sun.star.text.TextGraphicObject") and "the picture itself"
+        or "something else")
+    check("Writer hands back the picture, not a range",
+          selection.supportsService("com.sun.star.text.TextGraphicObject"), True)
+
+    listed = bridge.list_images({"selection": True}, doc=doc)
+    print(listed)
+    check("list_images says which picture is selected",
+          [image["name"] for image in listed["images"]], ["Chosen"])
+    check("and says that is what the scope was", listed.get("scope"),
+          {"selection": "picture"})
+
+    reported = bridge.get_cursor_info(doc=doc)
+    print({k: v for k, v in reported.items() if k != "images"})
+    check("the cursor report says a picture is selected",
+          reported.get("selection_kind"), "picture")
+    check("naming it", [image["name"] for image in reported["images"]],
+          ["Chosen"])
+    check("with the text it is anchored to",
+          reported["images"][0]["paragraph_text"], "query is the entry point")
+
+    saved = bridge.export_image(path="/tmp/mcp_live_selected.png", doc=doc)
+    print({k: v for k, v in saved.items() if k != "_image_content"})
+    check("the selected picture writes out without being named",
+          (saved.get("success"), saved.get("name"), saved.get("was_selected")),
+          (True, "Chosen", True))
+    check("as a PNG", open(saved["path"], "rb").read(8),
+          b"\x89PNG\r\n\x1a\x0a")
+    os.unlink(saved["path"])
+
+    refused = bridge.replace_selection("перевод", doc=doc)
+    print(refused)
+    check("a text tool says what is really selected",
+          "a picture is selected" in refused.get("error", ""), True)
+    check("and names it", "Chosen" in refused["error"], True)
+
+    # put a text selection back, so the checks that follow have one
+    doc.getCurrentController().select(plain)
+    chosen.getAnchor().getText().removeTextContent(chosen)
+    check("the chosen picture is gone again",
+          [image["name"] for image in bridge.list_images(doc=doc)["images"]
+           if image["name"] == "Chosen"], [])
 
     print("\n--- rendering a page, with LibreOffice alone ---")
     # Enough text for a second page, so page selection can be checked.

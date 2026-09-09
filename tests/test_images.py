@@ -236,3 +236,96 @@ def test_the_picture_tools_are_registered_and_dispatch(tmp_path):
                               "path": str(tmp_path / "out.png")}))
     assert written["success"] is True
     assert os.path.exists(tmp_path / "out.png")
+
+
+# Selecting a picture in Writer makes the selection the picture itself — an
+# SwXTextGraphicObject with a name and no getCount — so every tool that asked
+# it for a text range failed with "the selection is not a text range:
+# getCount". A caller was left unable to say which of two pictures was in
+# front of it, and had to ask.
+
+@pytest.fixture
+def picture_selected():
+    return writer_doc(
+        ["Introduction to GraphQL", BODY], caret=(1, 0),
+        portions={1: WITH_PICTURE},
+        images=[{"name": "Image1", "paragraph": 0, "offset": 0,
+                 "inline": False},
+                {"name": "Image2", "paragraph": 1, "offset": 6,
+                 "title": "computer", "description": "иконка компьютера"}],
+        selected_image="Image2")
+
+
+def test_says_which_picture_is_selected(bridge, picture_selected):
+    listed = bridge.list_images({"selection": True}, doc=picture_selected)
+
+    assert listed["success"] is True
+    assert listed["count"] == 1
+    assert listed["images"][0]["name"] == "Image2"
+    assert listed["images"][0]["description"] == "иконка компьютера"
+    assert listed["scope"] == {"selection": "picture"}
+
+
+def test_writes_the_selected_picture_without_being_told_its_name(
+        bridge, picture_selected, tmp_path):
+    written = bridge.export_image(path=str(tmp_path / "selected.png"),
+                                  doc=picture_selected)
+
+    assert written["success"] is True
+    assert written["name"] == "Image2"
+    assert written["was_selected"] is True
+    assert os.path.exists(written["path"])
+
+
+def test_a_named_picture_still_wins_over_the_selection(bridge, picture_selected,
+                                                       tmp_path):
+    written = bridge.export_image("Image1", path=str(tmp_path / "one.png"),
+                                  doc=picture_selected)
+
+    assert written["name"] == "Image1"
+    assert written["was_selected"] is False
+
+
+def test_no_name_and_no_selection_is_refused_with_the_names(bridge, doc):
+    refused = bridge.export_image(doc=doc)
+
+    assert refused["success"] is False
+    assert "No picture is selected" in refused["error"]
+    assert "Image1" in refused["error"]        # says what there is to choose
+
+
+def test_the_cursor_report_says_a_picture_is_selected(bridge, picture_selected):
+    info = bridge.get_cursor_info(doc=picture_selected)
+
+    assert info["success"] is True
+    assert info["selection_kind"] == "picture"
+    assert [image["name"] for image in info["images"]] == ["Image2"]
+    assert info["selected_text"] is None
+    assert "export_image" in info["note"]
+
+
+def test_a_text_tool_says_a_picture_is_selected_rather_than_getCount(
+        bridge, picture_selected):
+    refused = bridge.replace_selection("перевод", doc=picture_selected)
+
+    assert refused["success"] is False
+    assert "a picture is selected" in refused["error"]
+    assert "Image2" in refused["error"]
+    assert "export_image" in refused["error"]
+
+
+def test_the_tool_takes_no_name_at_all(tmp_path):
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = writer_doc(["Heading", BODY], caret=(1, 0), portions={1: WITH_PICTURE},
+                     images=[{"name": "Image2", "paragraph": 1, "offset": 6}],
+                     selected_image="Image2")
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    assert "name" not in server.tools["export_image_live"]["parameters"].get(
+        "required", [])
+    written = asyncio.run(server.execute_tool(
+        "export_image_live", {"path": str(tmp_path / "sel.png")}))
+    assert written["name"] == "Image2"
+    assert written["was_selected"] is True

@@ -535,7 +535,7 @@ class LibreOfficeMCPServer:
         
         # Pictures
         self.tools["list_images_live"] = {
-            "description": "List the pictures of the active Writer document — or of one section, paragraph, range or the selection — with the address of the anchor of each, the text it is anchored to, its size, its alternative text and whether it sits inline in the text. Use it to tell whether a selection holds a picture before rewriting the text, since replacing text that an inline picture sits in destroys the picture",
+            "description": "List the pictures of the active Writer document — or of one section, paragraph, range or the selection, which reports the picture the reader has selected — with the address of the anchor of each, the text it is anchored to, its size, its alternative text and whether it sits inline in the text. Use it to tell whether a selection holds a picture before rewriting the text, since replacing text that an inline picture sits in destroys the picture",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -560,13 +560,13 @@ class LibreOfficeMCPServer:
         }
         
         self.tools["export_image_live"] = {
-            "description": "Write one of the document's pictures to a file and report where it went, its size in bytes and its size in pixels. With inline=true the picture also comes back in the reply, so it can be looked at directly",
+            "description": "Write one of the document's pictures to a file and report where it went, its size in bytes and its size in pixels. Leave the name out to write the picture the reader has selected — selecting a picture in Writer leaves no text selection, so this is how \"save the selected picture\" is answered. With inline=true the picture also comes back in the reply, so it can be looked at directly",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "name": {
                         "type": "string",
-                        "description": "The picture's name, as list_images_live reports it"
+                        "description": "The picture's name, as list_images_live reports it. Omit it to write the selected picture"
                     },
                     "path": {
                         "type": "string",
@@ -587,7 +587,6 @@ class LibreOfficeMCPServer:
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 },
-                "required": ["name"]
             },
             "handler": self.export_image_live
         }
@@ -1033,7 +1032,8 @@ class LibreOfficeMCPServer:
             return error
         return self.uno_bridge.list_images(address=address, doc=doc)
 
-    def export_image_live(self, name: str, path: Optional[str] = None,
+    def export_image_live(self, name: Optional[str] = None,
+                          path: Optional[str] = None,
                           format: str = "png", inline: bool = False,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Write a picture to a file, and hand back its bytes if asked"""
