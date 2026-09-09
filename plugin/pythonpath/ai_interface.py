@@ -74,9 +74,17 @@ def _handle_mcp_request(session_id: str, msg: dict):
             loop = asyncio.new_event_loop()
             result = loop.run_until_complete(mcp.execute_tool(tool_name, arguments))
             loop.close()
-            resp = _jsonrpc_response(req_id, {
-                "content": [{"type": "text", "text": json.dumps(result)}]
-            })
+            # A tool that hands back a picture puts it in _image_content, so it
+            # travels as an MCP image block and can be looked at, rather than
+            # as base64 buried in a wall of JSON.
+            picture = (result.pop("_image_content", None)
+                       if isinstance(result, dict) else None)
+            content = [{"type": "text", "text": json.dumps(result)}]
+            if isinstance(picture, dict) and picture.get("data"):
+                content.append({"type": "image", "data": picture["data"],
+                                "mimeType": picture.get("mime_type",
+                                                        "image/png")})
+            resp = _jsonrpc_response(req_id, {"content": content})
         except Exception as e:
             resp = _jsonrpc_error(req_id, -32000, str(e))
     elif method == "ping":

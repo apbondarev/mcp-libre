@@ -535,6 +535,65 @@ class LibreOfficeMCPServer:
             "handler": self.set_comment_language_live
         }
         
+        # Pictures
+        self.tools["list_images_live"] = {
+            "description": "List the pictures of the active Writer document — or of one section, paragraph, range or the selection — with the address of the anchor of each, the text it is anchored to, its size, its alternative text and whether it sits inline in the text. Use it to tell whether a selection holds a picture before rewriting the text, since replacing text that an inline picture sits in destroys the picture",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "Which pictures: omit for the whole document, {\"heading\": N} for a section, {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for a range, or {\"selection\": true} for what is selected",
+                        "properties": {
+                            "heading": {"type": "integer"},
+                            "paragraph": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "selection": {"type": "boolean"}
+                        }
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
+            },
+            "handler": self.list_images_live
+        }
+        
+        self.tools["export_image_live"] = {
+            "description": "Write one of the document's pictures to a file and report where it went, its size in bytes and its size in pixels. With inline=true the picture also comes back in the reply, so it can be looked at directly",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "The picture's name, as list_images_live reports it"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Where to write it; defaults to a file in the temporary directory named after the picture"
+                    },
+                    "format": {
+                        "type": "string",
+                        "description": "png, jpeg, gif, tiff, bmp, or \"original\" for the picture's own format",
+                        "default": "png"
+                    },
+                    "inline": {
+                        "type": "boolean",
+                        "description": "Also return the picture itself in the reply, so it can be seen rather than only saved. Refused for a picture over 4 MB, which is then only written to the file",
+                        "default": False
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["name"]
+            },
+            "handler": self.export_image_live
+        }
+        
         # Formatting tools
         self.tools["format_range_live"] = {
             "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
@@ -925,6 +984,25 @@ class LibreOfficeMCPServer:
         return self.uno_bridge.update_comment(comment_id, text=text,
                                               author=author, resolved=resolved,
                                               language=language, doc=doc)
+
+    def list_images_live(self, address: Any = None,
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """List the pictures of a Writer document with their anchors"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.list_images(address=address, doc=doc)
+
+    def export_image_live(self, name: str, path: Optional[str] = None,
+                          format: str = "png", inline: bool = False,
+                          document: Optional[str] = None) -> Dict[str, Any]:
+        """Write a picture to a file, and hand back its bytes if asked"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.export_image(name, path=path,
+                                            image_format=format,
+                                            inline=inline, doc=doc)
 
     def set_comment_language_live(self, language: str,
                                   document: Optional[str] = None

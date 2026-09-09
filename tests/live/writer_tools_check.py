@@ -34,6 +34,30 @@ def check(label, actual, expected):
         failures.append(label)
 
 
+def write_test_png(path):
+    """A real 8x8 PNG, so the check does not depend on a file lying around."""
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff))
+
+    rows = []
+    for y in range(8):
+        row = bytearray(b"\x00")
+        for x in range(8):
+            row += bytes([(x * 30) % 256, (y * 30) % 256, 200])
+        rows.append(bytes(row))
+    png = (b"\x89PNG\r\n\x1a\n"
+           + chunk(b"IHDR", struct.pack(">IIBBBBB", 8, 8, 8, 2, 0, 0, 0))
+           + chunk(b"IDAT", zlib.compress(b"".join(rows)))
+           + chunk(b"IEND", b""))
+    with open(path, "wb") as handle:
+        handle.write(png)
+    return path
+
+
 def connect():
     local = uno.getComponentContext()
     resolver = local.ServiceManager.createInstanceWithContext(
@@ -1056,6 +1080,154 @@ try:
           (asked.get("language"),
            asked.get("comment_language_set", {}).get("language")),
           ("en-US", "en-US"))
+
+    print("\n--- pictures: a selection that holds one ---")
+    body = doc.getText()
+    plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("query is the entry point")
+    for comment in bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]:
+        bridge.delete_comment(comment["id"], doc=doc)
+
+    from com.sun.star.text.TextContentAnchorType import (AS_CHARACTER,
+                                                         AT_CHARACTER)
+    provider = ctx.ServiceManager.createInstanceWithContext(
+        "com.sun.star.graphic.GraphicProvider", ctx)
+    picture_file = write_test_png("/tmp/mcp_live_source.png")
+    source = uno.createUnoStruct("com.sun.star.beans.PropertyValue")
+    source.Name, source.Value = "URL", f"file://{picture_file}"
+
+    def put_picture(offset, name, inline=True, title="", description=""):
+        picture = doc.createInstance("com.sun.star.text.TextGraphicObject")
+        picture.Graphic = provider.queryGraphic((source,))
+        picture.AnchorType = AS_CHARACTER if inline else AT_CHARACTER
+        picture.Name = name
+        picture.Width, picture.Height = 2434, 2452
+        picture.Title, picture.Description = title, description
+        span = bridge._resolve_address(doc, {"paragraph": 1, "offset": offset,
+                                             "length": 0})
+        span.getText().insertTextContent(span, picture, False)
+
+    put_picture(6, "Schema", title="GraphQL schema",
+                description="схема запроса")
+    listed = bridge.list_images(doc=doc)
+    print(listed)
+    check("the document holds one picture", listed.get("count"), 1)
+    picture = listed["images"][0]
+    check("named", picture["name"], "Schema")
+    check("inline in the text", picture["inline"], True)
+    check("with the address of its anchor", picture["address"],
+          {"paragraph": 1, "offset": 6, "length": 0})
+    check("the text it is anchored to", picture["paragraph_text"],
+          "query is the entry point")
+    check("its size in millimetres", (picture["width_mm"], picture["height_mm"]),
+          (24.3, 24.5))
+    check("its size in pixels", picture["pixels"], {"width": 8, "height": 8})
+    check("its title", picture["title"], "GraphQL schema")
+    check("its alternative text", picture["description"], "схема запроса")
+
+    selectable = body.createTextCursorByRange(
+        bridge._paragraph_at(body, 1).getStart())
+    selectable.goRight(12, True)
+    doc.getCurrentController().select(selectable)
+    check("the selection is seen to hold it",
+          bridge.list_images({"selection": True}, doc=doc)["count"], 1)
+    check("a paragraph without one holds none",
+          bridge.list_images({"paragraph": 0}, doc=doc)["count"], 0)
+    check("a range before it holds none",
+          bridge.list_images({"paragraph": 1, "offset": 0, "length": 5},
+                             doc=doc)["count"], 0)
+
+    print("\n--- and read_runs says which run it sits in ---")
+    runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
+    print([(r["text"], [i["name"] for i in r["images"]]) for r in runs])
+    check("the run that starts at the anchor carries it",
+          [bool(r["images"]) for r in runs], [False, True])
+    check("and the picture costs no characters",
+          sum(r["length"] for r in runs), len("query is the entry point"))
+
+    print("\n--- the file, and the picture itself ---")
+    written = bridge.export_image("Schema", path="/tmp/mcp_live_export.png",
+                                  doc=doc)
+    print({k: v for k, v in written.items() if k != "_image_content"})
+    check("written", written.get("success"), True)
+    check("as a PNG", open("/tmp/mcp_live_export.png", "rb").read(8),
+          b"\x89PNG\r\n\x1a\x0a")
+    check("of the size it reports", written.get("bytes"),
+          os.path.getsize("/tmp/mcp_live_export.png"))
+    check("carrying the address of the picture", written.get("address"),
+          {"paragraph": 1, "offset": 6, "length": 0})
+    inline_result = bridge.export_image("Schema", path="/tmp/mcp_live_inline.png",
+                                        inline=True, doc=doc)
+    check("handed back for looking at", inline_result.get("inline"), True)
+    check("as base64 of a PNG",
+          inline_result["_image_content"]["data"].startswith("iVBORw0KGgo"),
+          True)
+    check("an unknown picture is refused",
+          bridge.export_image("Nope", doc=doc).get("success"), False)
+    for leftover in ("/tmp/mcp_live_export.png", "/tmp/mcp_live_inline.png"):
+        os.unlink(leftover)
+
+    print("\n--- a rewrite that would destroy it is refused ---")
+    refused = bridge.replace_range({"paragraph": 1}, "перевод", doc=doc)
+    print(refused)
+    check("refused", refused.get("success"), False)
+    check("naming the picture", "inline picture" in refused["error"], True)
+    check("saying it would be destroyed outright",
+          "destroyed outright" in refused["error"], True)
+    check("and the picture is still there",
+          bridge.list_images(doc=doc)["count"], 1)
+
+    runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]
+    changing = [dict(run, text="— точка входа") if run["images"] else dict(run)
+                for run in runs]
+    refused_runs = bridge.replace_runs({"paragraph": 1}, changing, doc=doc)
+    print(refused_runs)
+    check("replace_runs refuses it too", refused_runs.get("success"), False)
+    check("naming the picture by name", "Schema" in refused_runs["error"], True)
+    check("the picture survived that", bridge.list_images(doc=doc)["count"], 1)
+
+    print("\n--- rewriting the text before it keeps it ---")
+    keeping = [dict(run) if run["images"] else dict(run, text="запрос ")
+               for run in runs]
+    kept_picture = bridge.replace_runs({"paragraph": 1}, keeping, doc=doc)
+    print(kept_picture)
+    check("allowed", kept_picture.get("success"), True)
+    check("reporting the picture it kept", kept_picture.get("images_kept"), 1)
+    check("the text changed",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "запрос is the entry point")
+    after = bridge.list_images(doc=doc)
+    check("the picture is there", after.get("count"), 1)
+    check("with its anchor where the text put it",
+          after["images"][0]["address"], {"paragraph": 1, "offset": 7,
+                                          "length": 0})
+    check("and its own name", after["images"][0]["name"], "Schema")
+
+    print("\n--- flatten=true destroys it, and says so ---")
+    flattened = bridge.replace_range({"paragraph": 1}, "перевод целиком",
+                                     flatten=True, doc=doc)
+    print(flattened)
+    check("went ahead", flattened.get("success"), True)
+    check("reporting the picture it destroyed", flattened.get("images_dropped"),
+          1)
+    check("and it is gone", bridge.list_images(doc=doc)["count"], 0)
+
+    print("\n--- a picture anchored to a character is no reason to refuse ---")
+    plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    plain.gotoEndOfParagraph(True)
+    plain.setString("query is the entry point")
+    put_picture(6, "Anchored", inline=False)
+    anchored = bridge.list_images(doc=doc)["images"][0]
+    check("reported as not inline", anchored["inline"], False)
+    check("with its anchor kind", anchored["anchor"], "AT_CHARACTER")
+    allowed = bridge.replace_range({"paragraph": 1}, "перевод", flatten=True,
+                                   doc=doc)
+    check("the rewrite went ahead", allowed.get("success"), True)
+    check("nothing was reported destroyed", allowed.get("images_dropped"), 0)
+    check("and it survived", bridge.list_images(doc=doc)["count"], 1)
+    os.unlink(picture_file)
 
     doc.setModified(False)
     doc.close(True)

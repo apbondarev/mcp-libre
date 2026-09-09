@@ -204,6 +204,69 @@ class FakeEnum:
         return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
 
 
+class FakeSize:
+    """com.sun.star.awt.Size, in whatever unit the caller means."""
+
+    def __init__(self, width, height):
+        self.Width = width
+        self.Height = height
+
+
+class FakeGraphic:
+    """The XGraphic behind a picture: what it is, not where it sits."""
+
+    def __init__(self, mime_type="image/png", pixels=(8, 8), linked=False,
+                 origin=""):
+        self.MimeType = mime_type
+        self.SizePixel = FakeSize(*pixels)
+        self.Linked = linked
+        self.OriginURL = origin
+
+
+class FakeImage:
+    """com.sun.star.text.TextGraphicObject, as the bridge touches it.
+
+    A picture adds no characters to the paragraph it sits in and shows up in
+    the portions as an empty one of type "Frame" — which is how reading runs
+    came to skip it and report nothing at all.
+    """
+
+    def __init__(self, name, model, paragraph, offset, inline=True, title="",
+                 description="", width=800, height=600, graphic=None):
+        self.Name = name
+        self.Title = title
+        self.Description = description
+        self.AnchorType = FakeEnum("AS_CHARACTER" if inline else "AT_CHARACTER")
+        self.Width = width
+        self.Height = height
+        self.Graphic = graphic if graphic is not None else FakeGraphic()
+        self.AnchorPageNo = 0
+        self._model = model
+        self._anchor = FakeRange(model, (paragraph, offset))
+
+    def getAnchor(self):
+        return self._anchor
+
+
+class FakeNameAccess:
+    """com.sun.star.container.XNameAccess over things that carry a Name."""
+
+    def __init__(self, items):
+        self.items = list(items)
+
+    def getElementNames(self):
+        return tuple(item.Name for item in self.items)
+
+    def hasByName(self, name):
+        return any(item.Name == name for item in self.items)
+
+    def getByName(self, name):
+        for item in self.items:
+            if item.Name == name:
+                return item
+        raise RuntimeError(f"no element named {name}")
+
+
 class FakeDateTime:
     """com.sun.star.util.DateTime, the struct an annotation's date is."""
 
@@ -989,6 +1052,9 @@ class FakeWriterDoc(FakeDoc):
     def getText(self):
         return self._text
 
+    def getGraphicObjects(self):
+        return FakeNameAccess(getattr(self, "images", ()))
+
     def getCurrentController(self):
         return self._controller
 
@@ -1068,12 +1134,20 @@ def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page
     return FakeWriterDoc(body, FakeController(view_cursor, selection))
 
 
-def writer_doc(paragraphs, caret, selection_spans=(), page=1, **text_kwargs):
-    """Build a Writer document whose caret sits at `caret` = (paragraph, offset)."""
+def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
+               **text_kwargs):
+    """Build a Writer document whose caret sits at `caret` = (paragraph, offset).
+
+    `images` describes the pictures in it, each a dict of the arguments
+    FakeImage takes besides the model: name, paragraph, offset and whether it
+    sits inline in the text.
+    """
     text = FakeText(paragraphs, **text_kwargs)
     selection_end = caret
     if selection_spans:
         selection_end = max(max(span) for span in selection_spans)
     view_cursor = FakeViewCursor(text, caret, selection_end, page=page)
     selection = FakeSelection(text, selection_spans or [(caret, caret)])
-    return FakeWriterDoc(text, FakeController(view_cursor, selection))
+    doc = FakeWriterDoc(text, FakeController(view_cursor, selection))
+    doc.images = [FakeImage(model=text, **described) for described in images]
+    return doc

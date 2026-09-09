@@ -29,8 +29,39 @@ _INTERFACES = {
 }
 
 
+class FakeGraphicProvider:
+    """com.sun.star.graphic.GraphicProvider, enough of it to write a file.
+
+    Writes a real (tiny) PNG so a test can check that a file appeared, how
+    big it is and what it begins with, without a running LibreOffice.
+    """
+
+    PNG = bytes.fromhex(
+        "89504e470d0a1a0a0000000d494844520000000100000001080600000"
+        "01f15c4890000000a49444154789c6300010000050001"
+        "0d0a2db40000000049454e44ae426082")
+
+    def __init__(self):
+        self.written = []
+
+    def storeGraphic(self, graphic, properties):
+        from urllib.parse import unquote, urlparse
+
+        settings = {prop.Name: prop.Value for prop in properties}
+        target = urlparse(settings.get("URL", ""))
+        path = unquote(target.path)
+        with open(path, "wb") as handle:
+            handle.write(self.PNG)
+        self.written.append((path, settings.get("MimeType")))
+
+
 class FakeServiceManager:
+    def __init__(self):
+        self.graphic_provider = FakeGraphicProvider()
+
     def createInstanceWithContext(self, name, ctx):
+        if name == "com.sun.star.graphic.GraphicProvider":
+            return self.graphic_provider
         return object()
 
 

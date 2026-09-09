@@ -11,6 +11,10 @@ from com.sun.star.beans import PropertyValue
 from com.sun.star.document import XDocumentEventListener
 from com.sun.star.awt import XActionListener
 from typing import Any, Optional, Dict, List
+from urllib.parse import quote
+import base64
+import tempfile
+import os
 import datetime
 import uuid
 import logging
@@ -144,6 +148,20 @@ def _comment_key(comment: Dict[str, Any]) -> tuple:
             bool(comment.get("resolved")))
 
 
+def _distinct_images(runs: Any) -> list:
+    """The pictures anchored across a stretch of runs, each counted once"""
+    found = []
+    seen = set()
+    for run in runs:
+        for image in run.get("images", []) or []:
+            name = image.get("name") or id(image)
+            if name in seen:
+                continue
+            seen.add(name)
+            found.append(image)
+    return found
+
+
 def _distinct_comments(runs: Any) -> list:
     """
     The comments covering a stretch of runs, each counted once
@@ -162,6 +180,25 @@ def _distinct_comments(runs: Any) -> list:
             seen.add(marker)
             found.append(note)
     return found
+
+
+def _file_url(path: str) -> str:
+    """A file:// URL UNO accepts, with the odd character in a name escaped"""
+    return "file://" + quote(os.path.abspath(path))
+
+
+def _anchor_kind(anchor_type: Any) -> Optional[str]:
+    """"AS_CHARACTER" for a pyuno TextContentAnchorType enum"""
+    if anchor_type is None:
+        return None
+    return getattr(anchor_type, "value", None) or str(anchor_type)
+
+
+def _millimetres(hundredths: Any) -> Optional[float]:
+    """Writer measures a frame in 1/100 mm; people do not"""
+    if not isinstance(hundredths, (int, float)):
+        return None
+    return round(hundredths / 100.0, 1)
 
 
 def _comment_date(note: Any) -> Optional[str]:
@@ -221,6 +258,28 @@ def _comment_language(note: Any) -> Optional[str]:
 #     comment in a language sets the language of the document's comments,
 #     and every tool that takes one says so in its result.
 COMMENT_STYLE = "Comment"
+
+GRAPHIC_SERVICE = "com.sun.star.text.TextGraphicObject"
+
+# What an image is to the text it sits in, all measured on a live LibreOffice:
+#
+#   * A picture is an empty portion of type "Frame" at its anchor offset, for
+#     both anchor kinds, and it adds no characters — so reading runs skipped
+#     it as an empty portion and nothing reported it at all.
+#   * Replacing a stretch that covers an AS_CHARACTER (inline) picture
+#     destroys it. An AT_CHARACTER one survives, but its anchor jumps to the
+#     start of the replaced stretch.
+#   * A picture can be put back from its own Graphic, keeping its size, its
+#     title and its alternative text.
+INLINE_ANCHOR = "AS_CHARACTER"
+
+# What GraphicProvider will write. "original" asks for the picture's own type.
+IMAGE_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "jpg": "image/jpeg",
+               "gif": "image/gif", "tiff": "image/tiff", "bmp": "image/bmp"}
+IMAGE_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/gif": "gif",
+                    "image/tiff": "tif", "image/bmp": "bmp",
+                    "image/svg+xml": "svg"}
+MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024
 
 
 def _write_comment_text(note: Any, text: str):
@@ -1243,16 +1302,21 @@ class UNOBridge:
             if loss["comments"]:
                 details.append(f"{loss['comments']} comment"
                                f"{'s' if loss['comments'] > 1 else ''}")
+            if loss.get("inline_images"):
+                details.append(f"{loss['inline_images']} inline picture"
+                               f"{'s' if loss['inline_images'] > 1 else ''}")
             if loss["styles"]:
                 details.append(f"{loss['styles']} with character styles")
+            destroyed = (" An inline picture is destroyed outright, not just "
+                         "flattened." if loss.get("inline_images") else "")
             return {
                 "success": False,
                 "error": f"This range holds {', '.join(details)}. Replacing it "
                          f"with one string would flatten them: inline code, "
-                         f"italics and hyperlinks would be lost. Read it with "
-                         f"read_runs, translate each run's text, and write it "
-                         f"back with replace_runs — or pass flatten=true to "
-                         f"accept the loss."
+                         f"italics and hyperlinks would be lost.{destroyed} "
+                         f"Read it with read_runs, translate each run's text, "
+                         f"and write it back with replace_runs — or pass "
+                         f"flatten=true to accept the loss."
             }
 
         recording = bool(_get_property(doc, "RecordChanges", False))
@@ -1295,7 +1359,8 @@ class UNOBridge:
             "language": _locale_name(locale) if locale is not None else None,
             "runs_flattened": loss["runs"] if loss else None,
             "links_dropped": loss["links"] if loss else None,
-            "comments_dropped": loss["comments"] if loss else None
+            "comments_dropped": loss["comments"] if loss else None,
+            "images_dropped": loss.get("inline_images") if loss else None
         }
 
     def _guarded_edit(self, doc: Any, undo_title: str,
@@ -1501,6 +1566,8 @@ class UNOBridge:
         for note, at in pending:            # never closed: a point anchor
             spans.append((_describe_comment(note), at, at))
 
+        pictures = self._images_in(doc, index, span_start, span_end)
+
         runs = []
         for kind, start_at, portion, body in collected:
             if kind != "Text" or not body:
@@ -1518,6 +1585,15 @@ class UNOBridge:
                 note for note, opened, closed in spans
                 if (opened < end_at and closed > start_at)
                 or (opened == closed and start_at <= opened < end_at)]
+            # A picture is an empty portion of type "Frame" at its anchor
+            # offset, so it was skipped as an empty run and nothing reported
+            # it. It travels on the run it is anchored inside.
+            described_run["images"] = [
+                image for image in pictures
+                if clipped_start <= (image["address"] or {}).get("offset", -1)
+                < clipped_end or (clipped_end == span_end
+                                  and (image["address"] or {}).get("offset")
+                                  == clipped_end)]
             runs.append(described_run)
         return runs
 
@@ -1540,10 +1616,13 @@ class UNOBridge:
 
         links = [run for run in runs if run.get("link")]
         comments = _distinct_comments(runs)
-        if len(runs) <= 1 and not links and not comments:
+        pictures = _distinct_images(runs)
+        inline = [image for image in pictures if image.get("inline")]
+        if len(runs) <= 1 and not links and not comments and not inline:
             return None
         return {"runs": len(runs), "links": len(links),
                 "comments": len(comments),
+                "images": len(pictures), "inline_images": len(inline),
                 "styles": len([r for r in runs if r.get("character_style")])}
 
     def _describe_run(self, portion: Any, body: str, paragraph: int,
@@ -1602,25 +1681,41 @@ class UNOBridge:
             if covered:
                 notes.append((note, covered))
 
+        # An inline picture is destroyed by a replacement of the text it sits
+        # in, and unlike a comment it cannot be handed back through a tool
+        # call: the only way to keep it is to leave that run alone.
+        pictures = []
+        for image in _distinct_images(existing_runs):
+            if not image.get("inline"):
+                continue
+            covered = {position for position, run in enumerate(existing_runs)
+                       if any(other.get("name") == image.get("name")
+                              for other in run.get("images") or [])}
+            if covered:
+                pictures.append((image, covered))
+
         if not existing_runs or len(existing_runs) != len(prepared):
             return {"keep": set(), "kept": [],
                     "at_risk": [note for note, _ in notes],
+                    "images_kept": [],
+                    "images_at_risk": [image for image, _ in pictures],
                     "segments": [{"first": 0, "last": len(prepared) - 1,
                                   "skip_first": False}]}
 
         unchanged = {position for position, (old, new)
                      in enumerate(zip(existing_runs, prepared))
                      if old["text"] == new[0]}
-        candidates = [(note, covered) for note, covered in notes
+        attachments = notes + pictures
+        candidates = [(thing, covered) for thing, covered in attachments
                       if covered <= unchanged]
 
         while True:
             keep = set()
-            for _note, covered in candidates:
+            for _thing, covered in candidates:
                 keep |= covered
             # A comment only partly inside the kept runs would have its
             # markers rewritten anyway, so none of its runs may be kept.
-            for note, covered in notes:
+            for _thing, covered in attachments:
                 if covered - keep and covered & keep:
                     keep -= covered
 
@@ -1635,11 +1730,11 @@ class UNOBridge:
                                      "skip_first": False})
 
             ends = {}
-            for note, covered in candidates:
+            for thing, covered in candidates:
                 if covered <= keep:
                     last = max(covered)
                     ends[existing_runs[last]["address"]["offset"]
-                         + existing_runs[last]["length"]] = note
+                         + existing_runs[last]["length"]] = thing
 
             giving_up = None
             for segment in segments:
@@ -1655,13 +1750,18 @@ class UNOBridge:
                     break
 
             if giving_up is None:
-                kept = [note for note, covered in candidates if covered <= keep]
-                at_risk = [note for note, covered in notes
-                           if note not in kept or covered - keep]
-                return {"keep": keep, "kept": kept, "at_risk": at_risk,
+                return {"keep": keep,
+                        "kept": [note for note, covered in notes
+                                 if covered and covered <= keep],
+                        "at_risk": [note for note, covered in notes
+                                    if covered - keep],
+                        "images_kept": [image for image, covered in pictures
+                                        if covered and covered <= keep],
+                        "images_at_risk": [image for image, covered in pictures
+                                           if covered - keep],
                         "segments": segments}
-            candidates = [(note, covered) for note, covered in candidates
-                          if note is not giving_up]
+            candidates = [(thing, covered) for thing, covered in candidates
+                          if thing is not giving_up]
 
     def replace_runs(self, address: Any, runs: Any,
                      track_changes: Optional[bool] = None,
@@ -1750,6 +1850,21 @@ class UNOBridge:
                 offset = run_end
             return placed
 
+        if plan["images_at_risk"]:
+            names = ", ".join(image.get("name") or "?"
+                              for image in plan["images_at_risk"])
+            return {
+                "success": False,
+                "error": f"This range holds {len(plan['images_at_risk'])} "
+                         f"inline picture"
+                         f"{'s' if len(plan['images_at_risk']) > 1 else ''} "
+                         f"({names}) in text you are changing, and replacing "
+                         f"that text destroys the picture — a picture cannot "
+                         f"be handed back the way a comment can. Pass the run "
+                         f"holding it back with its text unchanged and rewrite "
+                         f"the runs around it; read_runs says which run that is."
+            }
+
         carried = sum(len(prepared[position][3]) for position in range(len(prepared))
                       if position not in keep)
         if at_risk and not carried:
@@ -1819,7 +1934,8 @@ class UNOBridge:
                     "runs_kept": len(keep), "paragraph": paragraph,
                     "characters": sum(len(text) for text, _, _, _ in prepared),
                     "comments_kept": len(kept_notes),
-                    "comments_written": written_comments}
+                    "comments_written": written_comments,
+                    "images_kept": len(plan["images_kept"])}
 
         return self._guarded_edit(doc, "MCP: replace runs", track_changes, edit)
 
@@ -2162,6 +2278,216 @@ class UNOBridge:
                              "one of those"}
 
         return self._guarded_edit(doc, "MCP: set comment language", None, edit)
+
+    def _graphics(self, doc: Any) -> List[Any]:
+        """Every picture in the document, in the order it names them"""
+        try:
+            graphics = doc.getGraphicObjects()
+            return [graphics.getByName(name)
+                    for name in graphics.getElementNames()]
+        except Exception as e:
+            logger.error(f"Could not enumerate the pictures: {e}")
+            return []
+
+    def _describe_image(self, doc: Any, image: Any) -> Dict[str, Any]:
+        """
+        A picture as a caller sees it: what it is, where it is, what it shows
+
+        `address` is where its anchor sits in the body text, so it can be
+        handed to any tool that reads or edits text, and `paragraph_text` is
+        the text it is anchored to — the question a caller actually has.
+        """
+        anchor = _anchor_kind(_get_property(image, "AnchorType", None))
+        described = {
+            "name": _get_property(image, "Name", "") or "",
+            "title": _get_property(image, "Title", "") or None,
+            "description": _get_property(image, "Description", "") or None,
+            "anchor": anchor,
+            "inline": anchor == INLINE_ANCHOR,
+            "width_mm": _millimetres(_get_property(image, "Width", None)),
+            "height_mm": _millimetres(_get_property(image, "Height", None)),
+        }
+
+        graphic = _get_property(image, "Graphic", None)
+        described["mime_type"] = None
+        described["pixels"] = None
+        described["linked"] = None
+        described["origin_url"] = None
+        if graphic is not None:
+            mime = _get_property(graphic, "MimeType", "") or ""
+            # image/x-vclgraphic means "whatever LibreOffice holds in memory",
+            # which tells a caller nothing about the file it would get.
+            described["mime_type"] = mime or None
+            pixels = _get_property(graphic, "SizePixel", None)
+            if pixels is not None:
+                described["pixels"] = {
+                    "width": _get_property(pixels, "Width", None),
+                    "height": _get_property(pixels, "Height", None)}
+            described["linked"] = bool(_get_property(graphic, "Linked", False))
+            described["origin_url"] = _get_property(graphic, "OriginURL", "") \
+                or None
+
+        described["address"] = None
+        described["paragraph_text"] = None
+        try:
+            located, _, _ = self._locate_range(doc, image.getAnchor())
+            described["address"] = located
+            if located.get("paragraph") is not None:
+                paragraph = self._paragraph_at(doc.getText(),
+                                               located["paragraph"])
+                if paragraph is not None:
+                    described["paragraph_text"] = _text_payload(
+                        paragraph.getString())["text"]
+        except Exception as e:
+            logger.info(f"Could not locate a picture: {e}")
+        if described["address"] is None:
+            page = _get_property(image, "AnchorPageNo", None)
+            described["page"] = page if page else None
+        return described
+
+    def _images_in(self, doc: Any, paragraph: int, start: int,
+                   end: int) -> List[Dict[str, Any]]:
+        """The pictures anchored inside a stretch of a paragraph"""
+        found = []
+        for image in self._graphics(doc):
+            described = self._describe_image(doc, image)
+            address = described.get("address") or {}
+            if address.get("paragraph") != paragraph:
+                continue
+            offset = address.get("offset")
+            if offset is None or not (start <= offset <= end):
+                continue
+            found.append(described)
+        return found
+
+    def list_images(self, address: Any = None,
+                    doc: Any = None) -> Dict[str, Any]:
+        """
+        The pictures of a document, a section, a paragraph, a range or the
+        selection
+
+        Each carries the address of its anchor, the text it is anchored to and
+        its own size, so a caller can tell that a selection holds a picture,
+        say where it is, and ask for the file with export_image.
+        """
+        doc, error = self._writer_document(doc, "Listing pictures")
+        if error:
+            return error
+
+        try:
+            covers, scope = self._comment_scope(doc, address)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        images = []
+        for image in self._graphics(doc):
+            described = self._describe_image(doc, image)
+            if not covers(described["address"]):
+                continue
+            images.append(described)
+
+        images.sort(key=lambda i: (
+            (i["address"] or {}).get("paragraph", 10 ** 9),
+            (i["address"] or {}).get("offset", 0)))
+        return {"success": True, "images": images, "count": len(images),
+                "scope": scope}
+
+    def export_image(self, name: str, path: Optional[str] = None,
+                     image_format: str = "png", inline: bool = False,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Write a picture to a file, and hand back its bytes if asked
+
+        `name` is the picture's own name, as list_images reports it. The file
+        is what LibreOffice re-encodes the picture into, so the size on disk
+        is not the size it occupies in the document.
+        """
+        doc, error = self._writer_document(doc, "Exporting a picture")
+        if error:
+            return error
+
+        if not isinstance(name, str) or not name:
+            return {"success": False,
+                    "error": "name must be the name of a picture, as "
+                             "list_images reports it"}
+
+        wanted = None
+        known = []
+        for image in self._graphics(doc):
+            image_name = _get_property(image, "Name", "") or ""
+            known.append(image_name)
+            if image_name == name:
+                wanted = image
+        if wanted is None:
+            return {"success": False,
+                    "error": f"No picture named {name} in this document. "
+                             f"It holds: {', '.join(known) or 'none'}."}
+
+        graphic = _get_property(wanted, "Graphic", None)
+        if graphic is None:
+            return {"success": False,
+                    "error": f"The picture {name} carries no graphic to write"}
+
+        asked = (image_format or "png").lower()
+        own = _get_property(graphic, "MimeType", "") or ""
+        if asked == "original":
+            mime = own if own in IMAGE_EXTENSIONS else "image/png"
+        elif asked in IMAGE_TYPES:
+            mime = IMAGE_TYPES[asked]
+        else:
+            return {"success": False,
+                    "error": f'format must be one of '
+                             f'{", ".join(sorted(IMAGE_TYPES))} or "original", '
+                             f'got {image_format!r}'}
+
+        target = path
+        if not target:
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", name) or "image"
+            target = os.path.join(tempfile.gettempdir(),
+                                  f"{safe}.{IMAGE_EXTENSIONS[mime]}")
+        target = os.path.abspath(os.path.expanduser(target))
+        directory = os.path.dirname(target)
+        if not os.path.isdir(directory):
+            return {"success": False,
+                    "error": f"There is no directory {directory} to write into"}
+
+        try:
+            provider = self.smgr.createInstanceWithContext(
+                "com.sun.star.graphic.GraphicProvider", self.ctx)
+            url = PropertyValue()
+            url.Name, url.Value = "URL", _file_url(target)
+            kind = PropertyValue()
+            kind.Name, kind.Value = "MimeType", mime
+            provider.storeGraphic(graphic, (url, kind))
+        except Exception as e:
+            logger.error(f"Could not write the picture {name}: {e}")
+            return {"success": False, "error": str(e)}
+
+        if not os.path.exists(target):
+            return {"success": False,
+                    "error": f"LibreOffice reported no error but wrote no "
+                             f"file at {target}"}
+
+        described = self._describe_image(doc, wanted)
+        result = {"success": True, "name": name, "path": target,
+                  "bytes": os.path.getsize(target), "mime_type": mime,
+                  "pixels": described["pixels"], "address": described["address"],
+                  "title": described["title"],
+                  "description": described["description"]}
+
+        if inline:
+            size = os.path.getsize(target)
+            if size > MAX_INLINE_IMAGE_BYTES:
+                result["inline"] = False
+                result["inline_refused"] = (
+                    f"{size} bytes is more than the {MAX_INLINE_IMAGE_BYTES} "
+                    f"a reply carries; read the file at {target} instead")
+            else:
+                with open(target, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+                result["inline"] = True
+                result["_image_content"] = {"data": encoded, "mime_type": mime}
+        return result
 
     def _annotations(self, doc: Any) -> List[Any]:
         """Every comment field in the document"""
