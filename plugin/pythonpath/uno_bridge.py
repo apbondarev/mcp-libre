@@ -8,7 +8,7 @@ enabling direct manipulation of LibreOffice documents.
 import uno
 from com.sun.star.beans import PropertyValue
 from typing import Any, Optional, Dict, List
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 import base64
 import tempfile
 import os
@@ -266,6 +266,31 @@ def _style_value(name: str, value: Any) -> Any:
     return str(value)
 
 
+def _get_document_url(doc: Any) -> str:
+    """The document's URL, or "" for one that has never been saved"""
+    try:
+        return doc.getURL() or ""
+    except Exception:
+        return ""
+
+
+def _document_path(doc: Any) -> Optional[str]:
+    """The document's file path, or None when it lives nowhere yet"""
+    url = _get_document_url(doc)
+    if not url.startswith("file://"):
+        return None
+    return unquote(url[len("file://"):])
+
+
+def _get_property_call(source: Any, method: str, default: Any = None) -> Any:
+    """The result of a no-argument method, or `default` if it will not answer"""
+    try:
+        return getattr(source, method)()
+    except Exception as e:
+        logger.info(f"Could not call {method}: {e}")
+        return default
+
+
 def _file_url(path: str) -> str:
     """A file:// URL UNO accepts, with the odd character in a name escaped"""
     return "file://" + quote(os.path.abspath(path))
@@ -384,6 +409,19 @@ MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024
 # defines and DEFAULT_VALUE for one it inherits. For "Text body" that is 8 of
 # 195, and they match its definition in styles.xml exactly, which is why
 # nobody has to read the file to find out.
+# Saving under a name. storeAsURL with no FilterName writes ODF whatever the
+# file is called — measured: a document saved as "x.docx" came out as ODF
+# with a .docx name, which Word opens only under protest. So the format is
+# chosen from the extension, or said outright, and an extension nobody knows
+# is refused rather than silently written as ODF.
+WRITER_SAVE_FILTERS = {"odt": "writer8", "docx": "MS Word 2007 XML",
+                       "doc": "MS Word 97", "rtf": "Rich Text Format",
+                       "txt": "Text", "html": "HTML (StarWriter)",
+                       "xhtml": "XHTML Writer File", "fodt": "OpenDocument Text Flat XML"}
+# PDF is an export, not a place a document can live: storeAsURL would leave
+# the document claiming to be one.
+EXPORT_ONLY_FORMATS = {"pdf", "epub", "png", "jpg", "jpeg"}
+
 STYLE_FAMILIES = {"paragraph": "ParagraphStyles", "character": "CharacterStyles",
                   "page": "PageStyles", "frame": "FrameStyles",
                   "numbering": "NumberingStyles", "table": "TableStyles",
@@ -837,42 +875,253 @@ class UNOBridge:
             logger.error(f"Failed to format text: {e}")
             return {"success": False, "error": str(e)}
     
-    def save_document(self, doc: Any = None, file_path: Optional[str] = None) -> Dict[str, Any]:
+    def _save_filter(self, path: str,
+                     document_format: Optional[str] = None) -> tuple:
+        """(FilterName, the format it stands for) for a path to save to"""
+        wanted = (document_format
+                  or os.path.splitext(path)[1].lstrip(".")).lower()
+        if not wanted:
+            raise AddressError(
+                f"{os.path.basename(path)} has no extension and no format was "
+                f"given, so there is no telling what to write; name it "
+                f"something.odt or pass format")
+        if wanted in EXPORT_ONLY_FORMATS:
+            raise AddressError(
+                f"{wanted} is a format to export to, not one a document can "
+                f"live in — export_document writes a copy and leaves the "
+                f"document where it is")
+        if wanted not in WRITER_SAVE_FILTERS:
+            raise AddressError(
+                f"nothing here knows how to save {wanted}; the formats are "
+                f"{', '.join(sorted(WRITER_SAVE_FILTERS))}")
+        return WRITER_SAVE_FILTERS[wanted], wanted
+
+    def _store_as(self, doc: Any, path: str, document_format: Optional[str],
+                  overwrite: bool) -> Dict[str, Any]:
+        """Write the document to `path` and leave it living there"""
+        target = os.path.abspath(os.path.expanduser(path))
+        directory = os.path.dirname(target)
+        if not os.path.isdir(directory):
+            raise AddressError(f"there is no directory {directory} to save into")
+        if os.path.exists(target) and not overwrite:
+            raise AddressError(f"{target} exists already; pass overwrite=true "
+                               f"to write over it")
+        filter_name, wanted = self._save_filter(target, document_format)
+
+        name = PropertyValue()
+        name.Name, name.Value = "FilterName", filter_name
+        over = PropertyValue()
+        over.Name, over.Value = "Overwrite", bool(overwrite)
+        doc.storeAsURL(_file_url(target), (name, over))
+        return {"path": target, "url": _get_document_url(doc),
+                "format": wanted, "filter": filter_name}
+
+    def save_document(self, doc: Any = None, file_path: Optional[str] = None,
+                      document_format: Optional[str] = None,
+                      overwrite: bool = False) -> Dict[str, Any]:
         """
-        Save a document
-        
-        Args:
-            doc: Document to save (None for active document)
-            file_path: Path to save to (None to save to current location)
-            
-        Returns:
-            Result dictionary
+        Save a document, either where it lives or under a new name
+
+        With a `file_path` this is Save As: the document is written there and
+        goes on living there, in the format the extension names — or the one
+        `document_format` names. Without a path it is saved where it already
+        is, and a document that has never been saved is refused rather than
+        written somewhere guessed.
         """
+        if doc is None:
+            doc = self.get_active_document()
+        if not doc:
+            return {"success": False, "error": "No document to save"}
+        if _is_readonly(doc):
+            return {"success": False,
+                    "error": "The document is read-only, so it cannot be saved"}
+
         try:
-            if doc is None:
-                doc = self.get_active_document()
-            
-            if not doc:
-                return {"success": False, "error": "No document to save"}
-            
             if file_path:
-                # Save as new file
-                url = uno.systemPathToFileUrl(file_path)
-                doc.storeAsURL(url, ())
-                logger.info(f"Saved document to {file_path}")
-                return {"success": True, "message": f"Document saved to {file_path}"}
-            else:
-                # Save to current location
-                if doc.hasLocation():
-                    doc.store()
-                    logger.info("Saved document to current location")
-                    return {"success": True, "message": "Document saved"}
-                else:
-                    return {"success": False, "error": "Document has no location, specify file_path"}
-                    
+                was = _get_document_url(doc)
+                written = self._store_as(doc, file_path, document_format,
+                                         overwrite)
+                logger.info(f"Saved document as {written['path']}")
+                return {"success": True, "saved_as": written["path"],
+                        "url": written["url"], "format": written["format"],
+                        "filter": written["filter"], "was": was or None,
+                        "lives_here_now": True}
+
+            if not doc.hasLocation():
+                return {"success": False,
+                        "error": "This document has never been saved, so "
+                                 "there is nowhere to save it; give a "
+                                 "file_path and it will be saved there"}
+            doc.store()
+            logger.info("Saved document where it lives")
+            return {"success": True, "saved_as": _document_path(doc),
+                    "url": _get_document_url(doc), "lives_here_now": True}
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.error(f"Failed to save document: {e}")
             return {"success": False, "error": str(e)}
+
+    def close_document(self, doc: Any = None, unsaved: Optional[str] = None,
+                       ) -> Dict[str, Any]:
+        """
+        Close a document, having decided what happens to unsaved changes
+
+        close(True) closes a modified document without a murmur and the
+        changes are gone — measured — so a document with unsaved changes is
+        refused unless `unsaved` says "save" or "discard". Nothing is thrown
+        away because a caller forgot to think about it.
+        """
+        if doc is None:
+            doc = self.get_active_document()
+        if not doc:
+            return {"success": False, "error": "No document to close"}
+
+        title = _get_property(doc, "Title", "") or ""
+        url = _get_document_url(doc)
+        path = _document_path(doc)
+        modified = bool(_get_property_call(doc, "isModified", False))
+
+        if unsaved is not None and unsaved not in ("save", "discard"):
+            return {"success": False,
+                    "error": f'unsaved must be "save" or "discard", got '
+                             f'{unsaved!r}'}
+
+        saved = False
+        if modified:
+            if unsaved is None:
+                return {"success": False, "modified": True, "title": title,
+                        "url": url or None,
+                        "error": "This document has changes that are not "
+                                 "saved. Closing it would lose them, so say "
+                                 'what to do: unsaved="save" to save them '
+                                 'first, or unsaved="discard" to let them go.'}
+            if unsaved == "save":
+                if not doc.hasLocation():
+                    return {"success": False, "modified": True,
+                            "error": "This document has never been saved, so "
+                                     "its changes cannot be saved on the way "
+                                     "out; save_document with a file_path "
+                                     "first, or close with "
+                                     'unsaved="discard"'}
+                try:
+                    doc.store()
+                    saved = True
+                except Exception as e:
+                    logger.error(f"Could not save before closing: {e}")
+                    return {"success": False,
+                            "error": f"could not save it, so it was left open: "
+                                     f"{e}"}
+            else:
+                try:
+                    doc.setModified(False)
+                except Exception as e:
+                    logger.info(f"Could not clear the modified flag: {e}")
+
+        try:
+            doc.close(True)
+        except Exception as e:
+            logger.error(f"Could not close the document: {e}")
+            return {"success": False,
+                    "error": f"LibreOffice would not close it: {e}"}
+
+        remaining = []
+        for other in self.open_documents():
+            remaining.append(_document_path(other)
+                             or _get_property(other, "Title", "")
+                             or "(unsaved)")
+        return {"success": True, "closed": title, "path": path,
+                "url": url or None, "changes_saved": saved,
+                "changes_discarded": modified and not saved,
+                "documents_still_open": remaining}
+
+    def rename_document(self, new_name: str, doc: Any = None,
+                        delete_original: bool = False,
+                        overwrite: bool = False) -> Dict[str, Any]:
+        """
+        Give a document another name, and say what became of the old file
+
+        UNO has no rename: storeAsURL writes the document under the new name
+        and the old file stays where it was — measured, both files there
+        afterwards. So the old one is kept unless `delete_original` says
+        otherwise, and this reports which happened rather than leaving it to
+        be guessed.
+
+        `new_name` may be a bare name, in which case the document keeps its
+        directory, and may leave the extension off, in which case it keeps
+        the one it has.
+        """
+        if doc is None:
+            doc = self.get_active_document()
+        if not doc:
+            return {"success": False, "error": "No document to rename"}
+        if not isinstance(new_name, str) or not new_name.strip():
+            return {"success": False, "error": "new_name must be a name"}
+        if _is_readonly(doc):
+            return {"success": False,
+                    "error": "The document is read-only, so it cannot be "
+                             "written under another name"}
+
+        original = _document_path(doc)
+        if not original:
+            return {"success": False,
+                    "error": "This document has never been saved, so it has "
+                             "no name to change; save_document with a "
+                             "file_path gives it one"}
+
+        wanted = os.path.expanduser(new_name.strip())
+        if not os.path.dirname(wanted):
+            wanted = os.path.join(os.path.dirname(original), wanted)
+        if not os.path.splitext(wanted)[1]:
+            wanted += os.path.splitext(original)[1]
+        wanted = os.path.abspath(wanted)
+
+        if wanted == original:
+            return {"success": False,
+                    "error": f"the document is already called "
+                             f"{os.path.basename(original)}"}
+
+        try:
+            written = self._store_as(doc, wanted, None, overwrite)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            logger.error(f"Could not write {wanted}: {e}")
+            return {"success": False, "error": str(e)}
+
+        removed = False
+        if delete_original:
+            try:
+                os.unlink(original)
+                removed = True
+            except OSError as e:
+                logger.error(f"Could not remove {original}: {e}")
+                return {"success": True, "renamed_to": written["path"],
+                        "url": written["url"], "was": original,
+                        "original_kept": True,
+                        "warning": f"the document is now {written['path']}, "
+                                   f"but the old file could not be removed: "
+                                   f"{e}"}
+            # The lock file LibreOffice left beside the old name is stale now.
+            lock = os.path.join(os.path.dirname(original),
+                                f".~lock.{os.path.basename(original)}#")
+            if os.path.exists(lock):
+                try:
+                    os.unlink(lock)
+                except OSError as e:
+                    logger.info(f"Could not remove {lock}: {e}")
+
+        result = {"success": True, "renamed_to": written["path"],
+                  "url": written["url"], "was": original,
+                  "format": written["format"],
+                  "original_kept": not removed}
+        if not removed:
+            result["note"] = (f"the old file is still at {original}; pass "
+                              f"delete_original=true to have it removed")
+        if (os.path.splitext(original)[1].lower()
+                != os.path.splitext(written["path"])[1].lower()):
+            result["format_changed"] = True
+        return result
     
     def export_document(self, export_format: str, file_path: str, doc: Any = None) -> Dict[str, Any]:
         """

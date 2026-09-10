@@ -1431,6 +1431,99 @@ try:
                      "/tmp/mcp_live_addr.png"):
         os.unlink(leftover)
 
+    print("\n--- saving under a name, closing, renaming ---")
+    import zipfile
+    yard = "/tmp/mcp_live_documents"
+    if os.path.isdir(yard):
+        for leftover in os.listdir(yard):
+            os.unlink(os.path.join(yard, leftover))
+    else:
+        os.makedirs(yard)
+
+    fresh = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                         0, ())
+    fresh.getText().setString("Документ для проверки сохранения")
+    check("a new document lives nowhere yet", fresh.hasLocation(), False)
+    check("and saving it without a name is refused",
+          bridge.save_document(doc=fresh).get("success"), False)
+
+    odt = os.path.join(yard, "guide.odt")
+    saved = bridge.save_document(doc=fresh, file_path=odt)
+    print("   ", saved)
+    check("saved under a name", saved.get("success"), True)
+    check("with Writer's own filter", saved.get("filter"), "writer8")
+    check("the document lives there now", fresh.getURL(),
+          f"file://{odt}")
+    check("and the file is real ODF",
+          zipfile.ZipFile(odt).read("mimetype").decode(),
+          "application/vnd.oasis.opendocument.text")
+
+    word = os.path.join(yard, "guide.docx")
+    as_word = bridge.save_document(doc=fresh, file_path=word)
+    print("   ", as_word)
+    check("saved as Word", as_word.get("filter"), "MS Word 2007 XML")
+    check("and it really is OOXML, not ODF with a .docx name",
+          "[Content_Types].xml" in zipfile.ZipFile(word).namelist(), True)
+    check("the document followed the name", fresh.getURL(), f"file://{word}")
+
+    check("a format nothing here writes is refused",
+          bridge.save_document(doc=fresh,
+                               file_path=os.path.join(yard, "x.pages")
+                               ).get("success"), False)
+    check("and PDF is sent to export_document",
+          "export_document" in bridge.save_document(
+              doc=fresh, file_path=os.path.join(yard, "x.pdf"))["error"], True)
+    check("an existing file is not written over",
+          bridge.save_document(doc=fresh, file_path=odt).get("success"), False)
+
+    print("\n   renaming:")
+    renamed = bridge.rename_document("guide-v2.docx", doc=fresh)
+    print("   ", renamed)
+    check("renamed", renamed.get("success"), True)
+    check("the document is called that now", fresh.getURL(),
+          f"file://{os.path.join(yard, 'guide-v2.docx')}")
+    check("the old file is still there, as UNO leaves it",
+          os.path.exists(word), True)
+    check("which the result says", renamed.get("original_kept"), True)
+
+    removed = bridge.rename_document("guide-v3.docx", doc=fresh,
+                                     delete_original=True)
+    check("and it can be removed when asked", removed.get("original_kept"),
+          False)
+    check("the old name is gone",
+          os.path.exists(os.path.join(yard, "guide-v2.docx")), False)
+    check("a bare name keeps the directory and the extension",
+          bridge.rename_document("Руководство", doc=fresh,
+                                 delete_original=True)["renamed_to"],
+          os.path.join(yard, "Руководство.docx"))
+
+    print("\n   closing:")
+    fresh.getText().setString("изменено и не сохранено")
+    check("a document with unsaved changes is not closed",
+          bridge.close_document(doc=fresh).get("success"), False)
+    check("it is still open", fresh.hasLocation(), True)
+    kept = bridge.close_document(doc=fresh, unsaved="save")
+    print("   ", kept)
+    check("closed, saving the changes", (kept.get("success"),
+                                         kept.get("changes_saved")),
+          (True, True))
+    check("and what it saved is on disk",
+          os.path.getsize(os.path.join(yard, "Руководство.docx")) > 0, True)
+
+    throwaway = desktop.loadComponentFromURL("private:factory/swriter",
+                                             "_blank", 0, ())
+    throwaway.getText().setString("это не нужно сохранять")
+    check("a document that lives nowhere cannot save on the way out",
+          bridge.close_document(doc=throwaway, unsaved="save").get("success"),
+          False)
+    let_go = bridge.close_document(doc=throwaway, unsaved="discard")
+    check("but it can be let go", (let_go.get("success"),
+                                   let_go.get("changes_discarded")),
+          (True, True))
+    for leftover in os.listdir(yard):
+        os.unlink(os.path.join(yard, leftover))
+    os.rmdir(yard)
+
     doc.setModified(False)
     doc.close(True)
     desktop.terminate()

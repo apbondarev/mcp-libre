@@ -1233,11 +1233,46 @@ class FakeDoc:
     def supportsService(self, name):
         return name in self.services
 
-    def getURL(self):
-        return f"file:///tmp/{self.Title}"
+    # --- living somewhere: saving, closing, being renamed ---------------
+    def hasLocation(self):
+        return bool(getattr(self, "url", ""))
 
     def isModified(self):
-        return False
+        return bool(getattr(self, "modified", False))
+
+    def setModified(self, value):
+        self.modified = bool(value)
+
+    def store(self):
+        if not self.hasLocation():
+            raise RuntimeError("no location to store to")
+        if getattr(self, "store_fails", False):
+            raise RuntimeError("the disk said no")
+        self.stored_in_place = getattr(self, "stored_in_place", 0) + 1
+        self.modified = False
+        with open(self.url[len("file://"):], "wb") as handle:
+            handle.write(b"PK\x03\x04 fake odf")
+
+    def storeAsURL(self, url, arguments):
+        settings = {argument.Name: argument.Value for argument in arguments}
+        from urllib.parse import unquote, urlparse
+
+        path = unquote(urlparse(url).path)
+        self.stored_as = getattr(self, "stored_as", [])
+        self.stored_as.append((path, settings.get("FilterName")))
+        with open(path, "wb") as handle:
+            handle.write(b"PK\x03\x04 fake odf")
+        self.url = f"file://{path}"       # the document lives there now
+        self.modified = False
+
+    def close(self, deliver_ownership):
+        if getattr(self, "close_vetoed", False):
+            raise RuntimeError("a listener vetoed the close")
+        self.closed = True
+
+    def getURL(self):
+        """Where the document lives; "" until it has been saved anywhere."""
+        return getattr(self, "url", f"file:///tmp/{self.Title}")
 
 
 class FakeWriterDoc(FakeDoc):
@@ -1379,7 +1414,8 @@ class FakeDesktop:
         return self._current
 
     def getComponents(self):
-        return FakeComponents(self._documents)
+        return FakeComponents([document for document in self._documents
+                               if not getattr(document, "closed", False)])
 
     def loadComponentFromURL(self, url, target, flags, arguments):
         """Only the PDF-into-Draw import is modelled, which is all that uses it."""
