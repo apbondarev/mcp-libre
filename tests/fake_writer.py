@@ -60,7 +60,9 @@ class FakeRange:
         return self.model.slice_text(self.start, self.end)
 
     def getText(self):
-        return self.model
+        # A range inside a cell answers with the cell, not with the text
+        # behind it — which is how the cell owning a range is found.
+        return getattr(self.model, "owner", None) or self.model
 
     def setString(self, value):
         self.model.replace_range(self.start, self.end, value)
@@ -100,7 +102,9 @@ class FakeTextCursor:
         return self.model.slice_text(self.start, self.end)
 
     def getText(self):
-        return self.model
+        # A range inside a cell answers with the cell, not with the text
+        # behind it — which is how the cell owning a range is found.
+        return getattr(self.model, "owner", None) or self.model
 
     def setString(self, value):
         self.model.replace_range(self.start, self.end, value)
@@ -756,7 +760,8 @@ class FakeStyleFamilies:
             "ParagraphStyles": ["Standard", "Heading", "Text body",
                                 "Heading 1", "Heading 2", "Heading 3",
                                 "Preformatted Text", "Quotations", "Comment",
-                                "List", "Caption"],
+                                "List", "Caption", "Table Contents",
+                                "Table Heading"],
             "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
         }
 
@@ -774,8 +779,206 @@ class FakeStyleFamilies:
         return self._built[name]
 
 
+class FakeCount:
+    def __init__(self, count):
+        self._count = count
+
+    def getCount(self):
+        return self._count
+
+
+class FakeTableBorder:
+    """com.sun.star.table.TableBorder2: the lines, and whether each counts."""
+
+    def __init__(self):
+        for field in ("TopLine", "BottomLine", "LeftLine", "RightLine",
+                      "HorizontalLine", "VerticalLine"):
+            setattr(self, field, FakeBorderLine(18, 0))
+        for field in ("IsTopLineValid", "IsBottomLineValid", "IsLeftLineValid",
+                      "IsRightLineValid", "IsHorizontalLineValid",
+                      "IsVerticalLineValid", "IsDistanceValid"):
+            setattr(self, field, False)
+        self.Distance = 97
+
+
+class FakeSeparator:
+    def __init__(self, position):
+        self.Position = position
+        self.IsVisible = True
+
+
+class FakeCellCursor:
+    """A cursor over a cell's text, which takes character formatting."""
+
+    def __init__(self, cell):
+        self._cell = cell
+
+    def gotoStart(self, expand):
+        return True
+
+    def gotoEnd(self, expand):
+        return True
+
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            object.__setattr__(self, name, value)
+            return
+        object.__setattr__(self, name, value)
+        self._cell.formatting[name] = value
+
+
+def _cell_text(text):
+    """The text of a cell: its paragraphs, styled as Writer styles them."""
+    lines = text.split("\n") if text else [""]
+    return FakeText(lines, styles=["Table Contents"] * len(lines))
+
+
+class FakeCell:
+    """A cell is its own XText, which is why a caret in one has no paragraph.
+
+    A cell's background is BackColor with BackTransparent off — it has no
+    FillStyle and no FillColor at all, where a paragraph has the opposite
+    problem. Measured, and the reason the two are written differently.
+    """
+
+    def __init__(self, name, text=""):
+        self.CellName = name
+        self.BackColor = -1
+        self.BackTransparent = True
+        self.VertOrient = 0
+        self.formatting = {}
+        self.model = _cell_text(text)
+        self.model.owner = self
+
+    # --- a cell is a text of its own, which is the whole point -----------
+    def getString(self):
+        return "\n".join(self.model.paragraphs)
+
+    def setString(self, value):
+        self.model = _cell_text(value)
+        self.model.owner = self
+
+    def createEnumeration(self):
+        return self.model.createEnumeration()
+
+    def createTextCursorByRange(self, text_range):
+        return self.model.createTextCursorByRange(text_range)
+
+    def getStart(self):
+        return FakeRange(self.model, (0, 0))
+
+    def getEnd(self):
+        last = len(self.model.paragraphs) - 1
+        return FakeRange(self.model, (last, len(self.model.paragraphs[last])))
+
+    def compareRegionStarts(self, first, second):
+        """Throws for a range of another cell, which is how they are told apart."""
+        return self.model.compareRegionStarts(first, second)
+
+    def supportsService(self, name):
+        return name in ("com.sun.star.text.CellProperties",
+                        "com.sun.star.text.Text")
+
+    def createTextCursor(self):
+        return FakeCellCursor(self)
+
+    def insertTextContent(self, text_range, content, absorb):
+        """A comment can be anchored in a cell like anywhere else."""
+        return self.model.insertTextContent(text_range, content, absorb)
+
+    def createInstance(self, service):
+        return self.model.createInstance(service) \
+            if hasattr(self.model, "createInstance") else None
+
+    @property
+    def styles(self):
+        return list(self.model.styles)
+
+
+
 class FakeTextTable:
-    """A table in the body enumeration: no getStart(), so the walk must skip it."""
+    """A table in the body enumeration: no getStart(), so the walk must skip it.
+
+    Also a real table when a test gives it cells: named A1, B1, …, with rows
+    and columns it can count, and column separators on the 10000 scale that
+    Writer measures shares on — its Width is on a scale of its own and is not
+    translated, having once invented a table 1.16 metres wide.
+    """
+
+    def __init__(self, name="Table1", cells=None, rows=None, columns=None,
+                 header_rows=0, merged_away=(), after_paragraph=None):
+        self._anchor = None
+        self._separators = None
+        self._border = FakeTableBorder()
+        self.after_paragraph = after_paragraph
+        self.Name = name
+        self.HeaderRowCount = header_rows
+        self.RepeatHeadline = bool(header_rows)
+        self.Width = 115596
+        self.RelativeWidth = 0
+        self.IsWidthRelative = False
+        self.TableColumnRelativeSum = 10000
+        grid = cells or []
+        self._rows = rows if rows is not None else len(grid)
+        self._columns = columns if columns is not None else (
+            max((len(row) for row in grid), default=0))
+        self._cells = {}
+        for row_index, row in enumerate(grid):
+            for column_index, text in enumerate(row):
+                name_of = f"{chr(ord('A') + column_index)}{row_index + 1}"
+                if name_of in merged_away:
+                    continue
+                self._cells[name_of] = FakeCell(name_of, text)
+
+    def getName(self):
+        return self.Name
+
+    def supportsService(self, name):
+        return name in ("com.sun.star.text.TextTable",
+                        "com.sun.star.text.TextContent")
+
+    def getAnchor(self):
+        """Where the table sits in the body, as a range of it."""
+        if self._anchor is None:
+            raise RuntimeError("this table is not in any text")
+        return self._anchor
+
+    def getRows(self):
+        return FakeCount(self._rows)
+
+    def getColumns(self):
+        return FakeCount(self._columns)
+
+    def getCellNames(self):
+        return tuple(self._cells)
+
+    def getCellByName(self, name):
+        if name not in self._cells:
+            raise RuntimeError(f"no cell {name}")
+        return self._cells[name]
+
+    @property
+    def TableColumnSeparators(self):
+        if self._separators is None:
+            if self._columns < 2:
+                return ()
+            share = self.TableColumnRelativeSum // self._columns
+            self._separators = [FakeSeparator(share * (index + 1))
+                                for index in range(self._columns - 1)]
+        return tuple(self._separators)
+
+    @TableColumnSeparators.setter
+    def TableColumnSeparators(self, separators):
+        self._separators = list(separators)
+
+    @property
+    def TableBorder2(self):
+        """The grid, as a struct whose Is*Valid flags decide what sticks."""
+        return self._border
+
+    @TableBorder2.setter
+    def TableBorder2(self, border):
+        self._border = border
 
 
 class FakeEnumeration:
@@ -960,8 +1163,12 @@ class FakeText:
         return normalised
 
     def _own(self, text_range):
-        """Writer throws when a range from another text is passed in."""
-        if text_range.getText() is not self:
+        """Writer throws when a range from another text is passed in.
+
+        The range answers getText() with the cell when it lives in one, so
+        ownership is asked of the model behind it rather than of that.
+        """
+        if getattr(text_range, "model", None) is not self:
             raise RuntimeError(
                 "End of content node doesn't have the proper start node")
 
@@ -1057,15 +1264,27 @@ class FakeText:
         return [portion for portion in rebuilt
                 if portion.get("kind", "Text") != "Text" or portion.get("text")]
 
+    def compareRegionStarts(self, first, second):
+        """1 when `first` starts before `second`, 0 equal, -1 after."""
+        self._own(first)
+        self._own(second)
+        left, right = first.start, second.start
+        return 1 if left < right else (0 if left == right else -1)
+
     def createTextCursorByRange(self, text_range):
         self._own(text_range)
         return FakeTextCursor(self, text_range.start, text_range.start)
 
     def createEnumeration(self):
-        return FakeEnumeration(
-            FakeTextTable() if item == "table" else FakeParagraph(self, item)
-            for item in self.enumeration_items
-        )
+        items = []
+        for item in self.enumeration_items:
+            if item == "table":
+                items.append(FakeTextTable())
+            elif isinstance(item, FakeTextTable):
+                items.append(item)
+            else:
+                items.append(FakeParagraph(self, item))
+        return FakeEnumeration(items)
 
     def compareRegionStarts(self, range1, range2):
         """0 when both start at the same spot; the sign convention is unused."""
@@ -1300,6 +1519,9 @@ class FakeWriterDoc(FakeDoc):
     def getGraphicObjects(self):
         return FakeNameAccess(getattr(self, "images", ()))
 
+    def getTextTables(self):
+        return FakeNameAccess(getattr(self, "tables", ()))
+
     # --- rendering: what XRenderable and the picture filters answer ---
     pages = 1
     render_failures = ()
@@ -1438,7 +1660,8 @@ def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page
 
 
 def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
-               pages=1, selected_image=None, **text_kwargs):
+               pages=1, selected_image=None, tables=(), caret_in_cell=None,
+               **text_kwargs):
     """Build a Writer document whose caret sits at `caret` = (paragraph, offset).
 
     `images` describes the pictures in it, each a dict of the arguments
@@ -1455,6 +1678,33 @@ def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
     doc = FakeWriterDoc(text, FakeController(view_cursor, selection))
     doc.images = [FakeImage(model=text, **described) for described in images]
     doc.pages = pages
+    doc.tables = list(tables)
+    # A table sits between paragraphs in the body, and a range that runs from
+    # before it to after it covers it — which is how a selection comes to hold
+    # a whole table without its text saying so.
+    placed = list(text.enumeration_items)
+    for table in doc.tables:
+        after = getattr(table, "after_paragraph", None)
+        if after is None:
+            continue
+        table._anchor = FakeRange(text, (after, len(text.paragraphs[after])))
+        position = placed.index(after) + 1 if after in placed else len(placed)
+        placed.insert(position, table)
+    text.enumeration_items = placed
+    if caret_in_cell is not None:
+        # A cell is its own text, so the caret in one belongs to that text and
+        # to no body paragraph — which is why paragraph_index is None there.
+        # The view cursor additionally carries the table and the cell.
+        table_name, cell_name = caret_in_cell
+        table = next(one for one in doc.tables if one.Name == table_name)
+        cell = table.getCellByName(cell_name)
+        cell_text = FakeText([cell.getString()])
+        in_cell = FakeViewCursor(cell_text, (0, 0), (0, 0), page=page,
+                                 pages=pages)
+        in_cell.TextTable = table
+        in_cell.Cell = cell
+        doc._controller = FakeController(
+            in_cell, FakeSelection(cell_text, [((0, 0), (0, 0))]))
     if selected_image is not None:
         # Selecting a picture in Writer makes the selection the picture
         # itself, with no getCount and no text range in sight.

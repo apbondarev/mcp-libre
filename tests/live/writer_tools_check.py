@@ -1246,6 +1246,321 @@ try:
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"], before_text)
 
+    print("\n--- tables: knowing the caret is in one, and reading it ---")
+    tables = doc.getTextTables()
+    table_name = tables.getElementNames()[0]
+    table = tables.getByName(table_name)
+    table.getCellByName("A1").setString("Operation")
+    table.getCellByName("B1").setString("Response")
+    table.getCellByName("A2").setString("{\n  hero {\n    name\n  }\n}")
+    table.getCellByName("B2").setString("R2-D2")
+
+    listed = bridge.list_tables(doc=doc)
+    print("   ", listed)
+    check("the table is listed", listed.get("count"), 1)
+    described = listed["tables"][0]
+    check("with its size", (described["rows"], described["columns"]), (2, 2))
+    check("its cells", described["cells"], 4)
+    check("the share of each column", described["column_widths_percent"],
+          [50.0, 50.0])
+    check("and where it sits in the text",
+          isinstance(described["after_paragraph"], int), True)
+    check("no invented millimetres", "width_mm" in described, False)
+
+    print("\n   with the caret put inside a cell:")
+    view = doc.getCurrentController().getViewCursor()
+    was_here = view.getStart()
+    view.gotoRange(table.getCellByName("A2").getStart(), False)
+    info = bridge.get_cursor_info(doc=doc)
+    print("   ", info.get("in_table"))
+    check("the caret is known to be in a table",
+          info.get("in_table", {}).get("table"), table_name)
+    check("and in which cell", info["in_table"]["cell"], "A2")
+    check("with its row and column",
+          (info["in_table"]["row"], info["in_table"]["column"]), (2, 1))
+    check("the cell's text comes with it",
+          info["in_table"]["cell_text"].splitlines()[0], "{")
+    check("and there is honestly no body paragraph",
+          info["cursor"]["paragraph_index"], None)
+    check("the listing says where the caret is",
+          bridge.list_tables(doc=doc)["caret_is_in"],
+          {"table": table_name, "cell": "A2"})
+
+    print("\n   reading the table the caret is in:")
+    read = bridge.read_table(doc=doc)
+    print("   ", [[cell["text"][:12] if cell else None for cell in row]
+                  for row in read["rows"]])
+    check("read without being named", read["table"]["name"], table_name)
+    check("the grid is the right shape",
+          [[cell["cell"] for cell in row] for row in read["rows"]],
+          [["A1", "B1"], ["A2", "B2"]])
+    check("the header cells", (read["rows"][0][0]["text"],
+                               read["rows"][0][1]["text"]),
+          ("Operation", "Response"))
+    check("a cell of several paragraphs keeps its line breaks",
+          len(read["rows"][1][0]["text"].splitlines()), 5)
+    check("and it says which cell the caret is in", read["caret_in_cell"], "A2")
+
+    one = bridge.read_table(table_name, cell="B2", doc=doc)
+    check("one cell can be read on its own", one.get("text"), "R2-D2")
+    check("with its position", (one["row"], one["column"]), (2, 2))
+    check("a cell that is not there is refused",
+          bridge.read_table(table_name, cell="Z9", doc=doc).get("success"),
+          False)
+    check("a table that is not there is refused",
+          bridge.read_table("Table99", doc=doc).get("success"), False)
+
+    view.gotoRange(was_here, False)
+    check("the caret is back out of the table",
+          bridge.get_cursor_info(doc=doc).get("in_table"), None)
+
+    print("\n--- a cell has an address of its own ---")
+    table.getCellByName("A1").setString("Operation")
+    table.getCellByName("B1").setString("Response")
+    table.getCellByName("A2").setString("{\n  hero {\n    name\n  }\n}")
+    table.getCellByName("B2").setString("R2-D2")
+
+    whole = bridge._resolve_address(doc, {"table": table_name, "cell": "A1"})
+    check("a cell resolves to its text", whole.getString(), "Operation")
+    part = bridge._resolve_address(doc, {"table": table_name, "cell": "A1",
+                                         "offset": 0, "length": 5})
+    check("and part of a cell to part of it", part.getString(), "Opera")
+    across = bridge._resolve_address(doc, {"table": table_name, "cell": "A2",
+                                           "offset": 2, "length": 8})
+    check("an offset counts across the paragraphs of a cell",
+          across.getString(), "  hero {")
+
+    print("\n   what find_text now says about a hit inside a cell:")
+    hits = bridge.find_text("R2-D2", doc=doc)
+    in_cell = [hit for hit in hits["hits"]
+               if (hit["address"] or {}).get("cell")]
+    print("   ", in_cell[:1])
+    check("a hit in a cell carries a cell address", bool(in_cell), True)
+    check("naming the table and the cell",
+          (in_cell[0]["address"]["table"], in_cell[0]["address"]["cell"]),
+          (table_name, "B2"))
+    check("and that address resolves back to the hit",
+          bridge._resolve_address(doc, in_cell[0]["address"]).getString(),
+          "R2-D2")
+
+    print("\n   the text tools, in a cell:")
+    runs = bridge.read_runs({"table": table_name, "cell": "A1"}, doc=doc)
+    check("read_runs reads a cell", [run["text"] for run in runs["runs"]],
+          ["Operation"])
+    rewritten = bridge.replace_range({"table": table_name, "cell": "B2"},
+                                     "R2-D2 и C-3PO", doc=doc)
+    check("replace_range writes into a cell", rewritten.get("success"), True)
+    check("and the cell holds it",
+          bridge.read_table(table_name, cell="B2", doc=doc)["text"],
+          "R2-D2 и C-3PO")
+    check("apply_paragraph_style works there",
+          bridge.apply_paragraph_style({"table": table_name, "cell": "A2"},
+                                       "Preformatted Text",
+                                       doc=doc).get("success"), True)
+    check("set_language works there",
+          bridge.set_language({"table": table_name, "cell": "A1"}, "en-US",
+                              doc=doc).get("success"), True)
+    check("format_range works there",
+          bridge.format_range({"table": table_name, "cell": "B1"}, bold=True,
+                              doc=doc).get("success"), True)
+    commented = bridge.add_comment({"table": table_name, "cell": "A1"},
+                                   "Термин", doc=doc)
+    check("a comment can be anchored in a cell", commented.get("success"), True)
+    check("on the cell's text", commented.get("anchor_text"), "Operation")
+    listed_comments = [comment for comment
+                       in bridge.list_comments(doc=doc)["comments"]
+                       if (comment["address"] or {}).get("cell")]
+    check("and it is listed with a cell address",
+          listed_comments[0]["address"]["cell"] if listed_comments else None,
+          "A1")
+    for comment in listed_comments:
+        bridge.delete_comment(comment["id"], doc=doc)
+    check("describing the style in a cell works",
+          bridge.describe_style(address={"table": table_name, "cell": "A2"},
+                                doc=doc)["style"]["name"],
+          "Preformatted Text")
+
+    print("\n   formatting the text inside the cells:")
+    table.getCellByName("A1").setString("Operation")
+    table.getCellByName("B1").setString("Response")
+    table.getCellByName("A2").setString("{\n  hero {\n    name\n  }\n}")
+    for cell in ("A1", "B1"):
+        check(f"{cell} takes the heading style",
+              bridge.apply_paragraph_style({"table": table_name, "cell": cell},
+                                           "Table Heading",
+                                           doc=doc).get("success"), True)
+    check("the code row takes a monospace style",
+          bridge.format_table(table_name, cells="row:2",
+                              paragraph_style="Preformatted Text",
+                              doc=doc).get("success"), True)
+
+    painted = 0
+    for piece, colour in (("hero", "#0B7285"), ("name", "#0B7285")):
+        whole = bridge.read_table(table_name, cell="A2", doc=doc)["text"]
+        at = whole.find(piece)
+        if at < 0:
+            continue
+        result = bridge.format_range({"table": table_name, "cell": "A2",
+                                      "offset": at, "length": len(piece)},
+                                     color=colour, doc=doc)
+        painted += 1 if result.get("success") else 0
+    check("pieces of a cell can be coloured", painted, 2)
+
+    cell_runs = bridge.read_runs({"table": table_name, "cell": "A2"},
+                                 doc=doc)["runs"]
+    print("   runs of A2:", [(run["text"][:12], run["color"])
+                             for run in cell_runs])
+    check("the runs of a cell are addressed to that cell",
+          (cell_runs[0]["address"].get("table"),
+           cell_runs[0]["address"].get("cell")), (table_name, "A2"))
+    check("and every one resolves back to its own text",
+          all(bridge._resolve_address(doc, run["address"]).getString()
+              == run["text"] for run in cell_runs), True)
+    check("the colours really are on the runs",
+          sorted({run["color"] for run in cell_runs if run["color"]}),
+          ["#0B7285"])
+
+    rewritten = bridge.replace_runs(
+        {"table": table_name, "cell": "A2"},
+        [dict(run, text=run["text"].replace("name", "имя"))
+         for run in cell_runs], doc=doc)
+    print("   replace_runs in a cell:", rewritten)
+    check("a cell survives a rewrite through its runs",
+          rewritten.get("success"), True)
+    after = bridge.read_runs({"table": table_name, "cell": "A2"},
+                             doc=doc)["runs"]
+    check("the text changed",
+          "имя" in bridge.read_table(table_name, cell="A2", doc=doc)["text"],
+          True)
+    check("and the colours came through",
+          sorted({run["color"] for run in after if run["color"]}), ["#0B7285"])
+
+    print("\n   refusals:")
+    for label, address in (
+            ("no such table", {"table": "Nope", "cell": "A1"}),
+            ("no such cell", {"table": table_name, "cell": "Z9"}),
+            ("no cell named", {"table": table_name}),
+            ("offset past the end", {"table": table_name, "cell": "A1",
+                                     "offset": 99})):
+        try:
+            bridge._resolve_address(doc, address)
+            check(f"{label} is refused", "not refused", "refused")
+        except Exception as e:
+            print(f"      {label}: {str(e)[:70]}")
+            check(f"{label} is refused", True, True)
+
+    print("\n--- giving a table a look ---")
+    formatted = bridge.format_table(
+        table_name, border=True, border_color="#B0B0B0", border_width=0.5,
+        padding_mm=1.5, background_color="#F7F7F7", header_rows=1,
+        repeat_heading=True, header_background_color="#E4E4E4",
+        header_bold=True, column_widths_percent=[45, 55], doc=doc)
+    print("   ", formatted)
+    check("formatted", formatted.get("success"), True)
+    check("touching every cell", formatted.get("cells_touched"), 4)
+
+    shape = table.TableBorder2
+    check("the outline is drawn", shape.TopLine.LineWidth, 49)
+    check("in the colour asked for", shape.TopLine.Color, 0xB0B0B0)
+    check("the lines between the cells too", shape.HorizontalLine.LineWidth, 49)
+    check("with the padding", shape.Distance, 150)
+    check("the heading is marked",
+          (table.HeaderRowCount, table.RepeatHeadline), (1, True))
+    check("the heading has its own background",
+          table.getCellByName("A1").BackColor, 0xE4E4E4)
+    check("and the body its own",
+          table.getCellByName("A2").BackColor, 0xF7F7F7)
+    check("backgrounds are not transparent, or nothing shows",
+          table.getCellByName("A2").BackTransparent, False)
+    check("the columns moved",
+          [separator.Position for separator
+           in table.TableColumnSeparators][0] in (4499, 4500, 4501), True)
+
+    code = bridge.format_table(table_name, cells="row:2",
+                               paragraph_style="Preformatted Text",
+                               font_size=9, doc=doc)
+    print("   ", code)
+    check("the code cells took a style", code.get("cells_touched"), 2)
+    styles = []
+    paragraphs = table.getCellByName("A2").createEnumeration()
+    while paragraphs.hasMoreElements():
+        styles.append(paragraphs.nextElement().ParaStyleName)
+    check("which really is on the paragraphs", sorted(set(styles)),
+          ["Preformatted Text"])
+
+    check("a cell that is not there is refused",
+          bridge.format_table(table_name, cells=["Z9"], border=True,
+                              doc=doc).get("success"), False)
+    check("a style the document lacks is refused",
+          bridge.format_table(table_name, paragraph_style="Nope",
+                              doc=doc).get("success"), False)
+    check("shares that do not add up are refused",
+          bridge.format_table(table_name, column_widths_percent=[10, 10],
+                              doc=doc).get("success"), False)
+    check("asking for nothing is refused",
+          bridge.format_table(table_name, doc=doc).get("success"), False)
+    check("one undo step per formatting call",
+          bridge.format_table(table_name, background_color="#FAFAFA",
+                              doc=doc).get("success"), True)
+
+    print("\n--- a selection running from text through a table ---")
+    body = doc.getText()
+    across = body.createTextCursorByRange(bridge._paragraph_at(body, 3).getStart())
+    across.gotoEnd(True)          # from before the table to the end
+    doc.getCurrentController().select(across)
+    print("   the selection's own string:",
+          repr(across.getString()[:70]), "…", len(across.getString()), "chars")
+
+    info = bridge.get_cursor_info(doc=doc)
+    selected = info["selection"]
+    print("   selection:", {k: v for k, v in selected.items()
+                            if k not in ("text",)})
+    check("it says a table is in there", selected.get("contains_table"), True)
+    check("naming it", [table["name"] for table in selected["tables"]],
+          [table_name])
+    check("with its size",
+          (selected["tables"][0]["rows"], selected["tables"][0]["columns"]),
+          (2, 2))
+    check("and the paragraphs it covers",
+          selected["paragraphs"][0], 3)
+    check("the listing agrees", bridge.list_tables(doc=doc).get("in_selection"),
+          [table_name])
+
+    runs = bridge.read_runs({"selection": True}, doc=doc)
+    print("   read_runs:", runs.get("count"), "runs |",
+          runs.get("spans_tables"), "|", runs.get("note", "")[:60])
+    check("reading runs says what it cannot reach",
+          runs.get("spans_tables"), [{"name": table_name, "rows": 2,
+                                      "columns": 2}])
+
+    refused = bridge.replace_selection("перевод", doc=doc)
+    print("   replace_selection:", refused)
+    check("replacing it is refused", refused.get("success"), False)
+    check("naming the table and its size",
+          f"{table_name} (2x2)" in refused["error"], True)
+    check("the table is untouched",
+          len(doc.getTextTables().getElementNames()), 1)
+
+    print("\n   and with flatten, the damage is done and counted:")
+    before_paragraphs = bridge.read_paragraphs(start=3, count=1,
+                                               doc=doc)["paragraphs"][0]["text"]
+    flattened = bridge.replace_selection("всё заменено", flatten=True, doc=doc)
+    print("   ", flattened)
+    check("went ahead", flattened.get("success"), True)
+    check("counting the table it destroyed", flattened.get("tables_dropped"), 1)
+    check("and the table really is gone",
+          len(doc.getTextTables().getElementNames()), 0)
+
+    # put a table back for the checks that follow
+    replacement = doc.createInstance("com.sun.star.text.TextTable")
+    replacement.initialize(2, 2)
+    tail = body.createTextCursorByRange(body.getEnd())
+    body.insertTextContent(tail, replacement, False)
+    table_name = replacement.Name
+    table = replacement
+    doc.getCurrentController().select(body.createTextCursorByRange(
+        bridge._paragraph_at(body, 1).getStart()))
+
     print("\n--- describing a style: its own definition, and what is in force ---")
     described = bridge.describe_style("Text body", doc=doc)
     print("   identity:", described["style"])
