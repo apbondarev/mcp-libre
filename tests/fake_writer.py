@@ -5,554 +5,96 @@ Only the handful of calls the bridge makes are modelled. A position is a
 which is how UNO's expand flag behaves: goto*(True) moves the position and
 leaves the mark, so getString() spans the two.
 
-These fakes encode an assumption about UNO's semantics, so they cannot catch a
-wrong assumption — only a live LibreOffice can. They do pin down the offset and
-index arithmetic, the selection handling, and the error paths.
+These fakes encode assumptions about UNO's semantics, so they cannot prove
+those assumptions — only tests/live/writer_tools_check.py can, against a real
+LibreOffice. Where a fake was too kind, the live checks caught it and the
+fake was made faithful; those places carry a comment saying what was
+measured.
+
+This file holds the document itself and the factories tests build with, and
+takes the rest back in so every test keeps importing from one place:
+
+    fakes_values.py       locales, enums, sizes, structs, the spell checker
+    fakes_text.py         ranges, cursors, paragraphs, portions, the text
+    fakes_tables.py       tables and their cells
+    fakes_annotations.py  comments and pictures
+    fakes_styles.py       styles that inherit as real ones do
 """
 
 import itertools
 from tests.uno_stubs import install_uno_stubs
+from tests.fakes_tables import (FakeCell, FakeCellCursor, FakeTableBorder,
+                                FakeTextTable, _cell_text)
+from tests.fakes_text import (BORDER_PROPERTIES, FakeParagraph, FakeRange,
+                              FakeText, FakeTextCursor, FakeTextPortion,
+                              _border_property, _char_property,
+                              _insert_text_content, _para_style_property)
+from tests.fakes_values import (CALC_SERVICES, FakeBorderLine, FakeComponents,
+                                FakeCount, FakeDateTime, FakeEnum,
+                                FakeEnumeration, FakeGraphicProviderPNG,
+                                FakeLineSpacing, FakeLocale, FakeNameAccess,
+                                FakeProperties, FakeProperty, FakeSeparator,
+                                FakeSize, FakeSpellAlternatives,
+                                FakeSpellChecker, WRITER_SERVICES)
+from tests.fakes_styles import (FAKE_STYLE_DEFAULTS, FAKE_STYLE_OWN,
+                                FAKE_STYLE_PARENTS, FakeStyle, FakeStyleFamilies,
+                                FakeStyleFamily)
+from tests.fakes_annotations import (FakeAnnotation, FakeGraphic, FakeImage,
+                                     FakeNoteCursor, FakeNoteParagraph,
+                                     FakeNoteText)
 
 install_uno_stubs()
 
-# Deliberately NOT subclassing the com.sun.star.* interfaces: a real UNO object
-# is <class 'pyuno'> and satisfies isinstance against none of them, so faking
-# documents that way would hide exactly the bug it should catch. Real code has
-# to ask supportsService().
-WRITER_SERVICES = frozenset({
-    "com.sun.star.text.TextDocument",
-    "com.sun.star.text.GenericTextDocument",
-})
-CALC_SERVICES = frozenset({"com.sun.star.sheet.SpreadsheetDocument"})
 
 
-class FakeLocale:
-    """com.sun.star.lang.Locale, as much of it as the bridge touches."""
 
-    def __init__(self, language="en", country="US"):
-        self.Language = language
-        self.Country = country
-        self.Variant = ""
-
-    def __eq__(self, other):
-        return (self.Language, self.Country) == (
-            getattr(other, "Language", None), getattr(other, "Country", None))
-
-    def __repr__(self):
-        return f"FakeLocale({self.Language}-{self.Country})"
-
-
-class FakeRange:
-    def __init__(self, model, start, end=None):
-        self.model = model
-        self.start = start
-        self.end = start if end is None else end
-
-    @property
-    def CharLocale(self):
-        return self.model.locale_at(self.start)
-
-    @CharLocale.setter
-    def CharLocale(self, value):
-        self.model.set_locale(self.start, self.end, value)
-
-    def getString(self):
-        return self.model.slice_text(self.start, self.end)
-
-    def getText(self):
-        # A range inside a cell answers with the cell, not with the text
-        # behind it — which is how the cell owning a range is found.
-        return getattr(self.model, "owner", None) or self.model
-
-    def setString(self, value):
-        self.model.replace_range(self.start, self.end, value)
-
-    def getStart(self):
-        return FakeRange(self.model, self.start)
-
-    def getEnd(self):
-        return FakeRange(self.model, self.end)
-
-
-class FakeTextCursor:
-    """A text cursor: `mark` stays put, `pos` moves, getString() spans both."""
-
-    def __init__(self, model, mark, pos):
-        self.model = model
-        self.mark = mark
-        self.pos = pos
-
-    @property
-    def CharLocale(self):
-        return self.model.locale_at(self.start)
-
-    @CharLocale.setter
-    def CharLocale(self, value):
-        self.model.set_locale(self.start, self.end, value)
-
-    @property
-    def start(self):
-        return min(self.mark, self.pos)
-
-    @property
-    def end(self):
-        return max(self.mark, self.pos)
-
-    def getString(self):
-        return self.model.slice_text(self.start, self.end)
-
-    def getText(self):
-        # A range inside a cell answers with the cell, not with the text
-        # behind it — which is how the cell owning a range is found.
-        return getattr(self.model, "owner", None) or self.model
-
-    def setString(self, value):
-        self.model.replace_range(self.start, self.end, value)
-
-    def getStart(self):
-        return FakeRange(self.model, self.start)
-
-    def getEnd(self):
-        return FakeRange(self.model, self.end)
-
-    def gotoStartOfParagraph(self, expand):
-        self.pos = (self.pos[0], 0)
-        if not expand:
-            self.mark = self.pos
-        return True
-
-    def gotoEndOfParagraph(self, expand):
-        self.pos = (self.pos[0], len(self.model.paragraphs[self.pos[0]]))
-        if not expand:
-            self.mark = self.pos
-        return True
-
-    def gotoRange(self, other, expand):
-        """Send the cursor to another range in the same text."""
-        if getattr(other, "model", None) is not self.model:
-            raise RuntimeError(
-                "End of content node doesn't have the proper start node")
-        self.pos = other.end if hasattr(other, "end") else other.start
-        if not expand:
-            self.mark = self.pos
-        return True
-
-    def goRight(self, count, expand):
-        """Move right by count characters, a paragraph break counting as one."""
-        paragraph, offset = self.pos
-        remaining = count
-        while remaining > 0:
-            room = len(self.model.paragraphs[paragraph]) - offset
-            if remaining <= room:
-                offset += remaining
-                remaining = 0
-            elif paragraph + 1 < len(self.model.paragraphs):
-                remaining -= room + 1
-                paragraph += 1
-                offset = 0
-            else:
-                offset = len(self.model.paragraphs[paragraph])
-                break
-        self.pos = (paragraph, offset)
-        if not expand:
-            self.mark = self.pos
-        return remaining == 0
-
-
-class FakeParagraph(FakeRange):
-    def __init__(self, model, index):
-        super().__init__(model, (index, 0), (index, len(model.paragraphs[index])))
-        self.index = index
-        if model.expose_outline_level:
-            self.OutlineLevel = model.outline_levels[index]
-
-    @property
-    def FillStyle(self):
-        return self.model.fills.get(self.index, {}).get("FillStyle")
-
-    @FillStyle.setter
-    def FillStyle(self, value):
-        self.model.fills.setdefault(self.index, {})["FillStyle"] = value
-
-    @property
-    def FillColor(self):
-        return self.model.fills.get(self.index, {}).get("FillColor")
-
-    @FillColor.setter
-    def FillColor(self, value):
-        self.model.fills.setdefault(self.index, {})["FillColor"] = value
-
-    def createEnumeration(self):
-        portions = []
-        offset = 0
-        for text, locale, properties, kind, field in self.model.portions_of(
-                self.index):
-            portions.append(FakeTextPortion(text, locale, properties, kind,
-                                            field, self.model, self.index,
-                                            offset))
-            offset += len(text)
-        return FakeEnumeration(portions)
-
-
-class FakeEnum:
-    """A pyuno enum: it stringifies as a wrapper, never as its own value.
-
-    The bridge has to read `.value`; a fake that handed back a plain string
-    hid a defect where every run was reported upright.
-    """
-
-    def __init__(self, value):
-        self.value = value
-
-    def __str__(self):
-        return f"<Enum instance com.sun.star.awt.FontSlant ('{self.value}')>"
-
-
-# The bytes a PNG filter writes in the fakes: a real, if tiny, PNG.
-FakeGraphicProviderPNG = bytes.fromhex(
-    "89504e470d0a1a0a0000000d494844520000000100000001080600000"
-    "01f15c4890000000a49444154789c630001000005000101"
-    "0d0a2db40000000049454e44ae426082")
-
-
-class FakeProperty:
-    """A com.sun.star.beans.PropertyValue as a plain pair."""
-
-    def __init__(self, name, value):
-        self.Name = name
-        self.Value = value
-
-
-class FakeSize:
-    """com.sun.star.awt.Size, in whatever unit the caller means."""
-
-    def __init__(self, width, height):
-        self.Width = width
-        self.Height = height
-
-
-class FakeGraphic:
-    """The XGraphic behind a picture: what it is, not where it sits."""
-
-    def __init__(self, mime_type="image/png", pixels=(8, 8), linked=False,
-                 origin=""):
-        self.MimeType = mime_type
-        self.SizePixel = FakeSize(*pixels)
-        self.Linked = linked
-        self.OriginURL = origin
-
-
-class FakeImage:
-    """com.sun.star.text.TextGraphicObject, as the bridge touches it.
-
-    A picture adds no characters to the paragraph it sits in and shows up in
-    the portions as an empty one of type "Frame" — which is how reading runs
-    came to skip it and report nothing at all.
-    """
-
-    def __init__(self, name, model, paragraph, offset, inline=True, title="",
-                 description="", width=800, height=600, graphic=None):
-        self.Name = name
-        self.Title = title
-        self.Description = description
-        self.AnchorType = FakeEnum("AS_CHARACTER" if inline else "AT_CHARACTER")
-        self.Width = width
-        self.Height = height
-        self.Graphic = graphic if graphic is not None else FakeGraphic()
-        self.AnchorPageNo = 0
-        self._model = model
-        self._anchor = FakeRange(model, (paragraph, offset))
 
-    def getAnchor(self):
-        return self._anchor
 
-    def getName(self):
-        return self.Name
 
-    def supportsService(self, name):
-        return name in ("com.sun.star.text.TextGraphicObject",
-                        "com.sun.star.text.TextContent",
-                        "com.sun.star.text.BaseFrame")
-
-
-class FakeNameAccess:
-    """com.sun.star.container.XNameAccess over things that carry a Name."""
-
-    def __init__(self, items):
-        self.items = list(items)
-
-    def getElementNames(self):
-        return tuple(item.Name for item in self.items)
-
-    def hasByName(self, name):
-        return any(item.Name == name for item in self.items)
-
-    def getByName(self, name):
-        for item in self.items:
-            if item.Name == name:
-                return item
-        raise RuntimeError(f"no element named {name}")
-
-
-class FakeDateTime:
-    """com.sun.star.util.DateTime, the struct an annotation's date is."""
-
-    def __init__(self, year=2026, month=9, day=8, hours=9, minutes=32,
-                 seconds=29):
-        self.Year = year
-        self.Month = month
-        self.Day = day
-        self.Hours = hours
-        self.Minutes = minutes
-        self.Seconds = seconds
-        self.NanoSeconds = 0
-        self.IsUTC = False
-
-
-_annotation_serial = itertools.count(1)
-
-
-class FakeNoteCursor:
-    """A cursor over a comment's own text, which is all the bridge needs."""
-
-    def __init__(self, note):
-        self._note = note
-
-    def gotoStart(self, expand):
-        return True
-
-    def gotoEnd(self, expand):
-        return True
-
-    @property
-    def CharLocale(self):
-        return self._note.locale
-
-    @CharLocale.setter
-    def CharLocale(self, value):
-        self._note.locale = value
-
-
-class FakeNoteParagraph:
-    def __init__(self, note):
-        self._note = note
-
-    def createEnumeration(self):
-        return FakeEnumeration([FakeTextPortion(self._note.Content,
-                                                self._note.locale)])
-
-
-class FakeNoteText:
-    """The annotation's TextRange: the note in the margin, spell checked."""
-
-    def __init__(self, note):
-        self._note = note
-
-    def createEnumeration(self):
-        return FakeEnumeration([FakeNoteParagraph(self._note)])
-
-    def createTextCursor(self):
-        return FakeNoteCursor(self._note)
-
-    @property
-    def CharLocale(self):
-        return self._note.locale
-
-
-class FakeAnnotation:
-    """com.sun.star.text.textfield.Annotation, as the bridge touches it.
-
-    Writer mints a unique Name per comment ("__Annotation__16442_3809372040"),
-    which is the only stable way to name one for editing or deleting: two
-    comments can share an author, a text and an anchor.
-    """
-
-    def __init__(self, author="", content="", resolved=False, initials="",
-                 parent="", named=True, language=None):
-        self.Author = author
-        self._content = content
-        self.Resolved = resolved
-        self.Initials = initials
-        self.ParentName = parent
-        # Writer names the comments made in its own interface; one created
-        # through the API comes back with an empty Name, so createInstance
-        # hands out an unnamed one and whoever inserts it must name it.
-        self.Name = (f"__Annotation__{next(_annotation_serial)}_fake"
-                     if named else "")
-        self.DateTimeValue = (FakeDateTime() if named
-                              else FakeDateTime(year=0, month=0, day=0, hours=0,
-                                                minutes=0, seconds=0))
-        # A comment typed in Writer carries its own language; one created
-        # through the API has none and follows the "Comment" paragraph style,
-        # which is the only place a language can be written at all.
-        self._own_locale = FakeLocale(*language.split("-")) if language else None
-        self.document = None
-
-    @property
-    def Content(self):
-        return self._content
-
-    @Content.setter
-    def Content(self, value):
-        """Writing the text does not change the note's language.
-
-        A note is marked with the "Comment" style's language when it is
-        created, and writing its text again afterwards leaves that language
-        alone — measured on a live LibreOffice, after a fake that restamped
-        on every write had made an unusable feature look like it worked.
-        """
-        if not value or value == self._content:
-            return
-        self._content = value
-        if self._own_locale is None:
-            self._own_locale = self._style_locale()
-
-    def _style_locale(self):
-        if self.document is None:
-            return FakeLocale("en", "US")
-        return self.document.StyleFamilies.getByName(
-            "ParagraphStyles").getByName("Comment").CharLocale
-
-    @property
-    def locale(self):
-        if self._own_locale is not None:
-            return self._own_locale
-        return self._style_locale()
-
-    @locale.setter
-    def locale(self, value):
-        self._own_locale = value
-        self._anchor = None
-        self.disposed = False
-
-    def supportsService(self, name):
-        return name == "com.sun.star.text.textfield.Annotation"
-
-    def getAnchor(self):
-        return self._anchor
-
-    @property
-    def TextRange(self):
-        return FakeNoteText(self)
-
-    def dispose(self):
-        self.disposed = True
-
-
-class FakeTextPortion:
-    """A run inside a paragraph, carrying its own language and formatting.
-
-    A comment is not text: Writer represents one as empty marker portions —
-    Annotation ... AnnotationEnd around the commented range, or a lone
-    Annotation for a comment anchored to a point. TextPortionType tells them
-    apart, and skipping them as "empty runs" is how a rewrite destroys them.
-    """
 
-    DEFAULTS = {"CharWeight": 100.0, "CharPosture": "NONE", "CharUnderline": 0,
-                "CharHeight": 12.0, "CharFontName": "Liberation Serif",
-                "CharColor": -1, "CharBackColor": -1, "HyperLinkURL": "",
-                "HyperLinkTarget": "", "CharStyleName": ""}
 
-    def __init__(self, text, locale, properties=None, kind="Text", field=None,
-                 model=None, paragraph=0, offset=0):
-        self._text = text
-        self.CharLocale = locale
-        self.TextPortionType = kind
-        self.TextField = field
-        self.model = model
-        self.paragraph = paragraph
-        self.offset = offset
-        for name, value in dict(self.DEFAULTS, **(properties or {})).items():
-            setattr(self, name, value)
 
-    def getString(self):
-        return self._text
 
-    def getStart(self):
-        return FakeRange(self.model, (self.paragraph, self.offset))
 
-    def getEnd(self):
-        return FakeRange(self.model,
-                         (self.paragraph, self.offset + len(self._text)))
 
 
-class FakeSpellChecker:
-    """Stands in for com.sun.star.linguistic2.SpellChecker.
 
-    Knows a fixed vocabulary per language, so a test can say what is a word
-    and what is not without shipping a dictionary.
-    """
 
-    def __init__(self, vocabulary=None, suggestions=None, locales=("ru-RU", "en-US")):
-        self.vocabulary = vocabulary or {}
-        self.suggestions = suggestions or {}
-        self.locales = set(locales)
-        self.checked = []
 
-    def hasLocale(self, locale):
-        return f"{locale.Language}-{locale.Country}" in self.locales
 
-    def isValid(self, word, locale, properties):
-        tag = f"{locale.Language}-{locale.Country}"
-        self.checked.append((word, tag))
-        return word in self.vocabulary.get(tag, ())
 
-    def spell(self, word, locale, properties):
-        if self.isValid(word, locale, properties):
-            return None
-        return FakeSpellAlternatives(self.suggestions.get(word, []))
 
 
-class FakeSpellAlternatives:
-    def __init__(self, alternatives):
-        self._alternatives = list(alternatives)
 
-    def getAlternatives(self):
-        return tuple(self._alternatives)
 
 
-def _char_property(name):
-    """A character property that records what was applied, for assertions."""
 
-    def getter(self):
-        return self.model.char_property(self.start, self.end, name)
 
-    def setter(self, value):
-        self.model.record_char_property(self.start, self.end, name, value)
 
-    return property(getter, setter)
 
 
-BORDER_PROPERTIES = ("TopBorder", "BottomBorder", "LeftBorder", "RightBorder",
-                     "TopBorderDistance", "BottomBorderDistance",
-                     "LeftBorderDistance", "RightBorderDistance")
 
 
-def _border_property(name):
-    """A paragraph border side, recorded per span for assertions."""
 
-    def getter(self):
-        return self.model.border_property(self.start, self.end, name)
 
-    def setter(self, value):
-        self.model.record_border_property(self.start, self.end, name, value)
 
-    return property(getter, setter)
 
 
-def _para_style_property():
-    def getter(self):
-        return self.model.styles[self.start[0]]
 
-    def setter(self, value):
-        self.model.set_style(self.start, self.end, value)
 
-    return property(getter, setter)
 
 
-def _insert_text_content(self, text_range, content, absorb):
-    """Anchoring an annotation to a range, as insertTextContent does."""
-    self.model.insert_comment(text_range.start, text_range.end, content)
+
+
+
+
+
+
+
+
+
+
+
 
 
 for _range_type in (FakeRange, FakeTextCursor):
@@ -568,731 +110,39 @@ for _range_type in (FakeRange, FakeTextCursor):
     setattr(_range_type, "ParaStyleName", _para_style_property())
 
 
-class FakeLineSpacing:
-    """com.sun.star.style.LineSpacing: a mode and a height."""
-
-    def __init__(self, mode=0, height=100):
-        self.Mode = mode
-        self.Height = height
-
-
-class FakeBorderLine:
-    """com.sun.star.table.BorderLine2, as a style reports one."""
-
-    def __init__(self, width=0, colour=0):
-        self.LineWidth = width
-        self.Color = colour
-        self.LineStyle = 0
-        self.InnerLineWidth = 0
-        self.OuterLineWidth = width
-        self.LineDistance = 0
-
-
-class FakeProperties:
-    """What getPropertySetInfo().getProperties() hands back."""
-
-    def __init__(self, names):
-        self._names = list(names)
-
-    def getProperties(self):
-        return tuple(FakeProperty(name, None) for name in self._names)
-
-
-# What a style gives when nothing in its chain says otherwise, and what the
-# built-in styles define themselves. The values for "Text body" are the ones
-# a live LibreOffice reports as DIRECT_VALUE, which are exactly its
-# definition in styles.xml — margins in 1/100 mm, weight where 150 is bold.
-FAKE_STYLE_DEFAULTS = {
-    "CharFontName": "Liberation Serif", "CharHeight": 12.0,
-    "CharWeight": 100.0, "CharPosture": FakeEnum("NONE"), "CharUnderline": 0,
-    "CharColor": -1, "CharBackColor": -1,
-    "CharLocale": None,                     # filled in per style below
-    "ParaAdjust": 0, "ParaLineSpacing": None,
-    "ParaTopMargin": 0, "ParaBottomMargin": 0, "ParaLeftMargin": 0,
-    "ParaRightMargin": 0, "ParaFirstLineIndent": 0,
-    "ParaContextMargin": False, "ParaKeepTogether": False, "ParaSplit": True,
-    "ParaOrphans": 0, "ParaWidows": 0, "ParaBackColor": -1,
-    "FillStyle": FakeEnum("NONE"), "FillColor": -1,
-    "TopBorder": None, "BottomBorder": None, "LeftBorder": None,
-    "RightBorder": None, "NumberingStyleName": "", "OutlineLevel": 0,
-    "PageDescName": "", "BreakType": FakeEnum("NONE"),
-    "FollowStyle": "", "LinkStyle": "", "Category": 0, "IsAutoUpdate": False,
-    "Hidden": False, "DisplayName": "",
-}
-
-FAKE_STYLE_PARENTS = {"Standard": "", "Text body": "Standard",
-                      "Heading": "Standard", "Heading 1": "Heading",
-                      "Heading 2": "Heading", "Heading 3": "Heading",
-                      "Comment": "Standard", "Preformatted Text": "Standard",
-                      "Quotations": "Standard", "List": "Standard",
-                      "Caption": "Standard"}
-
-FAKE_STYLE_OWN = {
-    "Text body": {"FollowStyle": "Text body", "LinkStyle": "",
-                  "ParaBottomMargin": 247, "ParaBottomMarginRelative": 100,
-                  "ParaContextMargin": False, "ParaTopMargin": 0,
-                  "ParaTopMarginRelative": 100,
-                  "ParaLineSpacing": FakeLineSpacing(0, 115)},
-    "Heading": {"FollowStyle": "Text body", "ParaTopMargin": 423,
-                "ParaBottomMargin": 212, "ParaKeepTogether": True},
-    "Heading 2": {"CharHeight": 14.0, "CharWeight": 150.0, "OutlineLevel": 2,
-                  "FollowStyle": "Text body"},
-    "Preformatted Text": {"CharFontName": "Liberation Mono",
-                          "ParaAdjust": 0},
-    "Comment": {"CharHeight": 10.0},
-}
-
-
-class FakeStyle:
-    """A style that inherits like a real one and says what it sets itself.
-
-    The bridge asks `getPropertyState` to tell a style's own definition from
-    what it inherits — DIRECT_VALUE against DEFAULT_VALUE — so a fake that
-    answered one flat dict of properties could not show the difference that
-    the whole tool rests on.
-    """
-
-    _INTERNALS = {"name", "Name", "_own", "_family", "_styles", "_display"}
-
-    def __init__(self, name, locale=None, family="ParagraphStyles",
-                 styles=None):
-        object.__setattr__(self, "name", name)
-        object.__setattr__(self, "Name", name)
-        object.__setattr__(self, "_family", family)
-        object.__setattr__(self, "_styles", styles)
-        own = dict(FAKE_STYLE_OWN.get(name, {}))
-        if locale is not None:
-            own["CharLocale"] = locale
-        object.__setattr__(self, "_own", own)
-
-    # --- inheritance ------------------------------------------------------
-    @property
-    def ParentStyle(self):
-        return FAKE_STYLE_PARENTS.get(self.name,
-                                      "" if self.name == "Standard"
-                                      else "Standard")
-
-    def _chain(self):
-        chain, name = [], self.ParentStyle
-        while name and len(chain) < 10:
-            chain.append(name)
-            name = FAKE_STYLE_PARENTS.get(name, "")
-        return chain
-
-    def _inherited(self, prop):
-        for name in self._chain():
-            own = FAKE_STYLE_OWN.get(name, {})
-            if prop in own:
-                return True, own[prop]
-        if prop in FAKE_STYLE_DEFAULTS:
-            value = FAKE_STYLE_DEFAULTS[prop]
-            if prop == "CharLocale" and value is None:
-                value = FakeLocale("en", "US")
-            if prop == "ParaLineSpacing" and value is None:
-                value = FakeLineSpacing(0, 100)
-            if prop.endswith("Border") and value is None:
-                value = FakeBorderLine(0, 0)
-            if prop == "DisplayName" and not value:
-                value = self.name
-            return True, value
-        return False, None
-
-    def __getattr__(self, prop):
-        own = object.__getattribute__(self, "_own")
-        if prop in own:
-            return own[prop]
-        known, value = self._inherited(prop)
-        if known:
-            return value
-        raise AttributeError(prop)
-
-    def __setattr__(self, prop, value):
-        if prop in self._INTERNALS or prop.startswith("_"):
-            object.__setattr__(self, prop, value)
-            return
-        self._own[prop] = value          # writing a property sets it here
-
-    # --- what the bridge asks about ---------------------------------------
-    def getPropertySetInfo(self):
-        names = set(FAKE_STYLE_DEFAULTS) | set(self._own)
-        for name in self._chain():
-            names |= set(FAKE_STYLE_OWN.get(name, {}))
-        return FakeProperties(sorted(names))
-
-    def getPropertyState(self, prop):
-        if prop in self._own:
-            return FakeEnum("DIRECT_VALUE")
-        known, _value = self._inherited(prop)
-        if not known:
-            raise RuntimeError(f"no property {prop}")
-        return FakeEnum("DEFAULT_VALUE")
-
-    def isUserDefined(self):
-        return self.name not in FAKE_STYLE_PARENTS
-
-    def isInUse(self):
-        return True
-
-
-class FakeStyleFamily:
-    def __init__(self, names):
-        self.names = list(names)
-        self.styles = {}
-
-    def hasByName(self, name):
-        return name in self.names
-
-    def getElementNames(self):
-        return tuple(self.names)
-
-    def getByName(self, name):
-        if name not in self.names:
-            raise RuntimeError(f"no style {name}")
-        return self.styles.setdefault(name, FakeStyle(name, styles=self))
-
-
-class FakeStyleFamilies:
-    """doc.StyleFamilies, with the families a Writer document has."""
-
-    def __init__(self, families=None):
-        self._built = {}
-        self.families = families or {
-            "ParagraphStyles": ["Standard", "Heading", "Text body",
-                                "Heading 1", "Heading 2", "Heading 3",
-                                "Preformatted Text", "Quotations", "Comment",
-                                "List", "Caption", "Table Contents",
-                                "Table Heading"],
-            "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
-        }
-
-    def getElementNames(self):
-        return tuple(self.families)
-
-    def hasByName(self, name):
-        return name in self.families
-
-    def getByName(self, name):
-        if name not in self.families:
-            raise RuntimeError(f"no style family {name}")
-        if name not in self._built:
-            self._built[name] = FakeStyleFamily(self.families[name])
-        return self._built[name]
-
-
-class FakeCount:
-    def __init__(self, count):
-        self._count = count
-
-    def getCount(self):
-        return self._count
-
-
-class FakeTableBorder:
-    """com.sun.star.table.TableBorder2: the lines, and whether each counts."""
-
-    def __init__(self):
-        for field in ("TopLine", "BottomLine", "LeftLine", "RightLine",
-                      "HorizontalLine", "VerticalLine"):
-            setattr(self, field, FakeBorderLine(18, 0))
-        for field in ("IsTopLineValid", "IsBottomLineValid", "IsLeftLineValid",
-                      "IsRightLineValid", "IsHorizontalLineValid",
-                      "IsVerticalLineValid", "IsDistanceValid"):
-            setattr(self, field, False)
-        self.Distance = 97
-
-
-class FakeSeparator:
-    def __init__(self, position):
-        self.Position = position
-        self.IsVisible = True
-
-
-class FakeCellCursor:
-    """A cursor over a cell's text, which takes character formatting."""
-
-    def __init__(self, cell):
-        self._cell = cell
-
-    def gotoStart(self, expand):
-        return True
-
-    def gotoEnd(self, expand):
-        return True
-
-    def __setattr__(self, name, value):
-        if name.startswith("_"):
-            object.__setattr__(self, name, value)
-            return
-        object.__setattr__(self, name, value)
-        self._cell.formatting[name] = value
-
-
-def _cell_text(text):
-    """The text of a cell: its paragraphs, styled as Writer styles them."""
-    lines = text.split("\n") if text else [""]
-    return FakeText(lines, styles=["Table Contents"] * len(lines))
-
-
-class FakeCell:
-    """A cell is its own XText, which is why a caret in one has no paragraph.
-
-    A cell's background is BackColor with BackTransparent off — it has no
-    FillStyle and no FillColor at all, where a paragraph has the opposite
-    problem. Measured, and the reason the two are written differently.
-    """
-
-    def __init__(self, name, text=""):
-        self.CellName = name
-        self.BackColor = -1
-        self.BackTransparent = True
-        self.VertOrient = 0
-        self.formatting = {}
-        self.model = _cell_text(text)
-        self.model.owner = self
-
-    # --- a cell is a text of its own, which is the whole point -----------
-    def getString(self):
-        return "\n".join(self.model.paragraphs)
-
-    def setString(self, value):
-        self.model = _cell_text(value)
-        self.model.owner = self
-
-    def createEnumeration(self):
-        return self.model.createEnumeration()
-
-    def createTextCursorByRange(self, text_range):
-        return self.model.createTextCursorByRange(text_range)
-
-    def getStart(self):
-        return FakeRange(self.model, (0, 0))
-
-    def getEnd(self):
-        last = len(self.model.paragraphs) - 1
-        return FakeRange(self.model, (last, len(self.model.paragraphs[last])))
-
-    def compareRegionStarts(self, first, second):
-        """Throws for a range of another cell, which is how they are told apart."""
-        return self.model.compareRegionStarts(first, second)
-
-    def supportsService(self, name):
-        return name in ("com.sun.star.text.CellProperties",
-                        "com.sun.star.text.Text")
-
-    def createTextCursor(self):
-        return FakeCellCursor(self)
-
-    def insertTextContent(self, text_range, content, absorb):
-        """A comment can be anchored in a cell like anywhere else."""
-        return self.model.insertTextContent(text_range, content, absorb)
-
-    def createInstance(self, service):
-        return self.model.createInstance(service) \
-            if hasattr(self.model, "createInstance") else None
-
-    @property
-    def styles(self):
-        return list(self.model.styles)
-
-
-
-class FakeTextTable:
-    """A table in the body enumeration: no getStart(), so the walk must skip it.
-
-    Also a real table when a test gives it cells: named A1, B1, …, with rows
-    and columns it can count, and column separators on the 10000 scale that
-    Writer measures shares on — its Width is on a scale of its own and is not
-    translated, having once invented a table 1.16 metres wide.
-    """
-
-    def __init__(self, name="Table1", cells=None, rows=None, columns=None,
-                 header_rows=0, merged_away=(), after_paragraph=None):
-        self._anchor = None
-        self._separators = None
-        self._border = FakeTableBorder()
-        self.after_paragraph = after_paragraph
-        self.Name = name
-        self.HeaderRowCount = header_rows
-        self.RepeatHeadline = bool(header_rows)
-        self.Width = 115596
-        self.RelativeWidth = 0
-        self.IsWidthRelative = False
-        self.TableColumnRelativeSum = 10000
-        grid = cells or []
-        self._rows = rows if rows is not None else len(grid)
-        self._columns = columns if columns is not None else (
-            max((len(row) for row in grid), default=0))
-        self._cells = {}
-        for row_index, row in enumerate(grid):
-            for column_index, text in enumerate(row):
-                name_of = f"{chr(ord('A') + column_index)}{row_index + 1}"
-                if name_of in merged_away:
-                    continue
-                self._cells[name_of] = FakeCell(name_of, text)
-
-    def getName(self):
-        return self.Name
-
-    def supportsService(self, name):
-        return name in ("com.sun.star.text.TextTable",
-                        "com.sun.star.text.TextContent")
-
-    def getAnchor(self):
-        """Where the table sits in the body, as a range of it."""
-        if self._anchor is None:
-            raise RuntimeError("this table is not in any text")
-        return self._anchor
-
-    def getRows(self):
-        return FakeCount(self._rows)
-
-    def getColumns(self):
-        return FakeCount(self._columns)
-
-    def getCellNames(self):
-        return tuple(self._cells)
-
-    def getCellByName(self, name):
-        if name not in self._cells:
-            raise RuntimeError(f"no cell {name}")
-        return self._cells[name]
-
-    @property
-    def TableColumnSeparators(self):
-        if self._separators is None:
-            if self._columns < 2:
-                return ()
-            share = self.TableColumnRelativeSum // self._columns
-            self._separators = [FakeSeparator(share * (index + 1))
-                                for index in range(self._columns - 1)]
-        return tuple(self._separators)
-
-    @TableColumnSeparators.setter
-    def TableColumnSeparators(self, separators):
-        self._separators = list(separators)
-
-    @property
-    def TableBorder2(self):
-        """The grid, as a struct whose Is*Valid flags decide what sticks."""
-        return self._border
-
-    @TableBorder2.setter
-    def TableBorder2(self, border):
-        self._border = border
-
-
-class FakeEnumeration:
-    def __init__(self, items):
-        self._items = list(items)
-
-    def hasMoreElements(self):
-        return bool(self._items)
-
-    def nextElement(self):
-        return self._items.pop(0)
-
-
-class FakeText:
-    """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
-
-    def insertTextContent(self, text_range, content, absorb):
-        self.insert_comment(text_range.start, text_range.end, content)
-
-    def removeTextContent(self, content):
-        """Dropping a comment drops its markers, never the text under them."""
-        removed = False
-        for index, portions in list(self.portions.items()):
-            kept = []
-            depth = None
-            open_notes = []
-            for portion in portions:
-                kind = portion.get("kind", "Text") if isinstance(portion, dict) \
-                    else "Text"
-                if kind == "Annotation":
-                    note = portion.get("field")
-                    open_notes.append(note)
-                    if note is content:
-                        depth = len(open_notes)
-                        removed = True
-                        continue
-                elif kind == "AnnotationEnd":
-                    closing = len(open_notes)
-                    if open_notes:
-                        open_notes.pop()
-                    if depth == closing:
-                        depth = None
-                        continue
-                kept.append(portion)
-            self.portions[index] = kept
-        if not removed:
-            raise RuntimeError("that text content is not in this text")
-
-    def __init__(self, paragraphs, enumeration_items=None, styles=None,
-                 outline_levels=None, expose_outline_level=True,
-                 default_locale=None, portions=None):
-        self.paragraphs = list(paragraphs)
-        self.styles = list(styles) if styles else ["Standard"] * len(self.paragraphs)
-        self.outline_levels = (list(outline_levels) if outline_levels
-                               else [0] * len(self.paragraphs))
-        self.expose_outline_level = expose_outline_level
-        self.default_locale = default_locale or ("en", "US")
-        self.char_formatting = []
-        self.border_formatting = []
-        self.created_comments = []
-        self.fills = {}
-        self.portions = dict(portions) if portions else {}
-        self.enumeration_items = (
-            list(range(len(self.paragraphs)))
-            if enumeration_items is None
-            else list(enumeration_items)
-        )
-
-    def insert_comment(self, start, end, note):
-        """What insertTextContent(range, annotation, True) does to the runs."""
-        self.created_comments.append({"span": (start, end), "note": note})
-        (start_para, start_offset), (_, end_offset) = sorted([start, end])
-        body = self.paragraphs[start_para]
-        self.portions[start_para] = [
-            {"text": body[:start_offset]},
-            {"kind": "Annotation", "text": "", "field": note},
-            {"text": body[start_offset:end_offset]},
-            {"kind": "AnnotationEnd", "text": ""},
-            {"text": body[end_offset:]},
-        ]
-
-    def record_border_property(self, start, end, name, value):
-        self.border_formatting.append({"span": (start, end), name: value})
-
-    def border_property(self, start, end, name):
-        for applied in reversed(self.border_formatting):
-            if applied["span"] == (start, end) and name in applied:
-                return applied[name]
-        return None
-
-    def record_char_property(self, start, end, name, value):
-        """Remember a character property applied to a span."""
-        self.char_formatting.append({"span": (start, end), name: value})
-
-    def char_property(self, start, end, name):
-        """The last value applied to this span for a property, else None."""
-        for applied in reversed(self.char_formatting):
-            if applied["span"] == (start, end) and name in applied:
-                return applied[name]
-        return None
-
-    def set_style(self, start, end, style):
-        (start_para, _), (end_para, _) = sorted([start, end])
-        for paragraph in range(start_para, end_para + 1):
-            self.styles[paragraph] = style
-
-    def locale_at(self, position):
-        """The locale of the portion holding a position."""
-        paragraph, offset = position
-        for text, locale, _, _kind, _field in self.portions_of(paragraph):
-            if offset < len(text) or (offset == len(text) and len(text)):
-                return locale
-            offset -= len(text)
-        return FakeLocale(*self.default_locale)
-
-    def set_locale(self, start, end, locale):
-        """
-        Mark exactly the span with one locale, splitting runs at its edges
-
-        Writer marks characters, not paragraphs, so a fake that marked whole
-        paragraphs would hide the difference between tagging a phrase and
-        tagging everything around it.
-        """
-        (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
-        for paragraph in range(start_para, end_para + 1):
-            body = self.paragraphs[paragraph]
-            from_offset = start_offset if paragraph == start_para else 0
-            to_offset = end_offset if paragraph == end_para else len(body)
-            rebuilt, position = [], 0
-            for text, existing, properties, kind, field in \
-                    self.portions_of(paragraph):
-                if kind != "Text":
-                    # A comment marker is not text: marking a language must
-                    # not sweep it away, or a fake would hide a rewrite that
-                    # keeps a comment.
-                    rebuilt.append({"kind": kind, "text": "", "field": field})
-                    continue
-                for index, character in enumerate(text, start=position):
-                    marked = from_offset <= index < to_offset
-                    chosen = locale if marked else existing
-                    previous = rebuilt[-1] if rebuilt else None
-                    if previous is not None and previous.get("kind") == "Text" \
-                            and previous["locale"] is chosen \
-                            and previous["properties"] == properties:
-                        previous["text"] += character
-                    else:
-                        rebuilt.append({"kind": "Text", "text": character,
-                                        "locale": chosen,
-                                        "properties": properties})
-                position += len(text)
-            self.portions[paragraph] = [
-                entry if entry["kind"] != "Text"
-                else {"text": entry["text"], "locale": entry["locale"],
-                      **entry["properties"]}
-                for entry in rebuilt]
-
-    def portions_of(self, paragraph):
-        """
-        The runs of a paragraph, one run unless told otherwise
-
-        A run is either a (text, locale) pair or a dict with text, locale and
-        whatever character properties the test cares about.
-        """
-        declared = self.portions.get(paragraph)
-        if declared is None:
-            return [(self.paragraphs[paragraph],
-                     FakeLocale(*self.default_locale), {}, "Text", None)]
-        normalised = []
-        for run in declared:
-            if isinstance(run, dict):
-                properties = {k: v for k, v in run.items()
-                              if k not in ("text", "locale", "kind", "field")}
-                normalised.append((run.get("text", ""),
-                                   run.get("locale",
-                                           FakeLocale(*self.default_locale)),
-                                   properties,
-                                   run.get("kind", "Text"),
-                                   run.get("field")))
-            else:
-                text, locale = run
-                normalised.append((text, locale, {}, "Text", None))
-        return normalised
-
-    def _own(self, text_range):
-        """Writer throws when a range from another text is passed in.
-
-        The range answers getText() with the cell when it lives in one, so
-        ownership is asked of the model behind it rather than of that.
-        """
-        if getattr(text_range, "model", None) is not self:
-            raise RuntimeError(
-                "End of content node doesn't have the proper start node")
-
-    def slice_text(self, start, end):
-        (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
-        if start_para == end_para:
-            return self.paragraphs[start_para][start_offset:end_offset]
-        parts = [self.paragraphs[start_para][start_offset:]]
-        parts.extend(self.paragraphs[p] for p in range(start_para + 1, end_para))
-        parts.append(self.paragraphs[end_para][:end_offset])
-        return "\n".join(parts)
-
-    def getString(self):
-        return "\n".join(self.paragraphs)
-
-    def replace_range(self, start, end, value):
-        """
-        Rewrite the span, joining paragraphs when the span crosses a break
-
-        Declared portions for the paragraphs touched are dropped: they
-        described the old text, and keeping them would let a test read back
-        runs that no longer exist. What the new text looks like is a question
-        only a live LibreOffice answers, so the read-after-write round trip is
-        checked in tests/live/writer_tools_check.py instead.
-
-        Comment markers *outside* the replaced span survive, as they do in
-        Writer: that is what lets a rewrite leave a comment on text it did
-        not change. Markers inside the span are destroyed, which is what
-        makes rewriting commented text lose the comment.
-        """
-        (first, _), (last, _) = sorted([start, end])
-        for paragraph in range(first, last + 1):
-            declared = self.portions.pop(paragraph, None)
-            if declared is None or paragraph != first or first != last:
-                continue
-            kept = self._markers_outside(declared, start[1], end[1], value)
-            if kept is not None:
-                self.portions[paragraph] = kept
-        (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
-        if start_para == end_para:
-            paragraph = self.paragraphs[start_para]
-            self.paragraphs[start_para] = (
-                paragraph[:start_offset] + value + paragraph[end_offset:])
-            return
-        head = self.paragraphs[start_para][:start_offset]
-        tail = self.paragraphs[end_para][end_offset:]
-        self.paragraphs[start_para:end_para + 1] = [head + value + tail]
-        del self.styles[start_para + 1:end_para + 1]
-        del self.outline_levels[start_para + 1:end_para + 1]
-        self.enumeration_items = list(range(len(self.paragraphs)))
-
-    def _markers_outside(self, declared, start_offset, end_offset, value):
-        """The paragraph's portions after a span was replaced, markers kept.
-
-        Returns None when the span cannot be described this way, so the
-        caller falls back to dropping the portions.
-        """
-        start_offset, end_offset = sorted([start_offset, end_offset])
-        rebuilt = []
-        offset = 0
-        wrote = False
-        for portion in declared:
-            if not isinstance(portion, dict):
-                return None
-            kind = portion.get("kind", "Text")
-            text = portion.get("text", "")
-            if kind != "Text":
-                # Measured on a live LibreOffice: an AnnotationEnd marker is
-                # destroyed by a replacement that reaches either of its
-                # boundaries, while an opening Annotation only dies when it
-                # is strictly inside. That is why a rewrite of the stretch
-                # right after a comment took the comment with it.
-                if kind == "AnnotationEnd":
-                    doomed = start_offset <= offset <= end_offset
-                else:
-                    doomed = start_offset < offset < end_offset
-                if doomed:
-                    continue
-                rebuilt.append(portion)
-                continue
-            head = text[:max(0, min(len(text), start_offset - offset))]
-            tail = text[max(0, min(len(text), end_offset - offset)):]
-            if head:
-                rebuilt.append(dict(portion, text=head))
-            if not wrote and offset + len(text) >= start_offset:
-                rebuilt.append({"text": value})
-                wrote = True
-            if tail:
-                rebuilt.append(dict(portion, text=tail))
-            offset += len(text)
-        if not wrote:
-            rebuilt.append({"text": value})
-        return [portion for portion in rebuilt
-                if portion.get("kind", "Text") != "Text" or portion.get("text")]
-
-    def compareRegionStarts(self, first, second):
-        """1 when `first` starts before `second`, 0 equal, -1 after."""
-        self._own(first)
-        self._own(second)
-        left, right = first.start, second.start
-        return 1 if left < right else (0 if left == right else -1)
-
-    def createTextCursorByRange(self, text_range):
-        self._own(text_range)
-        return FakeTextCursor(self, text_range.start, text_range.start)
-
-    def createEnumeration(self):
-        items = []
-        for item in self.enumeration_items:
-            if item == "table":
-                items.append(FakeTextTable())
-            elif isinstance(item, FakeTextTable):
-                items.append(item)
-            else:
-                items.append(FakeParagraph(self, item))
-        return FakeEnumeration(items)
-
-    def compareRegionStarts(self, range1, range2):
-        """0 when both start at the same spot; the sign convention is unused."""
-        self._own(range1)
-        self._own(range2)
-        if range1.start == range2.start:
-            return 0
-        return 1 if range1.start < range2.start else -1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 class FakeSelection:
@@ -1583,14 +433,6 @@ class FakeUnknownDoc(FakeDoc):
     Title = "fake.odb"
 
 
-class FakeComponents:
-    """What Desktop.getComponents() hands back: an enumeration of documents."""
-
-    def __init__(self, documents):
-        self._documents = list(documents)
-
-    def createEnumeration(self):
-        return FakeEnumeration(self._documents)
 
 
 class FakeModalDialog:
