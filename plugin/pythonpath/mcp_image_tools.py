@@ -15,7 +15,7 @@ class ImageTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which pictures: omit for the whole document, {\"heading\": N} for a section, {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for a range, or {\"selection\": true} for what is selected",
+                        "description": "Which pictures: omit for the whole document, {\"heading\": N} for a section, {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"through\": M} for a block, {\"paragraph\": N, \"offset\": K, \"length\": L} for a range, or {\"selection\": true} — body text, not a table cell",
                         "properties": {
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
@@ -76,7 +76,7 @@ class ImageTools:
                     },
                     "address": {
                         "type": "object",
-                        "description": "Render the page this text is on instead: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "description": "Render the page this text is on instead: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},

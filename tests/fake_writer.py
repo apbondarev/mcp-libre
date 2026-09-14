@@ -220,6 +220,12 @@ class FakeController:
         self._view_cursor = view_cursor
         self._selection = selection
 
+    def select(self, text_range):
+        """Selecting is what a reader does with the mouse: the view moves."""
+        self._selection = FakeSelection(text_range.model,
+                                        [(text_range.start, text_range.end)])
+        return True
+
     def getViewCursor(self):
         return self._view_cursor
 

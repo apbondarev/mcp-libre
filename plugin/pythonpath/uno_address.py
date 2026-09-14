@@ -63,6 +63,9 @@ class AddressMixin:
             raise AddressError("address needs 'paragraph', 'cell' or "
                                "'selection'")
 
+        if address.get("through") is not None:
+            return self._resolve_block(doc, address)
+
         paragraph = self._paragraph_at(doc.getText(), address["paragraph"])
         if paragraph is None:
             raise AddressError(f"no body paragraph {address['paragraph']}")
@@ -90,6 +93,41 @@ class AddressMixin:
             if length:
                 cursor.gotoRange(self._position_in(paragraph, offset + length),
                                  True)
+        return cursor
+
+    def _resolve_block(self, doc: Any, address: Dict[str, Any]) -> Any:
+        """
+        Turn {"paragraph": N, "through": M} into a range over whole paragraphs
+
+        An address of one paragraph could never cover a block, so replacing
+        fifteen paragraphs with a table meant setting a selection by hand in
+        UNO — there was no other way to say "these paragraphs". This says it:
+        from the start of the first to the end of the last, the paragraphs
+        between them included.
+        """
+        first, last = address["paragraph"], address["through"]
+        for label, value in (("paragraph", first), ("through", last)):
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or value < 0:
+                raise AddressError(f"{label} must be a whole number from 0, "
+                                   f"got {value!r}")
+        if last < first:
+            raise AddressError(f"through ({last}) comes before paragraph "
+                               f"({first})")
+        if address.get("offset") or address.get("length") is not None:
+            raise AddressError("a block of paragraphs takes no offset or "
+                               "length — it covers them whole")
+
+        body = doc.getText()
+        start = self._paragraph_at(body, first)
+        end = self._paragraph_at(body, last)
+        if start is None:
+            raise AddressError(f"no body paragraph {first}")
+        if end is None:
+            raise AddressError(f"no body paragraph {last}")
+
+        cursor = body.createTextCursorByRange(start.getStart())
+        cursor.gotoRange(end.getEnd(), True)
         return cursor
 
     def _resolve_cell_address(self, doc: Any, address: Dict[str, Any]) -> Any:
@@ -200,8 +238,15 @@ class AddressMixin:
         paragraph_cursor.gotoStartOfParagraph(False)
         paragraph_cursor.gotoEndOfParagraph(True)
 
-        index, chars_before = self._locate_paragraph(
-            doc.getText(), paragraph_cursor.getStart())
+        # A range in a cell is nowhere in the body, and looking for it there
+        # walks the whole document to find nothing — measured at half a
+        # second on five hundred paragraphs, paid for every hit in a table.
+        in_a_cell = _supports(owner, CELL_SERVICE)
+        if in_a_cell:
+            index, chars_before = None, None
+        else:
+            index, chars_before = self._locate_paragraph(
+                doc.getText(), paragraph_cursor.getStart())
 
         address = {
             "paragraph": index,

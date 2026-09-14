@@ -94,6 +94,15 @@ def build_document(desktop):
     return doc
 
 
+def _refused(bridge, doc, address):
+    """True when an address is refused rather than resolved."""
+    try:
+        bridge._resolve_address(doc, address)
+        return False
+    except Exception:
+        return True
+
+
 soffice = subprocess.Popen([
     "soffice", f"-env:UserInstallation=file://{PROFILE}",
     "--headless", "--norestore", "--nologo", "--nodefault",
@@ -1314,6 +1323,67 @@ try:
     check("the caret is back out of the table",
           bridge.get_cursor_info(doc=doc).get("in_table"), None)
 
+    print("\n--- a comment on what is selected ---")
+    body = doc.getText()
+    mark = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    mark.gotoEndOfParagraph(True)
+    doc.getCurrentController().select(mark)
+    commented = bridge.add_comment({"selection": True}, "по выделению", doc=doc)
+    print("   ", commented)
+    check("a comment goes on the selection", commented.get("success"), True)
+    check("anchored to what was selected", commented.get("anchor_text"),
+          mark.getString())
+    bridge.delete_comment(commented["id"], doc=doc)
+
+    print("\n--- a block of paragraphs is one address ---")
+    body = doc.getText()
+    tail = body.createTextCursorByRange(body.getEnd())
+    for line in ("БЛОК-НАЧАЛО", "{", "  hero {", "    name", "  }", "}",
+                 "БЛОК-КОНЕЦ"):
+        body.insertControlCharacter(tail, PARAGRAPH_BREAK, False)
+        body.insertString(tail, line, False)
+    total = bridge.read_paragraphs(start=0, count=200, doc=doc)["count"]
+    first = total - 7
+    last = total - 1
+
+    span = bridge._resolve_address(doc, {"paragraph": first, "through": last})
+    print("   the block reads:", repr(span.getString()[:40]), "…",
+          len(span.getString()), "chars")
+    check("a block resolves to all of it",
+          span.getString().splitlines()[0], "БЛОК-НАЧАЛО")
+    check("through the last of them",
+          span.getString().splitlines()[-1], "БЛОК-КОНЕЦ")
+    check("a block that runs backwards is refused",
+          _refused(bridge, doc, {"paragraph": last, "through": first}), True)
+    check("and one that takes an offset too",
+          _refused(bridge, doc, {"paragraph": first, "through": last,
+                                 "offset": 2}), True)
+
+    selected = bridge.select({"paragraph": first, "through": last}, doc=doc)
+    print("   ", {k: v for k, v in selected.items() if k != "selected"})
+    check("selecting it works", selected.get("success"), True)
+    check("over all its paragraphs", selected.get("paragraphs"),
+          list(range(first, last + 1)))
+    check("and the document's selection really is that",
+          bridge._resolve_address(doc, {"selection": True}).getString()
+          == span.getString(), True)
+
+    made = bridge.create_table({"paragraph": first, "through": last}, rows=2,
+                               columns=2,
+                               cells=[["Operation", "Response"],
+                                      ["{ hero }", '{ "R2-D2" }']],
+                               name="ИзБлока", replace=True, doc=doc)
+    print("   ", made)
+    check("a table replaces the whole block", made.get("success"), True)
+    check("saying which paragraphs went",
+          made.get("paragraphs_replaced"), list(range(first, last + 1)))
+    check("and they did",
+          bridge.read_paragraphs(start=0, count=200, doc=doc)["count"],
+          total - 7)
+    check("while the table stands there",
+          bridge.read_table("ИзБлока", cell="A1", doc=doc)["text"], "Operation")
+    bridge.delete_table("ИзБлока", doc=doc)
+
     print("\n--- making a table, and taking one away ---")
     body = doc.getText()
     before_tables = len(doc.getTextTables().getElementNames())
@@ -1564,6 +1634,85 @@ try:
     check("one undo step per formatting call",
           bridge.format_table(table_name, background_color="#FAFAFA",
                               doc=doc).get("success"), True)
+
+    print("\n--- a hit that brings its block along ---")
+    # Paragraphs of this section's own: the ones the document started with
+    # have been rewritten by the checks above, and borrowing them is how a
+    # section comes to depend on what ran before it.
+    marker = body.createTextCursorByRange(body.getEnd())
+    for line in ("МАЯК-ПОИСКА", "первый после", "второй после"):
+        body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+        body.insertString(marker, line, False)
+
+    found = bridge.find_text("МАЯК-ПОИСКА", paragraphs_after=2,
+                             paragraphs_before=1, doc=doc)
+    print("   ", found["hits"][0] if found["hits"] else found)
+    check("the hit is there", found.get("total_hits"), 1)
+    first = found["hits"][0]
+    at = first["address"]["paragraph"]
+    check("with the paragraphs after it",
+          [entry["text"] for entry in first["after"]],
+          ["первый после", "второй после"])
+    check("and the one before",
+          [entry["paragraph"] for entry in first["before"]], [at - 1])
+    check("each with its style",
+          all(entry["style"] for entry in first["after"]), True)
+    check("asking for too much neighbourhood is refused",
+          bridge.find_text("МАЯК-ПОИСКА", paragraphs_after=500,
+                           doc=doc).get("success"), False)
+    check("and without asking, none come",
+          "after" in bridge.find_text("МАЯК-ПОИСКА", doc=doc)["hits"][0],
+          False)
+
+    in_cell = bridge.find_text("Operation", paragraphs_after=2, doc=doc)
+    cell_hits = [hit for hit in in_cell["hits"]
+                 if (hit["address"] or {}).get("cell")]
+    if cell_hits:
+        check("a hit inside a cell has no body neighbours",
+              cell_hits[0]["after"], None)
+        check("but still carries its cell address",
+              bool(cell_hits[0]["address"]["table"]), True)
+
+    for _ in range(3):                      # take the marker paragraphs away
+        last = bridge._paragraph_at(body, bridge.read_paragraphs(
+            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+        body.removeTextContent(last)
+
+    print("\n--- colouring many pieces in one call ---")
+    table.getCellByName("A2").setString("{\n  hero {\n    name\n  }\n}")
+    whole = bridge.read_table(table_name, cell="A2", doc=doc)["text"]
+    spans = []
+    for piece, colour in (("hero", "#0B7285"), ("name", "#0B7285")):
+        at = whole.find(piece)
+        if at >= 0:
+            spans.append({"address": {"table": table_name, "cell": "A2",
+                                      "offset": at, "length": len(piece)},
+                          "color": colour})
+    for position, character in enumerate(whole):
+        if character in "{}":
+            spans.append({"address": {"table": table_name, "cell": "A2",
+                                      "offset": position, "length": 1},
+                          "color": "#868E96"})
+    painted = bridge.format_ranges(spans, doc=doc)
+    print("   ", painted)
+    check("all of them in one call", painted.get("ranges"), len(spans))
+    coloured = [run for run in bridge.read_runs({"table": table_name,
+                                                 "cell": "A2"},
+                                                doc=doc)["runs"]
+                if run["color"]]
+    check("and the colours are on the text",
+          sorted({run["color"] for run in coloured}), ["#0B7285", "#868E96"])
+
+    check("a bad address stops the lot before anything is written",
+          bridge.format_ranges([
+              {"address": {"paragraph": 1, "offset": 0, "length": 1},
+               "color": "#111111"},
+              {"address": {"paragraph": 99999}, "color": "#222222"}],
+              doc=doc).get("success"), False)
+    check("and an entry that asks for nothing is refused",
+          bridge.format_ranges([{"address": {"paragraph": 1, "offset": 0,
+                                             "length": 1}}],
+                               doc=doc).get("success"), False)
 
     print("\n--- reading a table's look, instead of unzipping the file ---")
     bridge.format_table(table_name, border=True, border_color="#B0B0B0",

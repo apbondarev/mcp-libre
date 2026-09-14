@@ -17,9 +17,10 @@ class TableTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where it goes: {\"paragraph\": N} puts the table before that paragraph, {\"selection\": true} before the selected text. Omit for the selection",
+                        "description": "Where it goes: {\"paragraph\": N} puts the table before that paragraph, {\"paragraph\": N, \"through\": M} covers a whole block of paragraphs (which is what replace=true then clears away), {\"selection\": true} before the selected text. Omit for the selection",
                         "properties": {
                             "paragraph": {"type": "integer"},
+                            "through": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
                             "selection": {"type": "boolean"}

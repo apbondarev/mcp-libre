@@ -809,6 +809,7 @@ class TablesMixin:
                 changed.append("repeat heading")
 
             touched = 0
+            in_header_touched = 0
             for cell_name in wanted_cells:
                 cell = table.getCellByName(cell_name)
                 row = _cell_position(cell_name)[0]
@@ -832,7 +833,18 @@ class TablesMixin:
                     cursor.gotoStart(False)
                     cursor.gotoEnd(True)
                     self._apply_character_formatting(cursor, wanted_character)
-                touched += 1
+                # "Touched" means changed, not considered: a header-only
+                # setting reported every cell as touched, which read as though
+                # the body had been made bold too.
+                if fill is not None or paragraph_style is not None \
+                        or character:
+                    touched += 1
+                elif in_header and (header_fill is not None
+                                    or header_bold is not None):
+                    touched += 1
+                if in_header and (header_fill is not None
+                                  or header_bold is not None):
+                    in_header_touched += 1
 
             if fill is not None:
                 changed.append("background")
@@ -844,6 +856,7 @@ class TablesMixin:
                 changed.append("character formatting")
 
             return {"table": name, "cells_touched": touched,
+                    "header_cells_touched": in_header_touched,
                     "cells": wanted_cells if cells is not None else "all",
                     "changed": changed}
 

@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from tests.fake_writer import FakeCalcDoc, writer_doc
+from tests.fake_writer import (FakeCalcDoc, FakeDesktop, writer_doc)
 from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
@@ -291,3 +291,80 @@ def test_find_text_tool_is_registered_and_dispatches():
     result = asyncio.run(server.execute_tool("find_text_live", {"query": "delta"}))
 
     assert result["hits"][0]["matched"] == "delta"
+
+
+# --- a hit, with the block around it -----------------------------------------
+# Finding "Operation" is only half the question; what follows it is the other
+# half, and fetching that separately is a second call per hit. Locating the
+# hits themselves used to walk the document from the start once per hit —
+# 0.85s each over a socket, ten seconds for twenty hits — so they are now
+# placed in one sweep.
+
+def test_a_hit_can_bring_the_paragraphs_after_it(bridge):
+    doc = writer_doc(["Введение", "Operation", "{", "  hero", "}", "Response"],
+                     caret=(0, 0),
+                     styles=["Text body", "Text body", "Preformatted Text",
+                             "Preformatted Text", "Preformatted Text",
+                             "Text body"])
+
+    found = bridge.find_text("Operation", paragraphs_after=3, doc=doc)
+
+    hit, = found["hits"]
+    assert hit["address"]["paragraph"] == 1
+    assert [entry["paragraph"] for entry in hit["after"]] == [2, 3, 4]
+    assert [entry["text"] for entry in hit["after"]] == ["{", "  hero", "}"]
+    assert {entry["style"] for entry in hit["after"]} == {"Preformatted Text"}
+
+
+def test_a_hit_can_bring_what_comes_before_it(bridge):
+    doc = writer_doc(["Введение", "Operation", "{"], caret=(0, 0))
+
+    hit, = bridge.find_text("Operation", paragraphs_before=1,
+                            paragraphs_after=1, doc=doc)["hits"]
+
+    assert [entry["text"] for entry in hit["before"]] == ["Введение"]
+    assert [entry["text"] for entry in hit["after"]] == ["{"]
+
+
+def test_the_neighbourhood_stops_at_the_ends_of_the_document(bridge):
+    doc = writer_doc(["Operation", "{"], caret=(0, 0))
+
+    hit, = bridge.find_text("Operation", paragraphs_before=5,
+                            paragraphs_after=5, doc=doc)["hits"]
+
+    assert hit["before"] == []
+    assert [entry["text"] for entry in hit["after"]] == ["{"]
+
+
+def test_without_asking_no_neighbours_come(bridge):
+    doc = writer_doc(["Введение", "Operation"], caret=(0, 0))
+
+    hit, = bridge.find_text("Operation", doc=doc)["hits"]
+
+    assert "before" not in hit
+    assert "after" not in hit
+
+
+def test_how_much_neighbourhood_is_checked(bridge):
+    doc = writer_doc(["Operation"], caret=(0, 0))
+
+    for arguments in ({"paragraphs_after": -1}, {"paragraphs_before": 500},
+                      {"paragraphs_after": "many"}):
+        refused = bridge.find_text("Operation", doc=doc, **arguments)
+        assert refused["success"] is False
+        assert "must be between 0 and" in refused["error"]
+
+
+def test_the_search_tool_passes_the_neighbourhood_through():
+    import asyncio
+
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = writer_doc(["Введение", "Operation", "{"], caret=(0, 0))
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    found = asyncio.run(server.execute_tool(
+        "find_text_live", {"query": "Operation", "paragraphs_after": 1}))
+
+    assert [entry["text"] for entry in found["hits"][0]["after"]] == ["{"]

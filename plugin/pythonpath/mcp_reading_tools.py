@@ -9,6 +9,33 @@ class ReadingTools:
     def _register_reading(self):
         """The tools of this part, as clients see them."""
         # Cursor and selection tools
+        self.tools["select_live"] = {
+            "description": "Select the text at an address, the way a reader would with the mouse — so the human sees what is about to be worked on, and so anything that acts on a selection can be pointed at it. Selecting changes no text",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "address": {
+                        "type": "object",
+                        "description": "What to select: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, or {\"table\": \"Table1\", \"cell\": \"A2\"}",
+                        "properties": {
+                            "paragraph": {"type": "integer"},
+                            "through": {"type": "integer"},
+                            "offset": {"type": "integer"},
+                            "length": {"type": "integer"},
+                            "table": {"type": "string"},
+                            "cell": {"type": "string"}
+                        }
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["address"]
+            },
+            "handler": self.select_live
+        }
+        
         self.tools["get_cursor_info_live"] = {
             "description": "Get the cursor position, the paragraph containing the cursor, and the selected text in the active Writer document",
             "parameters": {
@@ -81,6 +108,16 @@ class ReadingTools:
                         "description": "How many matches to return (max 200)",
                         "default": 50
                     },
+                    "paragraphs_before": {
+                        "type": "integer",
+                        "description": "Bring this many paragraphs before each hit — index, style and text — so a hit arrives with the block around it instead of needing a second call",
+                        "default": 0
+                    },
+                    "paragraphs_after": {
+                        "type": "integer",
+                        "description": "Bring this many paragraphs after each hit, the same way. A hit inside a table cell has no body neighbours and reports null",
+                        "default": 0
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -100,6 +137,14 @@ class ReadingTools:
             },
             "handler": self.get_text_content_live
         }
+
+    def select_live(self, address: Any,
+                    document: Optional[str] = None) -> Dict[str, Any]:
+        """Select the text at an address"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.select(address, doc=doc)
 
     def get_cursor_info_live(self) -> Dict[str, Any]:
         """Get cursor position, current paragraph and selected text"""
@@ -122,14 +167,16 @@ class ReadingTools:
 
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,
+                       paragraphs_before: int = 0, paragraphs_after: int = 0,
                        document: Optional[str] = None) -> Dict[str, Any]:
-        """Find text in a Writer document"""
+        """Find text in a Writer document, with the block around each hit"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.find_text(query, regex=regex,
-                                         case_sensitive=case_sensitive,
-                                         max_results=max_results, doc=doc)
+        return self.uno_bridge.find_text(
+            query, regex=regex, case_sensitive=case_sensitive,
+            max_results=max_results, paragraphs_before=paragraphs_before,
+            paragraphs_after=paragraphs_after, doc=doc)
 
     def get_text_content_live(self) -> Dict[str, Any]:
         """Get text content of the currently active document"""

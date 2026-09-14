@@ -16,7 +16,7 @@ class CommentTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which comments: omit for the whole document, {\"heading\": N} for a section (the heading's paragraph index from get_outline_live, covering everything under it), {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for the comments overlapping that range, or {\"selection\": true} for what is selected",
+                        "description": "Which comments: omit for the whole document, {\"heading\": N} for a section (the heading's paragraph index from get_outline_live, covering everything under it), {\"paragraph\": N} for one paragraph, {\"paragraph\": N, \"through\": M} for a block of them, {\"paragraph\": N, \"offset\": K, \"length\": L} for the comments overlapping that range, or {\"selection\": true} for what is selected — body text, not a table cell",
                         "properties": {
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
@@ -41,7 +41,7 @@ class CommentTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which text the comment is about: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "description": "Which text the comment is about: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},

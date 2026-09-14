@@ -39,7 +39,18 @@ class CommentsMixin:
                 note.Resolved = True
             except Exception as e:
                 logger.info(f"Could not mark a comment resolved: {e}")
-        span.getText().insertTextContent(span, note, True)
+        # An annotation refuses the object getSelection() hands back — and a
+        # cursor made *from* it — with "no SwTextAttr inserted?", while the
+        # same stretch works when the cursor is walked from its start to its
+        # end. Measured; so every anchor is rebuilt that way.
+        owner = span.getText()
+        try:
+            walked = owner.createTextCursorByRange(span.getStart())
+            walked.gotoRange(span.getEnd(), True)
+        except Exception as e:
+            logger.info(f"Could not rebuild the anchor, using it as it is: {e}")
+            walked = span
+        owner.insertTextContent(walked, note, True)
         if not (_get_property(note, "Name", "") or ""):
             try:
                 note.Name = f"__Annotation__mcp_{uuid.uuid4().hex[:16]}"

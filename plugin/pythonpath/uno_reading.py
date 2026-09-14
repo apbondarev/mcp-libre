@@ -4,7 +4,7 @@ Every hit and every paragraph carries an address that can be handed straight
 back to a tool that edits it.
 """
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import logging
 from uno_values import (DEFAULT_PARAGRAPH_COUNT, DEFAULT_SEARCH_RESULTS, 
     MAX_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
@@ -12,6 +12,9 @@ from uno_values import (DEFAULT_PARAGRAPH_COUNT, DEFAULT_SEARCH_RESULTS,
     _supports, _text_payload)
 
 logger = logging.getLogger(__name__)
+
+# How much of a hit's neighbourhood one call will carry.
+MAX_NEIGHBOUR_PARAGRAPHS = 50
 
 
 class ReadingMixin:
@@ -129,9 +132,143 @@ class ReadingMixin:
             logger.error(f"Failed to get outline: {e}")
             return {"success": False, "error": str(e)}
 
+    def _match_in(self, body: Any, paragraph: Any, index: int, match: Any,
+                  start: Any) -> Dict[str, Any]:
+        """One match, addressed inside the paragraph that holds it"""
+        cursor = body.createTextCursorByRange(paragraph.getStart())
+        cursor.gotoRange(start, True)
+        payload = _text_payload(paragraph.getString())
+        return {"address": {"paragraph": index,
+                            "offset": len(cursor.getString()),
+                            "length": len(match.getString())},
+                "matched": match.getString(),
+                "context": payload["text"],
+                "context_truncated": payload["truncated"]}
+
+    def _locate_matches(self, doc: Any, matches: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Address every match, in one walk of the body
+
+        Asking each match separately walks the document from the start again:
+        measured at 0.85s per hit on a 500-paragraph document over a socket,
+        so twenty hits took ten seconds — slow enough to send a caller off to
+        write its own script. findAll returns matches in document order, so
+        one sweep can hand each of them its paragraph as it passes.
+        """
+        body = doc.getText()
+        located = [None] * len(matches)
+        if not matches:
+            return located
+
+        # Every call crosses the bridge, so the sweep spends as few as it can:
+        # each match's start once, and per paragraph one getStart and one
+        # comparison. A match belongs to the last paragraph that began before
+        # it, which is known as soon as the next paragraph begins after it.
+        try:
+            starts = [match.getStart() for match in matches]
+        except Exception as e:
+            logger.info(f"Could not take the starts of the matches: {e}")
+            starts = [None] * len(matches)
+
+        pointer = 0
+        index = -1
+        previous = None
+        previous_index = None
+
+        enumeration = body.createEnumeration()
+        while enumeration.hasMoreElements() and pointer < len(matches):
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            index += 1
+            start = element.getStart()
+
+            while pointer < len(matches) and previous is not None:
+                if starts[pointer] is None:
+                    break
+                try:
+                    if body.compareRegionStarts(starts[pointer], start) != 1:
+                        break          # the match is not before this paragraph
+                except Exception:
+                    # A match in a table cell is not comparable with the body
+                    # at all; it is left for the slow path, which knows how to
+                    # address a cell. Stalling here would stop the sweep.
+                    pointer += 1
+                    continue
+                try:
+                    located[pointer] = self._match_in(body, previous,
+                                                      previous_index,
+                                                      matches[pointer],
+                                                      starts[pointer])
+                except Exception as e:
+                    # The comparison did not refuse it, but the cursor does:
+                    # measured on a hit inside a cell, which compares against
+                    # the body without complaint and then will not be reached
+                    # from it.
+                    logger.info(f"A match was left for the slow path: {e}")
+                pointer += 1
+
+            previous, previous_index = element, index
+
+        # The last paragraph has nothing after it to mark its end.
+        while pointer < len(matches) and previous is not None:
+            if starts[pointer] is None:
+                break
+            try:
+                located[pointer] = self._match_in(body, previous, previous_index,
+                                                  matches[pointer],
+                                                  starts[pointer])
+            except Exception as e:
+                logger.info(f"A match was left for the slow path: {e}")
+            pointer += 1
+
+        # Whatever the sweep could not place — matches inside table cells —
+        # is asked the slow way, since each has an address of its own.
+        for position, match in enumerate(matches):
+            if located[position] is not None:
+                continue
+            address, paragraph_cursor, _ = self._locate_range(doc, match)
+            context = _text_payload(paragraph_cursor.getString())
+            located[position] = {"address": address,
+                                 "matched": match.getString(),
+                                 "context": context["text"],
+                                 "context_truncated": context["truncated"]}
+        return located
+
+    def _paragraphs_by_index(self, doc: Any,
+                             wanted: Any) -> Dict[int, Dict[str, Any]]:
+        """
+        The paragraphs at these indices, in one walk of the body
+
+        Asking for them one at a time walks the document from the start each
+        time, which for twenty hits with ten neighbours apiece is two hundred
+        walks of a five-hundred-paragraph document.
+        """
+        asked = {index for index in wanted if isinstance(index, int)
+                 and index >= 0}
+        found = {}
+        if not asked:
+            return found
+        position = 0
+        enumeration = doc.getText().createEnumeration()
+        while enumeration.hasMoreElements() and len(found) < len(asked):
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            if position in asked:
+                payload = _text_payload(element.getString())
+                found[position] = {
+                    "paragraph": position,
+                    "text": payload["text"],
+                    "truncated": payload["truncated"],
+                    "style": _get_property(element, "ParaStyleName", "") or ""}
+            position += 1
+        return found
+
     def find_text(self, query: str, regex: bool = False,
                   case_sensitive: bool = False,
                   max_results: int = DEFAULT_SEARCH_RESULTS,
+                  paragraphs_before: int = 0, paragraphs_after: int = 0,
                   doc: Any = None) -> Dict[str, Any]:
         """
         Find text in the active Writer document
@@ -140,6 +277,12 @@ class ReadingMixin:
         can be handed straight to a tool that edits it, plus the containing
         paragraph as context. total_hits is the real number of matches even
         when the list is capped.
+
+        `paragraphs_before` and `paragraphs_after` bring the neighbourhood of
+        each hit along — index, style and text — which is what a caller does
+        next anyway: a heading like "Operation" is only interesting together
+        with the code block under it, and fetching that separately is a
+        second call per hit.
         """
         try:
             doc, error = self._writer_document(doc, "Searching")
@@ -150,6 +293,14 @@ class ReadingMixin:
                 return {"success": False, "error": "query must be a non-empty string"}
 
             limit = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
+            for label, value in (("paragraphs_before", paragraphs_before),
+                                 ("paragraphs_after", paragraphs_after)):
+                if not isinstance(value, int) or isinstance(value, bool) \
+                        or value < 0 or value > MAX_NEIGHBOUR_PARAGRAPHS:
+                    return {"success": False,
+                            "error": f"{label} must be between 0 and "
+                                     f"{MAX_NEIGHBOUR_PARAGRAPHS}, got "
+                                     f"{value!r}"}
 
             descriptor = doc.createSearchDescriptor()
             descriptor.SearchString = query
@@ -159,17 +310,33 @@ class ReadingMixin:
             found = doc.findAll(descriptor)
             total = found.getCount()
 
-            hits = []
-            for position in range(min(total, limit)):
-                match = found.getByIndex(position)
-                address, paragraph_cursor, _ = self._locate_range(doc, match)
-                context = _text_payload(paragraph_cursor.getString())
-                hits.append({
-                    "address": address,
-                    "matched": match.getString(),
-                    "context": context["text"],
-                    "context_truncated": context["truncated"]
-                })
+            matches = [found.getByIndex(position)
+                       for position in range(min(total, limit))]
+            hits = self._locate_matches(doc, matches)
+
+            if paragraphs_before or paragraphs_after:
+                wanted = set()
+                for hit in hits:
+                    index = (hit["address"] or {}).get("paragraph")
+                    if index is None:
+                        continue          # a hit in a cell has no neighbours
+                    wanted.update(range(max(0, index - paragraphs_before),
+                                        index + paragraphs_after + 1))
+                paragraphs = self._paragraphs_by_index(doc, wanted)
+                for hit in hits:
+                    index = (hit["address"] or {}).get("paragraph")
+                    if index is None:
+                        hit["before"] = None
+                        hit["after"] = None
+                        continue
+                    hit["before"] = [paragraphs[number] for number
+                                     in range(max(0, index - paragraphs_before),
+                                              index)
+                                     if number in paragraphs]
+                    hit["after"] = [paragraphs[number] for number
+                                    in range(index + 1,
+                                             index + paragraphs_after + 1)
+                                    if number in paragraphs]
 
             logger.info(f"Found {total} matches for {query!r}, returning {len(hits)}")
             return {

@@ -68,7 +68,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to replace: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} for the current selection",
+                        "description": "Where to replace: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"through\": M} for a block of them, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true} for the current selection",
                         "properties": {
                             "paragraph": {"type": "integer", "description": "0-based body paragraph index"},
                             "offset": {"type": "integer", "description": "Characters from the paragraph start, default 0"},
@@ -110,7 +110,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -139,7 +139,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Limit the check to one paragraph, e.g. {\"paragraph\": 4}. Omit to check the whole document",
+                        "description": "Limit the check to one paragraph — {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell. Omit to check the whole document",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -169,7 +169,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -193,7 +193,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},

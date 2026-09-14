@@ -77,6 +77,74 @@ class FormattingMixin:
             logger.error(f"Failed to format text: {e}")
             return {"success": False, "error": str(e)}
 
+    def format_ranges(self, ranges: Any, track_changes: Optional[bool] = None,
+                      doc: Any = None) -> Dict[str, Any]:
+        """
+        Apply character formatting to many places in one edit
+
+        Syntax colouring is one span per token, and doing that a call at a
+        time is what sends an assistant off to write its own script: a code
+        block of twenty tokens is twenty calls and twenty undo steps. Here
+        they are one call and one undo step, and every address is checked
+        before a single one is written, so a mistake in the tenth span does
+        not leave the first nine applied.
+
+        Character formatting changes no text, so the addresses stay true as
+        the edit goes along.
+        """
+        doc, error = self._writer_document(doc, "Formatting text")
+        if error:
+            return error
+
+        if not isinstance(ranges, (list, tuple)) or not ranges:
+            return {"success": False,
+                    "error": 'ranges must be a list, each entry an address '
+                             'with the formatting for it, as in '
+                             '[{"address": {"paragraph": 3, "offset": 0, '
+                             '"length": 5}, "color": "#0B7285"}]'}
+
+        prepared = []
+        for position, entry in enumerate(ranges):
+            if not isinstance(entry, dict):
+                return {"success": False,
+                        "error": f"range {position} must be an object with an "
+                                 f"address and the formatting for it"}
+            address = entry.get("address")
+            if address is None:
+                return {"success": False,
+                        "error": f"range {position} has no address"}
+
+            asked = {}
+            for key in ("bold", "italic", "underline"):
+                if entry.get(key) is not None:
+                    asked[key] = bool(entry[key])
+            if entry.get("font_size") is not None:
+                asked["font_size"] = float(entry["font_size"])
+            if entry.get("font_name") is not None:
+                asked["font_name"] = str(entry["font_name"])
+            try:
+                for key in ("color", "background_color"):
+                    if entry.get(key) is not None:
+                        asked[key] = _colour_name(_colour(entry[key]))
+                target = self._resolve_address(doc, address)
+            except AddressError as e:
+                return {"success": False,
+                        "error": f"range {position}: {e}"}
+            if not asked:
+                return {"success": False,
+                        "error": f"range {position} asks for no formatting"}
+            prepared.append((target, asked, address))
+
+        def edit():
+            for target, asked, _address in prepared:
+                self._apply_character_formatting(target, asked)
+            return {"ranges": len(prepared),
+                    "characters": sum(len(target.getString())
+                                      for target, _asked, _address in prepared)}
+
+        return self._guarded_edit(doc, "MCP: format ranges", track_changes,
+                                  edit)
+
     def format_range(self, address: Any, bold: Optional[bool] = None,
                      italic: Optional[bool] = None,
                      underline: Optional[bool] = None,

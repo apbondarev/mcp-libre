@@ -40,6 +40,46 @@ class FormattingTools:
         }
 
         # Formatting tools
+        self.tools["format_ranges_live"] = {
+            "description": "Apply character formatting to many places at once — one call, one undo step. This is how a code block is syntax-coloured: one entry per token instead of one call per token. Every address is checked before anything is written, so a mistake in one entry leaves the document untouched. Addresses may name body text or table cells",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "ranges": {
+                        "type": "array",
+                        "description": "Each entry is an address plus the formatting for it: {\"address\": {\"paragraph\": 3, \"offset\": 0, \"length\": 5}, \"color\": \"#0B7285\", \"bold\": true}",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "address": {
+                                    "type": "object",
+                                    "description": "Which text: {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\", \"offset\": K, \"length\": L} or {\"selection\": true}"
+                                },
+                                "bold": {"type": "boolean"},
+                                "italic": {"type": "boolean"},
+                                "underline": {"type": "boolean"},
+                                "font_size": {"type": "number"},
+                                "font_name": {"type": "string"},
+                                "color": {"type": "string"},
+                                "background_color": {"type": "string"}
+                            },
+                            "required": ["address"]
+                        }
+                    },
+                    "track_changes": {
+                        "type": "boolean",
+                        "description": "Record this edit as a tracked change, or refuse to record it. Omit to follow the document"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                },
+                "required": ["ranges"]
+            },
+            "handler": self.format_ranges_live
+        }
+        
         self.tools["format_range_live"] = {
             "description": "Apply character formatting to the text at an address in the active Writer document. Unlike format_text_live this needs no selection, so an assistant can format a paragraph it found with get_outline_live or find_text_live",
             "parameters": {
@@ -47,7 +87,7 @@ class FormattingTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to act: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true}",
+                        "description": "Where to act: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -89,7 +129,7 @@ class FormattingTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to act: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true}",
+                        "description": "Where to act: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -122,7 +162,7 @@ class FormattingTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which paragraph: {\"paragraph\": N} or {\"selection\": true}",
+                        "description": "Which paragraphs: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -201,7 +241,7 @@ class FormattingTools:
                     },
                     "address": {
                         "type": "object",
-                        "description": "Whose style to describe: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L} or {\"selection\": true}. Only used when no name is given",
+                        "description": "Whose style to describe: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. Only used when no name is given",
                         "properties": {
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -226,6 +266,16 @@ class FormattingTools:
     def format_text_live(self, **formatting) -> Dict[str, Any]:
         """Apply formatting to selected text"""
         return self.uno_bridge.format_text(formatting)
+
+    def format_ranges_live(self, ranges: Any,
+                           track_changes: Optional[bool] = None,
+                           document: Optional[str] = None) -> Dict[str, Any]:
+        """Apply character formatting to many places in one edit"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.format_ranges(ranges, track_changes=track_changes,
+                                             doc=doc)
 
     def format_range_live(self, address: Any, bold: Optional[bool] = None,
                           italic: Optional[bool] = None,

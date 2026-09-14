@@ -6,13 +6,50 @@ is no text selection at all — both are reported rather than left as silence.
 
 from typing import Any, Optional, Dict
 import logging
-from uno_values import (_text_payload)
+from uno_values import (_text_payload, AddressError)
 
 logger = logging.getLogger(__name__)
 
 
 class ViewMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
+
+    def select(self, address: Any, doc: Any = None) -> Dict[str, Any]:
+        """
+        Select the text at an address, as a reader would with the mouse
+
+        Nothing here could set a selection, so anything that works on one —
+        and a human watching the screen — was out of reach without driving
+        UNO by hand. Selecting changes no text; it moves the view.
+        """
+        doc, error = self._writer_document(doc, "Selecting text")
+        if error:
+            return error
+
+        controller = doc.getCurrentController()
+        if not controller:
+            return {"success": False,
+                    "error": "The document has no view, so nothing can be "
+                             "selected in it"}
+
+        try:
+            target = self._resolve_address(doc, address)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+
+        try:
+            controller.select(target)
+        except Exception as e:
+            logger.error(f"Could not select: {e}")
+            return {"success": False, "error": str(e)}
+
+        payload = _text_payload(target.getString())
+        spans = self._range_spans(doc, target)
+        return {"success": True, "selected": payload["text"],
+                "truncated": payload["truncated"],
+                "length": len(target.getString()),
+                "paragraphs": spans["paragraphs"],
+                "tables": [table["name"] for table in spans["tables"]]}
 
     def get_cursor_info(self, doc: Any = None) -> Dict[str, Any]:
         """
