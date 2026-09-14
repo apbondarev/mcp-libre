@@ -14,7 +14,8 @@ import asyncio
 
 import pytest
 
-from tests.fake_writer import FakeDesktop, FakeTextTable, writer_doc
+from tests.fake_writer import (FakeAnnotation, FakeDesktop, FakeTextTable,
+                               writer_doc)
 from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
@@ -652,3 +653,252 @@ def test_a_code_row_can_be_made_monospace(bridge, addressable):
     assert done["success"] is True
     assert addressable.tables[0].getCellByName("A2").styles[0] \
         == "Preformatted Text"
+
+
+# --- making a table, and taking one away -------------------------------------
+# A table goes in *before* the paragraph the address points at: inserting at
+# the end of one splits it and leaves an empty paragraph behind — measured.
+# With replace, the paragraphs it stands in for are cleared, which needs two
+# steps because clearing a span leaves one empty paragraph.
+
+@pytest.fixture
+def plain():
+    return writer_doc(["Перед таблицей.", "Операция", "{ hero }", "Ответ",
+                       '{ "R2-D2" }', "После таблицы."], caret=(1, 0))
+
+
+def test_makes_a_table_where_it_is_told(bridge, plain):
+    made = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                               doc=plain)
+
+    assert made["success"] is True
+    assert (made["rows"], made["columns"]) == (2, 2)
+    listed = bridge.list_tables(doc=plain)
+    assert listed["count"] == 1
+    # and the text is untouched
+    assert bridge.read_paragraphs(start=0, count=9,
+                                  doc=plain)["count"] == 6
+
+
+def test_fills_the_cells_it_is_given(bridge, plain):
+    made = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                               cells=[["Операция", "Ответ"],
+                                      ["{ hero }", '{ "R2-D2" }']],
+                               doc=plain)
+
+    assert made["cells_filled"] == 4
+    read = bridge.read_table(made["table"], doc=plain)
+    assert [[cell["text"] for cell in row] for row in read["rows"]] \
+        == [["Операция", "Ответ"], ["{ hero }", '{ "R2-D2" }']]
+
+
+def test_takes_a_name_and_a_heading(bridge, plain):
+    made = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                               name="QueryAndResponse", header_rows=1,
+                               repeat_heading=True, doc=plain)
+
+    assert made["table"] == "QueryAndResponse"
+    described = bridge.list_tables(doc=plain)["tables"][0]
+    assert described["header_rows"] == 1
+    assert described["repeat_heading"] is True
+
+
+def test_replaces_the_paragraphs_it_stands_in_for(bridge, plain):
+    made = bridge.create_table({"paragraph": 1, "offset": 0, "length": 8},
+                               rows=2, columns=2,
+                               cells=[["Операция", "Ответ"]],
+                               replace=True, doc=plain)
+
+    assert made["success"] is True
+    assert made["paragraphs_replaced"] == [1]
+    left = [p["text"] for p in
+            bridge.read_paragraphs(start=0, count=9, doc=plain)["paragraphs"]]
+    assert "Операция" not in left
+    assert left[0] == "Перед таблицей."
+    assert bridge.list_tables(doc=plain)["count"] == 1
+
+
+def test_a_table_is_refused_where_it_would_eat_a_comment(bridge):
+    note = FakeAnnotation("Ревьюер", "не трогать")
+    doc = writer_doc(["Перед", "Операция"], caret=(1, 0),
+                     portions={1: [{"kind": "Annotation", "text": "",
+                                    "field": note},
+                                   {"text": "Операция"},
+                                   {"kind": "AnnotationEnd", "text": ""}]})
+
+    refused = bridge.create_table({"paragraph": 1}, replace=True, doc=doc)
+
+    assert refused["success"] is False
+    assert "comment" in refused["error"]
+    assert bridge.list_tables(doc=doc)["count"] == 0
+
+    allowed = bridge.create_table({"paragraph": 1}, replace=True, flatten=True,
+                                  doc=doc)
+    assert allowed["success"] is True
+
+
+def test_the_shape_is_checked_before_anything_is_made(bridge, plain):
+    for arguments, expected in (
+            ({"rows": 0}, "rows must be"),
+            ({"columns": -1}, "columns must be"),
+            ({"rows": 9000}, "at most"),
+            ({"cells": "not rows"}, "list of rows"),
+            ({"rows": 1, "cells": [["a"], ["b"]]}, "rows of text"),
+            ({"columns": 1, "cells": [["a", "b"]]}, "cells for a table"),
+            ({"header_rows": 5, "rows": 2}, "header_rows must be")):
+        refused = bridge.create_table({"paragraph": 1}, doc=plain, **arguments)
+        assert refused["success"] is False, arguments
+        assert expected in refused["error"], (arguments, refused["error"])
+    assert bridge.list_tables(doc=plain)["count"] == 0
+
+
+def test_a_name_already_taken_is_refused(bridge, plain):
+    bridge.create_table({"paragraph": 1}, name="Пример", doc=plain)
+
+    refused = bridge.create_table({"paragraph": 1}, name="Пример", doc=plain)
+
+    assert refused["success"] is False
+    assert "already has a table" in refused["error"]
+
+
+def test_deletes_a_table_and_says_what_it_held(bridge, plain):
+    bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                        cells=[["Операция", "Ответ"]], name="Пример",
+                        doc=plain)
+
+    removed = bridge.delete_table("Пример", doc=plain)
+
+    assert removed["success"] is True
+    assert (removed["rows"], removed["columns"]) == (2, 2)
+    assert {entry["text"] for entry in removed["held"]} == {"Операция", "Ответ"}
+    assert bridge.list_tables(doc=plain)["count"] == 0
+    # the text around it is untouched
+    assert [p["text"] for p in bridge.read_paragraphs(
+        start=0, count=9, doc=plain)["paragraphs"]][0] == "Перед таблицей."
+
+
+def test_deleting_a_table_that_is_not_there_is_refused(bridge, plain):
+    refused = bridge.delete_table("Нет такой", doc=plain)
+
+    assert refused["success"] is False
+    assert "Нет такой" in refused["error"]
+
+
+def test_the_making_tools_are_registered_and_dispatch(tmp_path):
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    doc = writer_doc(["Перед", "Операция", "Ответ"], caret=(1, 0))
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    made = asyncio.run(server.execute_tool(
+        "create_table_live", {"address": {"paragraph": 1}, "rows": 2,
+                              "columns": 2,
+                              "cells": [["Операция", "Ответ"]],
+                              "name": "Пример"}))
+    assert made["success"] is True
+    assert made["cells_filled"] == 2
+
+    removed = asyncio.run(server.execute_tool("delete_table_live",
+                                              {"name": "Пример"}))
+    assert removed["success"] is True
+
+
+# --- reading a table's look --------------------------------------------------
+# Nothing reported a border, a background or a padding, so an assistant asked
+# to make a second table look like the first unzipped the document and read
+# styles.xml. describe_table answers the same questions in the units
+# format_table takes, so a look can be read off one table and put on another.
+
+def test_describes_the_grid_and_the_padding(bridge, table_doc):
+    bridge.format_table("Table1", border=True, border_color="#B0B0B0",
+                        border_width=0.35, padding_mm=2.0, doc=table_doc)
+
+    described = bridge.describe_table("Table1", doc=table_doc)["table"]
+
+    assert described["border"]["outer"] == {"width_mm": 0.35,
+                                            "color": "#B0B0B0"}
+    assert described["border"]["inner"] == {"width_mm": 0.35,
+                                            "color": "#B0B0B0"}
+    assert described["padding_mm"] == 2.0
+
+
+def test_a_fresh_table_reports_the_grid_writer_gives_it(bridge, table_doc):
+    """A table comes with a thin grid of its own — 0.18 mm, measured — so
+    "no border asked for" is not the same as "no border"."""
+    described = bridge.describe_table("Table1", doc=table_doc)["table"]
+
+    assert described["border"]["outer"] == {"width_mm": 0.18,
+                                            "color": "#000000"}
+
+    bridge.format_table("Table1", border=False, doc=table_doc)
+    assert bridge.describe_table("Table1",
+                                 doc=table_doc)["table"]["border"]["outer"] \
+        is None
+
+
+def test_describes_the_background_of_every_cell(bridge, table_doc):
+    bridge.format_table("Table1", background_color="#F7F7F7", header_rows=1,
+                        header_background_color="#EFEFEF", doc=table_doc)
+
+    cells = {cell["cell"]: cell
+             for cell in bridge.describe_table("Table1", doc=table_doc)["cells"]}
+
+    assert cells["A1"]["background_color"] == "#EFEFEF"
+    assert cells["A2"]["background_color"] == "#F7F7F7"
+    assert (cells["A1"]["row"], cells["A1"]["column"]) == (1, 1)
+
+
+def test_a_cell_with_no_background_says_none(bridge, table_doc):
+    cells = {cell["cell"]: cell
+             for cell in bridge.describe_table("Table1", doc=table_doc)["cells"]}
+
+    assert cells["A1"]["background_color"] is None
+
+
+def test_describes_the_styles_the_cells_use(bridge, table_doc):
+    bridge.format_table("Table1", cells="row:2",
+                        paragraph_style="Preformatted Text", doc=table_doc)
+
+    cells = {cell["cell"]: cell
+             for cell in bridge.describe_table("Table1", doc=table_doc)["cells"]}
+
+    assert cells["A2"]["paragraph_styles"] == ["Preformatted Text"]
+    assert cells["A1"]["paragraph_styles"] == ["Table Contents"]
+
+
+def test_the_cells_can_be_left_out(bridge, table_doc):
+    described = bridge.describe_table("Table1", cells=False, doc=table_doc)
+
+    assert "cells" not in described
+    assert described["table"]["rows"] == 2
+
+
+def test_the_runs_of_the_cells_come_too_when_asked(bridge, table_doc):
+    described = bridge.describe_table("Table1", runs=True, doc=table_doc)
+
+    cells = {cell["cell"]: cell for cell in described["cells"]}
+    assert [run["text"] for run in cells["A1"]["runs"]] == ["Operation"]
+
+
+def test_describing_a_table_that_is_not_there_is_refused(bridge, table_doc):
+    refused = bridge.describe_table("Нет такой", doc=table_doc)
+
+    assert refused["success"] is False
+    assert "Нет такой" in refused["error"]
+
+
+def test_the_describing_tool_is_registered_and_dispatches():
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    table = FakeTextTable("Table1", cells=[["a", "b"], ["c", "d"]],
+                          after_paragraph=0)
+    doc = writer_doc(["Пример:"], caret=(0, 0), tables=[table])
+    server.uno_bridge.desktop = FakeDesktop([doc])
+
+    described = asyncio.run(server.execute_tool("describe_table_live",
+                                                {"name": "Table1"}))
+    assert described["success"] is True
+    assert described["table"]["columns"] == 2
+    assert len(described["cells"]) == 4

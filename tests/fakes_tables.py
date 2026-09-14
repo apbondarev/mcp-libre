@@ -169,6 +169,15 @@ class FakeTextTable:
     def getCellNames(self):
         return tuple(self._cells)
 
+    def initialize(self, rows, columns):
+        """What Writer does to a fresh table before it goes into the text."""
+        self._rows, self._columns = rows, columns
+        self._cells = {}
+        for row in range(1, rows + 1):
+            for column in range(columns):
+                name = f"{chr(ord('A') + column)}{row}"
+                self._cells[name] = FakeCell(name, "")
+
     def getCellByName(self, name):
         if name not in self._cells:
             raise RuntimeError(f"no cell {name}")

@@ -1314,6 +1314,68 @@ try:
     check("the caret is back out of the table",
           bridge.get_cursor_info(doc=doc).get("in_table"), None)
 
+    print("\n--- making a table, and taking one away ---")
+    body = doc.getText()
+    before_tables = len(doc.getTextTables().getElementNames())
+    made = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                               cells=[["Операция", "Ответ"],
+                                      ["{ hero { name } }", '{ "R2-D2" }']],
+                               name="ЖивойПример", header_rows=1,
+                               repeat_heading=True, doc=doc)
+    print("   ", made)
+    check("made", made.get("success"), True)
+    check("with the name asked for", made.get("table"), "ЖивойПример")
+    check("and every cell filled", made.get("cells_filled"), 4)
+    read = bridge.read_table("ЖивойПример", doc=doc)
+    check("holding what it was given",
+          [[cell["text"] for cell in row] for row in read["rows"]],
+          [["Операция", "Ответ"], ["{ hero { name } }", '{ "R2-D2" }']])
+    check("marked as having a heading", read["table"]["header_rows"], 1)
+    check("the document has one more table",
+          len(doc.getTextTables().getElementNames()), before_tables + 1)
+    check("a name already taken is refused",
+          bridge.create_table({"paragraph": 1}, name="ЖивойПример",
+                              doc=doc).get("success"), False)
+    check("a silly size is refused",
+          bridge.create_table({"paragraph": 1}, rows=0,
+                              doc=doc).get("success"), False)
+
+    print("\n   the whole point: text replaced by a table")
+    # A paragraph of this section's own, so the sections after it find the
+    # document as they expect it — they share one, which is easy to forget.
+    tail = body.createTextCursorByRange(body.getEnd())
+    body.insertControlCharacter(tail, PARAGRAPH_BREAK, False)
+    body.insertString(tail, "Операция: { hero }", False)
+    paragraphs_before = bridge.read_paragraphs(start=0, count=60,
+                                               doc=doc)["count"]
+    mine = paragraphs_before - 1
+    replaced = bridge.create_table({"paragraph": mine}, rows=1, columns=2,
+                                   cells=[["Операция", "{ hero }"]],
+                                   name="ВместоТекста", replace=True, doc=doc)
+    print("   ", replaced)
+    check("the table stands in its place", replaced.get("success"), True)
+    check("saying which paragraphs it replaced",
+          replaced.get("paragraphs_replaced"), [mine])
+    check("and they are gone",
+          bridge.read_paragraphs(start=0, count=60, doc=doc)["count"],
+          paragraphs_before - 1)
+    check("while the table holds their text",
+          bridge.read_table("ВместоТекста", cell="B1", doc=doc)["text"],
+          "{ hero }")
+
+    print("\n   and taking them away again")
+    removed = bridge.delete_table("ВместоТекста", doc=doc)
+    print("   ", {k: v for k, v in removed.items() if k != "held"})
+    check("removed", removed.get("success"), True)
+    check("saying what it held",
+          sorted(entry["text"] for entry in removed["held"]),
+          sorted(["Операция", "{ hero }"]))
+    check("a table that is not there is refused",
+          bridge.delete_table("Нет такой", doc=doc).get("success"), False)
+    bridge.delete_table("ЖивойПример", doc=doc)
+    check("the document is back to the tables it had",
+          len(doc.getTextTables().getElementNames()), before_tables)
+
     print("\n--- a cell has an address of its own ---")
     table.getCellByName("A1").setString("Operation")
     table.getCellByName("B1").setString("Response")
@@ -1502,6 +1564,55 @@ try:
     check("one undo step per formatting call",
           bridge.format_table(table_name, background_color="#FAFAFA",
                               doc=doc).get("success"), True)
+
+    print("\n--- reading a table's look, instead of unzipping the file ---")
+    bridge.format_table(table_name, border=True, border_color="#B0B0B0",
+                        border_width=0.35, padding_mm=2.0,
+                        background_color="#F7F7F7", header_rows=1,
+                        header_background_color="#EFEFEF", doc=doc)
+    described = bridge.describe_table(table_name, runs=True, doc=doc)
+    print("   table:", {k: v for k, v in described["table"].items()
+                        if k in ("border", "padding_mm", "header_rows",
+                                 "column_widths_percent")})
+    check("described", described.get("success"), True)
+    check("the grid outside", described["table"]["border"]["outer"],
+          {"width_mm": 0.35, "color": "#B0B0B0"})
+    check("and between the cells", described["table"]["border"]["inner"],
+          {"width_mm": 0.35, "color": "#B0B0B0"})
+    check("the padding", described["table"]["padding_mm"], 2.0)
+    cells = {cell["cell"]: cell for cell in described["cells"]}
+    print("   cells:", {name: (cell["background_color"],
+                               cell["paragraph_styles"])
+                        for name, cell in cells.items()})
+    check("the heading's background", cells["A1"]["background_color"],
+          "#EFEFEF")
+    check("the body's background", cells["A2"]["background_color"], "#F7F7F7")
+    check("the styles the cells use",
+          bool(cells["A2"]["paragraph_styles"]), True)
+    check("and the coloured pieces of their text",
+          any(run["color"] for run in cells["A2"]["runs"]), True)
+    check("describing a table that is not there is refused",
+          bridge.describe_table("Нет такой", doc=doc).get("success"), False)
+
+    print("\n   and the look reads back into format_table:")
+    look = described["table"]
+    second = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
+                                 name="Копия", doc=doc)
+    check("a second table was made", second.get("success"), True)
+    copied = bridge.format_table(
+        "Копия", border=True,
+        border_color=look["border"]["outer"]["color"],
+        border_width=look["border"]["outer"]["width_mm"],
+        padding_mm=look["padding_mm"],
+        background_color=cells["A2"]["background_color"],
+        header_rows=look["header_rows"],
+        header_background_color=cells["A1"]["background_color"], doc=doc)
+    check("dressed from what was read", copied.get("success"), True)
+    twin = bridge.describe_table("Копия", doc=doc)
+    check("and the copy looks like the original",
+          (twin["table"]["border"]["outer"], twin["table"]["padding_mm"]),
+          (look["border"]["outer"], look["padding_mm"]))
+    bridge.delete_table("Копия", doc=doc)
 
     print("\n--- a selection running from text through a table ---")
     body = doc.getText()

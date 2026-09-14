@@ -13,9 +13,38 @@ from typing import Any, Optional, Dict, List
 import logging
 from uno_values import (AddressError, TABLE_SERVICE, _cell_position, 
     _colour, _colour_name, _column_letters, _column_shares, _get_property, 
-    _supports, _table_size, _text_payload)
+    _supports, _table_size, _text_payload, _millimetres)
 
 logger = logging.getLogger(__name__)
+
+
+def _border_look(border: Any) -> Optional[Dict[str, Any]]:
+    """A border line as format_table would take it back, or None for none"""
+    if border is None:
+        return None
+    width = _get_property(border, "LineWidth", 0) or 0
+    if not width:
+        return None
+    colour = _get_property(border, "Color", 0) or 0
+    return {"width_mm": round(width / 100.0, 2),
+            "color": _colour_name(colour & 0xFFFFFF)}
+
+
+def _background_of(thing: Any) -> Optional[str]:
+    """The background colour, or None when there is none.
+
+    A cell or a table shows its colour only with BackTransparent off, so the
+    flag decides whether BackColor means anything at all.
+    """
+    if _get_property(thing, "BackTransparent", True):
+        return None
+    colour = _get_property(thing, "BackColor", -1)
+    if colour in (-1, None):
+        return None
+    return _colour_name(colour & 0xFFFFFF)
+
+# A table larger than this is a mistake, not a wish.
+MAX_TABLE_ROWS, MAX_TABLE_COLUMNS = 500, 64
 
 
 class TablesMixin:
@@ -132,6 +161,222 @@ class TablesMixin:
                               "reads them")
         return result
 
+    def create_table(self, address: Any = None, rows: int = 2,
+                     columns: int = 2, cells: Any = None,
+                     name: Optional[str] = None,
+                     header_rows: Optional[int] = None,
+                     repeat_heading: Optional[bool] = None,
+                     replace: bool = False, flatten: bool = False,
+                     track_changes: Optional[bool] = None,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Put a new table into the text, and fill it
+
+        The table goes in *before* the paragraph the address points at, which
+        is where it lands cleanly: inserting at the end of a paragraph splits
+        it and leaves an empty one behind — measured.
+
+        With `replace`, the paragraphs the address covers are cleared away
+        afterwards, so "turn this query and response into a table" is one
+        call. That throws text away, so it is refused when those paragraphs
+        hold comments, pictures or a table of their own, unless `flatten`
+        says to go ahead.
+        """
+        doc, error = self._writer_document(doc, "Creating a table")
+        if error:
+            return error
+
+        for label, value in (("rows", rows), ("columns", columns)):
+            if not isinstance(value, int) or isinstance(value, bool) \
+                    or value < 1:
+                return {"success": False,
+                        "error": f"{label} must be a whole number from 1, got "
+                                 f"{value!r}"}
+        if rows > MAX_TABLE_ROWS or columns > MAX_TABLE_COLUMNS:
+            return {"success": False,
+                    "error": f"a table here is at most {MAX_TABLE_ROWS} rows "
+                             f"by {MAX_TABLE_COLUMNS} columns"}
+
+        content = []
+        if cells is not None:
+            if not isinstance(cells, (list, tuple)):
+                return {"success": False,
+                        "error": 'cells must be a list of rows, as in '
+                                 '[["Operation", "Response"], ["{...}", "..."]]'}
+            if len(cells) > rows:
+                return {"success": False,
+                        "error": f"{len(cells)} rows of text were given for a "
+                                 f"table of {rows}"}
+            for position, row in enumerate(cells):
+                if not isinstance(row, (list, tuple)):
+                    return {"success": False,
+                            "error": f"row {position + 1} of cells must be a "
+                                     f"list of strings"}
+                if len(row) > columns:
+                    return {"success": False,
+                            "error": f"row {position + 1} has {len(row)} cells "
+                                     f"for a table of {columns} columns"}
+                content.append([("" if value is None else str(value))
+                                for value in row])
+
+        if name is not None:
+            if not isinstance(name, str) or not name.strip():
+                return {"success": False, "error": "name must be a name"}
+            name = name.strip()
+            if self._table_by_name(doc, name) is not None:
+                return {"success": False,
+                        "error": f"this document already has a table called "
+                                 f"{name!r}"}
+        if header_rows is not None and (not isinstance(header_rows, int)
+                                        or isinstance(header_rows, bool)
+                                        or header_rows < 0
+                                        or header_rows > rows):
+            return {"success": False,
+                    "error": f"header_rows must be between 0 and {rows}, got "
+                             f"{header_rows!r}"}
+
+        try:
+            target = self._resolve_address(doc, address
+                                           if address is not None
+                                           else {"selection": True})
+            located, paragraph_cursor, _ = self._locate_range(doc, target)
+        except AddressError as e:
+            return {"success": False, "error": str(e)}
+        if located.get("paragraph") is None:
+            return {"success": False,
+                    "error": "A table goes into the body text, and that "
+                             "address is not in it — give a paragraph"}
+
+        covered = self._range_spans(doc, target)["paragraphs"] \
+            or [located["paragraph"]]
+        first, last = covered[0], covered[-1]
+
+        losing = None
+        if replace and not flatten:
+            try:
+                losing = self._flattening_loss(doc, located, paragraph_cursor)
+            except Exception as e:
+                logger.info(f"Could not count what replacing would cost: {e}")
+            inside = self._tables_in(doc, target)
+            if inside:
+                return {"success": False,
+                        "error": f"those paragraphs run through "
+                                 f"{len(inside)} table"
+                                 f"{'s' if len(inside) > 1 else ''}, which a "
+                                 f"new table would replace outright; pass "
+                                 f"flatten=true to accept that"}
+            if losing and (losing.get("comments") or losing.get("inline_images")
+                           or losing.get("links")):
+                details = []
+                for key, word in (("comments", "comment"),
+                                  ("inline_images", "inline picture"),
+                                  ("links", "hyperlink")):
+                    if losing.get(key):
+                        details.append(f"{losing[key]} {word}"
+                                       f"{'s' if losing[key] > 1 else ''}")
+                return {"success": False,
+                        "error": f"the paragraphs this table would replace "
+                                 f"hold {', '.join(details)}, which would go "
+                                 f"with them; read them first, or pass "
+                                 f"flatten=true"}
+
+        def edit():
+            table = doc.createInstance(TABLE_SERVICE)
+            table.initialize(rows, columns)
+            if name:
+                table.Name = name
+            body = doc.getText()
+            paragraph = self._paragraph_at(body, first)
+            body.insertTextContent(paragraph.getStart(), table, False)
+
+            filled = 0
+            for row_index, row in enumerate(content):
+                for column_index, value in enumerate(row):
+                    cell_name = f"{_column_letters(column_index)}{row_index + 1}"
+                    try:
+                        table.getCellByName(cell_name).setString(value)
+                        filled += 1
+                    except Exception as e:
+                        logger.info(f"Could not fill {cell_name}: {e}")
+            if header_rows is not None:
+                table.HeaderRowCount = header_rows
+            if repeat_heading is not None:
+                table.RepeatHeadline = bool(repeat_heading)
+
+            replaced = 0
+            if replace:
+                # Clearing the span leaves one empty paragraph behind, which
+                # goes too — measured, and the reason this is two steps.
+                start = self._paragraph_at(body, first)
+                end = self._paragraph_at(body, last)
+                if start is not None and end is not None:
+                    span = body.createTextCursorByRange(start.getStart())
+                    span.gotoRange(end.getEnd(), True)
+                    replaced = len(span.getString())
+                    span.setString("")
+                    leftover = self._paragraph_at(body, first)
+                    try:
+                        body.removeTextContent(leftover)
+                    except Exception as e:
+                        logger.info(f"The empty paragraph stayed: {e}")
+
+            return {"table": _get_property(table, "Name", "") or "",
+                    "rows": rows, "columns": columns, "cells_filled": filled,
+                    "after_paragraph": self._paragraphs_before_table(doc, table),
+                    "paragraphs_replaced": covered if replace else [],
+                    "characters_replaced": replaced}
+
+        return self._guarded_edit(doc, "MCP: create table", track_changes, edit)
+
+    def delete_table(self, name: Optional[str] = None,
+                     track_changes: Optional[bool] = None,
+                     doc: Any = None) -> Dict[str, Any]:
+        """
+        Take a table out of the document, text and all
+
+        Reports what it held, so what is lost is on the record and can be put
+        back with create_table.
+        """
+        doc, error = self._writer_document(doc, "Deleting a table")
+        if error:
+            return error
+
+        if not name:
+            caret = self._caret_in_table(doc)
+            if caret is None:
+                listed = [_get_property(table, "Name", "") or "?"
+                          for table in self._tables(doc)]
+                return {"success": False,
+                        "error": f"The caret is not in a table and none was "
+                                 f"named. This document holds: "
+                                 f"{', '.join(listed) or 'no tables'}."}
+            name = caret["table"]
+
+        table = self._table_by_name(doc, name)
+        if table is None:
+            listed = [_get_property(other, "Name", "") or "?"
+                      for other in self._tables(doc)]
+            return {"success": False,
+                    "error": f"No table called {name!r} in this document. It "
+                             f"holds: {', '.join(listed) or 'no tables'}."}
+
+        described = self._describe_table(doc, table)
+        held = []
+        try:
+            for cell_name in table.getCellNames():
+                text = table.getCellByName(cell_name).getString()
+                if text:
+                    held.append({"cell": cell_name, "text": text})
+        except Exception as e:
+            logger.info(f"Could not read a table before removing it: {e}")
+
+        def edit():
+            doc.getText().removeTextContent(table)
+            return {"deleted": described["name"], "rows": described["rows"],
+                    "columns": described["columns"], "held": held}
+
+        return self._guarded_edit(doc, "MCP: delete table", track_changes, edit)
+
     def list_tables(self, doc: Any = None) -> Dict[str, Any]:
         """
         Every table in the document: its name, its size and where it sits
@@ -157,6 +402,97 @@ class TablesMixin:
                 result["in_selection"] = selected
         except Exception:
             pass                       # no selection, or not a text one
+        return result
+
+    def describe_table(self, name: Optional[str] = None, cells: bool = True,
+                       runs: bool = False, doc: Any = None) -> Dict[str, Any]:
+        """
+        What a table looks like: its grid, its padding, its cells
+
+        The mirror of format_table, so the look of one table can be read and
+        put on another — which otherwise means unzipping the document and
+        reading styles.xml, since nothing else reports a border or a
+        background. Values come back in the units format_table takes:
+        millimetres and "#RRGGBB".
+        """
+        doc, error = self._writer_document(doc, "Describing a table")
+        if error:
+            return error
+
+        if not name:
+            caret = self._caret_in_table(doc)
+            if caret is None:
+                listed = [_get_property(table, "Name", "") or "?"
+                          for table in self._tables(doc)]
+                return {"success": False,
+                        "error": f"The caret is not in a table and none was "
+                                 f"named. This document holds: "
+                                 f"{', '.join(listed) or 'no tables'}."}
+            name = caret["table"]
+
+        table = self._table_by_name(doc, name)
+        if table is None:
+            listed = [_get_property(other, "Name", "") or "?"
+                      for other in self._tables(doc)]
+            return {"success": False,
+                    "error": f"No table called {name!r} in this document. It "
+                             f"holds: {', '.join(listed) or 'no tables'}."}
+
+        described = self._describe_table(doc, table)
+        shape = _get_property(table, "TableBorder2", None)
+        described["border"] = {
+            "outer": _border_look(_get_property(shape, "TopLine", None)),
+            "inner": _border_look(_get_property(shape, "HorizontalLine", None)),
+            "left": _border_look(_get_property(shape, "LeftLine", None)),
+            "right": _border_look(_get_property(shape, "RightLine", None)),
+            "bottom": _border_look(_get_property(shape, "BottomLine", None)),
+            "vertical": _border_look(_get_property(shape, "VerticalLine", None)),
+        }
+        described["padding_mm"] = _millimetres(_get_property(shape, "Distance",
+                                                             None))
+        described["background_color"] = _background_of(table)
+        described["split"] = bool(_get_property(table, "Split", True))
+        described["keep_together"] = bool(_get_property(table, "KeepTogether",
+                                                        False))
+
+        result = {"success": True, "table": described}
+        if not cells:
+            return result
+
+        looks = []
+        try:
+            names = list(table.getCellNames())
+        except Exception as e:
+            logger.error(f"Could not read the cells of {name}: {e}")
+            return {"success": False, "error": str(e)}
+
+        for cell_name in names:
+            cell = table.getCellByName(cell_name)
+            row, column = _cell_position(cell_name)
+            styles = []
+            for paragraph in self._paragraphs_of(cell):
+                style = _get_property(paragraph, "ParaStyleName", "") or ""
+                if style and style not in styles:
+                    styles.append(style)
+            look = {"cell": cell_name, "row": row, "column": column,
+                    "background_color": _background_of(cell),
+                    "paragraph_styles": styles,
+                    "vertical_align": _get_property(cell, "VertOrient", None),
+                    "borders": {side: _border_look(_get_property(cell, side,
+                                                                 None))
+                                for side in ("TopBorder", "BottomBorder",
+                                             "LeftBorder", "RightBorder")}}
+            if runs:
+                try:
+                    look["runs"] = self.read_runs(
+                        {"table": described["name"], "cell": cell_name},
+                        doc=doc).get("runs", [])
+                except Exception as e:
+                    logger.info(f"Could not read the runs of {cell_name}: {e}")
+                    look["runs"] = []
+            looks.append(look)
+
+        result["cells"] = looks
         return result
 
     def read_table(self, name: Optional[str] = None, cell: Optional[str] = None,

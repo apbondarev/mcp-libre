@@ -265,6 +265,8 @@ class FakeDoc:
         return FakeRedlines(getattr(self, "redline_count", 0))
 
     def createInstance(self, service):
+        if service == "com.sun.star.text.TextTable":
+            return FakeTextTable(f"Table{len(getattr(self, 'tables', [])) + 1}")
         if service == "com.sun.star.text.textfield.Annotation":
             note = FakeAnnotation(named=False)
             note.document = self
@@ -351,6 +353,8 @@ class FakeWriterDoc(FakeDoc):
     def __init__(self, text, controller):
         self._text = text
         self._controller = controller
+        self.tables = []
+        text.owner_document = self          # so a new table joins the document
         self.UndoManager = FakeUndoManager()
         # A comment belongs to the document it is in, and follows its
         # "Comment" style unless its own text was typed in a language.

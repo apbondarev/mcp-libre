@@ -247,10 +247,52 @@ class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
     def insertTextContent(self, text_range, content, absorb):
+        """A comment is anchored to a range; a table takes its place between
+        paragraphs, before the one the range starts in — which is where a
+        real one lands cleanly."""
+        if hasattr(content, "getCellNames"):
+            paragraph = text_range.start[0]
+            content._anchor = FakeRange(self, (paragraph, 0))
+            content.after_paragraph = max(0, paragraph - 1)
+            items = list(self.enumeration_items)
+            if paragraph in items:
+                items.insert(items.index(paragraph), content)
+            else:
+                items.append(content)
+            self.enumeration_items = items
+            if self.owner_document is not None:
+                self.owner_document.tables.append(content)
+            return
         self.insert_comment(text_range.start, text_range.end, content)
 
+    owner_document = None
+
     def removeTextContent(self, content):
-        """Dropping a comment drops its markers, never the text under them."""
+        """Dropping a comment drops its markers, never the text under them.
+
+        A table goes altogether; a paragraph takes its line with it.
+        """
+        if hasattr(content, "getCellNames"):
+            self.enumeration_items = [item for item in self.enumeration_items
+                                      if item is not content]
+            if self.owner_document is not None:
+                self.owner_document.tables = [
+                    table for table in self.owner_document.tables
+                    if table is not content]
+            return
+        if hasattr(content, "index") and not isinstance(content, dict):
+            index = content.index                    # a paragraph
+            del self.paragraphs[index]
+            del self.styles[index]
+            del self.outline_levels[index]
+            self.portions.pop(index, None)
+            self.portions = {(key - 1 if key > index else key): value
+                             for key, value in self.portions.items()}
+            self.enumeration_items = [
+                item if not isinstance(item, int) else
+                (item - 1 if item > index else item)
+                for item in self.enumeration_items if item != index]
+            return
         removed = False
         for index, portions in list(self.portions.items()):
             kept = []
