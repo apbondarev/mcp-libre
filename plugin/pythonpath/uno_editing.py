@@ -154,7 +154,8 @@ class EditingMixin:
 
         loss = None
         try:
-            located, paragraph_cursor, _ = self._locate_range(doc, target)
+            located, paragraph_cursor, _ = self._locate_range(
+                doc, target, self._paragraph_hint(address, doc))
             paragraph_index = located["paragraph"]
             if paragraph_index is not None:
                 loss = self._flattening_loss(doc, located, paragraph_cursor)

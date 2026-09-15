@@ -36,7 +36,8 @@ class RunsMixin:
 
         try:
             target = self._resolve_address(doc, address)
-            located, paragraph_cursor, _ = self._locate_range(doc, target)
+            located, paragraph_cursor, _ = self._locate_range(
+                doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
             return {"success": False, "error": str(e)}
 
@@ -58,7 +59,8 @@ class RunsMixin:
         # a table, say — saying so beats letting a caller believe the runs
         # are the whole of what was asked for.
         try:
-            return self._note_what_is_out_of_reach(doc, target, result)
+            return self._note_what_is_out_of_reach(doc, target, result,
+                                                   known_paragraph=index)
         except Exception as e:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
@@ -124,7 +126,8 @@ class RunsMixin:
         for note, at in pending:            # never closed: a point anchor
             spans.append((_describe_comment(note), at, at))
 
-        pictures = self._images_in(doc, index, span_start, span_end)
+        pictures = self._images_in(doc, index, span_start, span_end,
+                                   paragraph_cursor)
 
         runs = []
         for kind, start_at, portion, body in collected:
@@ -360,7 +363,8 @@ class RunsMixin:
 
         try:
             target = self._resolve_address(doc, address)
-            located, located_cursor, _ = self._locate_range(doc, target)
+            located, located_cursor, _ = self._locate_range(
+                doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
             return {"success": False, "error": str(e)}
 

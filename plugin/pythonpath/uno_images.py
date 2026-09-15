@@ -126,10 +126,22 @@ class ImagesMixin:
         return described
 
     def _images_in(self, doc: Any, paragraph: int, start: int,
-                   end: int) -> List[Dict[str, Any]]:
-        """The pictures anchored inside a stretch of a paragraph"""
+                   end: int, paragraph_cursor: Any = None
+                   ) -> List[Dict[str, Any]]:
+        """The pictures anchored inside a stretch of a paragraph
+
+        Describing a picture works out where its anchor sits, and that walks
+        the body — so describing every picture in the document to find the
+        ones in a single paragraph cost a walk per picture, on every call
+        that reads runs. `paragraph_cursor` lets each anchor be compared with
+        this paragraph first, three UNO calls apiece, and only the pictures
+        that fall inside are described.
+        """
         found = []
         for image in self._graphics(doc):
+            if paragraph_cursor is not None \
+                    and not self._anchored_in(doc, image, paragraph_cursor):
+                continue
             described = self._describe_image(doc, image)
             address = described.get("address") or {}
             if address.get("paragraph") != paragraph:
@@ -139,6 +151,20 @@ class ImagesMixin:
                 continue
             found.append(described)
         return found
+
+    def _anchored_in(self, doc: Any, image: Any, paragraph_cursor: Any) -> bool:
+        """Whether a picture's anchor sits in this paragraph, asked cheaply"""
+        try:
+            anchor = image.getAnchor()
+        except Exception as e:
+            logger.info(f"A picture would not say where it is: {e}")
+            return True                   # let the slow path decide
+        try:
+            body = doc.getText()
+            return self._covers(body, paragraph_cursor, anchor)
+        except Exception as e:
+            logger.info(f"Could not place a picture: {e}")
+            return True
 
     def list_images(self, address: Any = None,
                     doc: Any = None) -> Dict[str, Any]:

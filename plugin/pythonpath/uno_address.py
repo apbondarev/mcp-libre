@@ -229,7 +229,30 @@ class AddressMixin:
                 continue
         return None, owner
 
-    def _locate_range(self, doc: Any, text_range: Any) -> tuple:
+    def _paragraph_hint(self, address: Any,
+                        doc: Any = None) -> Optional[int]:
+        """The paragraph an address names, when it can be had without a walk.
+
+        Resolving {"paragraph": N} walks the body to reach that paragraph,
+        and locating the range it produced walked the body again to work out
+        the index N it was given. Handing the index forward saves the second
+        walk. An anchor names no number, but it remembers the one it was last
+        found at and checks it, which comes to the same thing.
+        """
+        if not isinstance(address, dict):
+            return None
+        if "anchor" in address:
+            return (self._anchor_paragraph(doc, address["anchor"])
+                    if doc is not None else None)
+        index = address.get("paragraph")
+        if isinstance(index, int) and not isinstance(index, bool) \
+                and index >= 0 and "cell" not in address \
+                and "table" not in address:
+            return index
+        return None
+
+    def _locate_range(self, doc: Any, text_range: Any,
+                      known_paragraph: Optional[int] = None) -> tuple:
         """
         Locate a range within the document
 
@@ -239,7 +262,11 @@ class AddressMixin:
         chars_before_paragraph is None whenever the index is None.
 
         The cursors come from the text owning the range, which inside a table
-        cell or a frame is not the body text.
+        cell or a frame is not the body text. `known_paragraph` is for a
+        caller that resolved the range from an address naming that paragraph:
+        the walk that would find the index again is then skipped, and
+        chars_before_paragraph comes back None, since nobody who passes the
+        hint uses it.
         """
         owner = text_range.getText()
         start = text_range.getStart()
@@ -258,6 +285,8 @@ class AddressMixin:
         in_a_cell = _supports(owner, CELL_SERVICE)
         if in_a_cell:
             index, chars_before = None, None
+        elif known_paragraph is not None:
+            index, chars_before = known_paragraph, None
         else:
             index, chars_before = self._locate_paragraph(
                 doc.getText(), paragraph_cursor.getStart())
@@ -470,7 +499,9 @@ class AddressMixin:
                 raise AddressError(f"no body paragraph {address['paragraph']}")
             return address["paragraph"]
 
-        located, _, _ = self._locate_range(doc, self._resolve_address(doc, address))
+        located, _, _ = self._locate_range(
+            doc, self._resolve_address(doc, address),
+            self._paragraph_hint(address, doc))
         if located["paragraph"] is None:
             raise AddressError("that address is outside the body text, so its "
                                "paragraph cannot be spell checked")

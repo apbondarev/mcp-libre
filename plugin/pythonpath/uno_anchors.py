@@ -28,7 +28,8 @@ from typing import Any, Dict, List, Optional
 import logging
 import secrets
 
-from uno_values import AddressError, _get_property, _text_payload
+from uno_values import (AddressError, CELL_SERVICE, _get_property,
+                        _supports, _text_payload)
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,11 @@ class AnchorsMixin:
         store[token] = {"cursor": cursor,
                         "document": self._document_key(doc),
                         "held": held,
-                        "was_empty": not held}
+                        "was_empty": not held,
+                        # The paragraph it was last seen in: checked before it
+                        # is believed, so a wrong one costs nothing but the
+                        # walk it was meant to save.
+                        "index": None}
         while len(store) > MAX_ANCHORS:
             dropped, _ = store.popitem(last=False)
             logger.info(f"Anchor {dropped} let go, {MAX_ANCHORS} is the limit")
@@ -134,6 +139,38 @@ class AnchorsMixin:
                 f"deleted. The place it was is still there, so read that part "
                 f"of the document again and anchor what is there now")
         return cursor
+
+    def _anchor_paragraph(self, doc: Any, token: Any) -> Optional[int]:
+        """The body paragraph an anchor points into, remembered and checked.
+
+        Working it out means walking the body comparing regions, which is the
+        expensive half of reading anything by anchor. The index an anchor was
+        last found at is kept and verified instead — reaching the paragraph
+        of that number and asking whether it starts where the anchor's does —
+        and only a miss pays for the walk.
+        """
+        entry = self._anchor_store().get(token)
+        if entry is None or entry["document"] != self._document_key(doc):
+            return None
+        cursor = entry["cursor"]
+        try:
+            body = doc.getText()
+            owner = cursor.getText()
+            if _supports(owner, CELL_SERVICE):
+                return None
+            start = cursor.getStart()
+            remembered = entry.get("index")
+            if remembered is not None:
+                paragraph = self._paragraph_at(body, remembered)
+                if paragraph is not None and body.compareRegionStarts(
+                        paragraph.getStart(), start) == 0:
+                    return remembered
+            index, _ = self._locate_paragraph(body, start)
+            entry["index"] = index
+            return index
+        except Exception as e:
+            logger.info(f"Could not place anchor {token}: {e}")
+            return None
 
     def _anchor_report(self, doc: Any, token: str,
                        entry: Dict[str, Any]) -> Dict[str, Any]:

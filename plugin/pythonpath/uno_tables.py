@@ -11,7 +11,7 @@ makes a change stick.
 import uno
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (AddressError, TABLE_SERVICE, _cell_position, 
+from uno_values import (AddressError, CELL_SERVICE, TABLE_SERVICE, _cell_position, 
     _colour, _colour_name, _column_letters, _column_shares, _get_property, 
     _supports, _table_size, _text_payload, _millimetres)
 
@@ -62,7 +62,24 @@ class TablesMixin:
             logger.info(f"Could not compare two ranges: {e}")
             return False
 
-    def _range_spans(self, doc: Any, span: Any) -> Dict[str, Any]:
+    def _within_one_paragraph(self, body: Any, span: Any) -> bool:
+        """Whether a range begins and ends inside the same body paragraph.
+
+        Four UNO calls, against the six per paragraph the sweep below spends:
+        on a 300-paragraph document that is the difference between half a
+        second and nothing, and almost every range asked about — a run, a
+        phrase, a paragraph — is inside one paragraph.
+        """
+        try:
+            reach = body.createTextCursorByRange(span.getStart())
+            reach.gotoEndOfParagraph(True)
+            return body.compareRegionStarts(reach.getEnd(),
+                                            span.getEnd()) != 1
+        except Exception:
+            return False
+
+    def _range_spans(self, doc: Any, span: Any,
+                     known_paragraph: Optional[int] = None) -> Dict[str, Any]:
         """
         What a range actually covers: which body paragraphs, which tables
 
@@ -70,10 +87,29 @@ class TablesMixin:
         and its string gives no hint of that — the cells arrive folded in
         with newlines. Walking the body and comparing regions says what is
         really in there.
+
+        The walk is only made when it can tell the caller something: a range
+        inside a table cell is in no body paragraph and runs through no
+        table, and a range inside one paragraph holds no table either, since
+        a table sits *between* paragraphs. `known_paragraph` saves the second
+        case its one remaining walk when the caller already has the index.
         """
         found = {"paragraphs": [], "tables": []}
         try:
             body = doc.getText()
+            if _supports(span.getText(), CELL_SERVICE):
+                return found
+
+            if self._within_one_paragraph(body, span):
+                if known_paragraph is not None:
+                    found["paragraphs"] = [known_paragraph]
+                else:
+                    index, _ = self._locate_paragraph(body, span.getStart())
+                    if index is not None:
+                        found["paragraphs"] = [index]
+                return found
+
+            positions = None
             index = 0
             enumeration = body.createEnumeration()
             while enumeration.hasMoreElements():
@@ -85,8 +121,10 @@ class TablesMixin:
                         logger.info(f"A table would not say where it is: {e}")
                         continue
                     if self._covers(body, span, anchor):
-                        found["tables"].append(self._describe_table(doc,
-                                                                    element))
+                        if positions is None:
+                            positions = self._table_positions(doc)
+                        found["tables"].append(
+                            self._describe_table(doc, element, positions))
                     continue
                 if not hasattr(element, "getStart"):
                     continue
@@ -100,6 +138,28 @@ class TablesMixin:
     def _tables_in(self, doc: Any, span: Any) -> List[Dict[str, Any]]:
         """The tables a range runs through, each described"""
         return self._range_spans(doc, span)["tables"]
+
+    def _table_positions(self, doc: Any) -> Dict[str, int]:
+        """Where every table sits, counted in body paragraphs, in one walk.
+
+        Asking each table separately walks the whole document again: eleven
+        tables in a three-hundred-paragraph document meant eleven walks, and
+        list_tables spent a second of its own on them.
+        """
+        positions: Dict[str, int] = {}
+        try:
+            paragraphs = 0
+            enumeration = doc.getText().createEnumeration()
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if _supports(element, TABLE_SERVICE):
+                    positions[_get_property(element, "Name", "") or ""] = \
+                        paragraphs
+                elif hasattr(element, "getStart"):
+                    paragraphs += 1
+        except Exception as e:
+            logger.info(f"Could not place the tables in the text: {e}")
+        return positions
 
     def _paragraphs_before_table(self, doc: Any, wanted: Any) -> Optional[int]:
         """
@@ -124,8 +184,14 @@ class TablesMixin:
             logger.info(f"Could not place a table in the text: {e}")
         return None
 
-    def _describe_table(self, doc: Any, table: Any) -> Dict[str, Any]:
-        """A table as a caller sees it, without its contents"""
+    def _describe_table(self, doc: Any, table: Any,
+                        positions: Optional[Dict[str, int]] = None
+                        ) -> Dict[str, Any]:
+        """A table as a caller sees it, without its contents
+
+        `positions` is the map _table_positions makes in one walk; without
+        it, this table's place is found by a walk of its own.
+        """
         rows, columns = _table_size(table)
         try:
             names = list(table.getCellNames())
@@ -143,12 +209,17 @@ class TablesMixin:
                     round((_get_property(table, "RelativeWidth", 0) or 0) / 100.0,
                           1)
                     if _get_property(table, "IsWidthRelative", False) else None),
-                "after_paragraph": self._paragraphs_before_table(doc, table)}
+                "after_paragraph": (
+                    positions.get(_get_property(table, "Name", "") or "")
+                    if positions is not None
+                    else self._paragraphs_before_table(doc, table))}
 
     def _note_what_is_out_of_reach(self, doc: Any, span: Any,
-                                   result: Dict[str, Any]) -> Dict[str, Any]:
+                                   result: Dict[str, Any],
+                                   known_paragraph: Optional[int] = None
+                                   ) -> Dict[str, Any]:
         """Say when a range reaches past the paragraph its runs come from"""
-        spans = self._range_spans(doc, span)
+        spans = self._range_spans(doc, span, known_paragraph)
         if len(spans["paragraphs"]) > 1:
             result["spans_paragraphs"] = spans["paragraphs"]
         if spans["tables"]:
@@ -239,7 +310,8 @@ class TablesMixin:
             target = self._resolve_address(doc, address
                                            if address is not None
                                            else {"selection": True})
-            located, paragraph_cursor, _ = self._locate_range(doc, target)
+            located, paragraph_cursor, _ = self._locate_range(
+                doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
             return {"success": False, "error": str(e)}
         if located.get("paragraph") is None:
@@ -388,7 +460,8 @@ class TablesMixin:
         if error:
             return error
 
-        tables = [self._describe_table(doc, table)
+        positions = self._table_positions(doc)
+        tables = [self._describe_table(doc, table, positions)
                   for table in self._tables(doc)]
         result = {"success": True, "tables": tables, "count": len(tables)}
         caret = self._caret_in_table(doc)
