@@ -263,6 +263,21 @@ class FakeDoc:
     Title = "fake"
     RecordChanges = False
     readonly = False
+    _runtime_uids = iter(range(1, 10000))
+
+    @property
+    def RuntimeUID(self):
+        """The document's own id while it is open — '1', '2', …
+
+        Measured on a real office, where two open documents answer with
+        different ones. Anchors are kept per document by this, since two
+        untitled documents share everything else.
+        """
+        uid = getattr(self, "_runtime_uid", None)
+        if uid is None:
+            uid = str(next(FakeDoc._runtime_uids))
+            self._runtime_uid = uid
+        return uid
 
     def isReadonly(self):
         return self.readonly

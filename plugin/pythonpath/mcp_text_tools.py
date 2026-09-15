@@ -68,8 +68,9 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to replace: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"through\": M} for a block of them, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true} for the current selection",
+                        "description": "Where to replace: {\"paragraph\": N} for a whole body paragraph, {\"paragraph\": N, \"through\": M} for a block of them, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true} for the current selection. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string", "description": "An anchor held from an earlier call, instead of an index"},
                             "paragraph": {"type": "integer", "description": "0-based body paragraph index"},
                             "offset": {"type": "integer", "description": "Characters from the paragraph start, default 0"},
                             "length": {"type": "integer", "description": "Characters to replace, default to the end of the paragraph"},
@@ -110,8 +111,9 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
+                        "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -139,8 +141,9 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Limit the check to one paragraph — {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell. Omit to check the whole document",
+                        "description": "Limit the check to one paragraph — {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell. Omit to check the whole document. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -169,8 +172,9 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -193,8 +197,9 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}",
+                        "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

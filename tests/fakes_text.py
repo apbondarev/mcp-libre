@@ -41,6 +41,9 @@ class FakeRange:
     def getEnd(self):
         return FakeRange(self.model, self.end)
 
+    def isCollapsed(self):
+        return self.start == self.end
+
 
 class FakeTextCursor:
     """A text cursor: `mark` stays put, `pos` moves, getString() spans both."""
@@ -75,13 +78,24 @@ class FakeTextCursor:
         return getattr(self.model, "owner", None) or self.model
 
     def setString(self, value):
-        self.model.replace_range(self.start, self.end, value)
+        """Rewrite the span.
+
+        Measured: the cursor that does this keeps the new text, while any
+        other cursor over the same stretch collapses to an empty position.
+        """
+        low, _ = sorted([self.start, self.end])
+        self.model.replace_range(self.start, self.end, value, writer=self)
+        self.mark = low
+        self.pos = low if "\n" in value else (low[0], low[1] + len(value))
 
     def getStart(self):
         return FakeRange(self.model, self.start)
 
     def getEnd(self):
         return FakeRange(self.model, self.end)
+
+    def isCollapsed(self):
+        return self.start == self.end
 
     def gotoStartOfParagraph(self, expand):
         self.pos = (self.pos[0], 0)
@@ -282,6 +296,7 @@ class FakeText:
             return
         if hasattr(content, "index") and not isinstance(content, dict):
             index = content.index                    # a paragraph
+            self._paragraph_removed(index)
             del self.paragraphs[index]
             del self.styles[index]
             del self.outline_levels[index]
@@ -334,6 +349,11 @@ class FakeText:
         self.created_comments = []
         self.fills = {}
         self.portions = dict(portions) if portions else {}
+        # Cursors handed out stay live in Writer: they move with the text and
+        # collapse when it is rewritten. The ones here are tracked so the
+        # same can happen — an anchor that quietly stayed valid would be a
+        # fake kinder than the thing it stands for.
+        self.held_cursors = []
         self.enumeration_items = (
             list(range(len(self.paragraphs)))
             if enumeration_items is None
@@ -465,6 +485,39 @@ class FakeText:
             raise RuntimeError(
                 "End of content node doesn't have the proper start node")
 
+    def _collapse_cursors_within(self, start, end, keeping=None):
+        """A held cursor whose text is rewritten collapses where it stood.
+
+        Measured on a real Writer: it does not throw and it does not follow
+        the new text — it is left as an empty position, which is why an
+        anchor remembers what it covered when it was made.
+        """
+        low, high = sorted([start, end])
+        for cursor in self.held_cursors:
+            if cursor is keeping or cursor.start == cursor.end:
+                continue
+            if low <= cursor.start and cursor.end <= high:
+                cursor.mark = cursor.pos = low
+
+    def _paragraph_removed(self, index):
+        """Cursors in a removed paragraph empty; those below it move up.
+
+        Which is the point of an anchor: a paragraph taken away above it
+        changes its number and not the text it points at. Called while the
+        paragraph is still there, so what survives it is one shorter.
+        """
+        left = max(0, min(index, len(self.paragraphs) - 2))
+        for cursor in self.held_cursors:
+            moved = []
+            for paragraph, offset in (cursor.mark, cursor.pos):
+                if paragraph == index:
+                    moved.append((left, 0))
+                elif paragraph > index:
+                    moved.append((paragraph - 1, offset))
+                else:
+                    moved.append((paragraph, offset))
+            cursor.mark, cursor.pos = moved
+
     def slice_text(self, start, end):
         (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
         if start_para == end_para:
@@ -477,7 +530,7 @@ class FakeText:
     def getString(self):
         return "\n".join(self.paragraphs)
 
-    def replace_range(self, start, end, value):
+    def replace_range(self, start, end, value, writer=None):
         """
         Rewrite the span, joining paragraphs when the span crosses a break
 
@@ -492,6 +545,7 @@ class FakeText:
         not change. Markers inside the span are destroyed, which is what
         makes rewriting commented text lose the comment.
         """
+        self._collapse_cursors_within(start, end, keeping=writer)
         (first, _), (last, _) = sorted([start, end])
         for paragraph in range(first, last + 1):
             declared = self.portions.pop(paragraph, None)
@@ -565,8 +619,16 @@ class FakeText:
         return 1 if left < right else (0 if left == right else -1)
 
     def createTextCursorByRange(self, text_range):
+        """A cursor over the whole range, not a caret at its start.
+
+        Measured: createTextCursorByRange over a paragraph answers with that
+        paragraph's text. The fake used to collapse, which would have let an
+        anchor over a phrase look empty the moment it was made.
+        """
         self._own(text_range)
-        return FakeTextCursor(self, text_range.start, text_range.start)
+        cursor = FakeTextCursor(self, text_range.start, text_range.end)
+        self.held_cursors.append(cursor)
+        return cursor
 
     def createEnumeration(self):
         # The table fakes stand on this module, so the import is made here

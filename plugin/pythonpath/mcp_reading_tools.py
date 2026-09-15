@@ -16,8 +16,9 @@ class ReadingTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "What to select: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, or {\"table\": \"Table1\", \"cell\": \"A2\"}",
+                        "description": "What to select: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, or {\"table\": \"Table1\", \"cell\": \"A2\"}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -60,6 +61,11 @@ class ReadingTools:
                         "type": "integer",
                         "description": "How many paragraphs to read (max 200)",
                         "default": 50
+                    },
+                    "anchors": {
+                        "type": "boolean",
+                        "description": "Give every paragraph an anchor as well as an index, so it can still be addressed after edits above it have renumbered the document",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -118,6 +124,11 @@ class ReadingTools:
                         "description": "Bring this many paragraphs after each hit, the same way. A hit inside a table cell has no body neighbours and reports null",
                         "default": 0
                     },
+                    "anchors": {
+                        "type": "boolean",
+                        "description": "Give every hit an anchor as well as an address, so a plan made from one search survives its own edits — the addresses renumber, the anchors do not",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -151,12 +162,14 @@ class ReadingTools:
         return self.uno_bridge.get_cursor_info()
 
     def read_paragraphs_live(self, start: int = 0, count: int = 50,
+                             anchors: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """Read a window of paragraphs from a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.read_paragraphs(start=start, count=count, doc=doc)
+        return self.uno_bridge.read_paragraphs(start=start, count=count,
+                                               anchors=anchors, doc=doc)
 
     def get_outline_live(self, document: Optional[str] = None) -> Dict[str, Any]:
         """List the headings of a Writer document"""
@@ -168,6 +181,7 @@ class ReadingTools:
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,
                        paragraphs_before: int = 0, paragraphs_after: int = 0,
+                       anchors: bool = False,
                        document: Optional[str] = None) -> Dict[str, Any]:
         """Find text in a Writer document, with the block around each hit"""
         doc, error = self._target_document(document)
@@ -176,7 +190,7 @@ class ReadingTools:
         return self.uno_bridge.find_text(
             query, regex=regex, case_sensitive=case_sensitive,
             max_results=max_results, paragraphs_before=paragraphs_before,
-            paragraphs_after=paragraphs_after, doc=doc)
+            paragraphs_after=paragraphs_after, anchors=anchors, doc=doc)
 
     def get_text_content_live(self) -> Dict[str, Any]:
         """Get text content of the currently active document"""

@@ -109,9 +109,9 @@ def test_records_the_change_when_asked_and_restores_the_setting(bridge, doc):
     text = doc.getText()
     original = text.replace_range
 
-    def spy(start, end, value):
+    def spy(start, end, value, writer=None):
         seen.append(doc.RecordChanges)
-        original(start, end, value)
+        original(start, end, value, writer=writer)
 
     text.replace_range = spy
 

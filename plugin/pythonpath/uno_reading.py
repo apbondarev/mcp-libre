@@ -41,12 +41,16 @@ class ReadingMixin:
 
     def read_paragraphs(self, start: int = 0,
                         count: int = DEFAULT_PARAGRAPH_COUNT,
+                        anchors: bool = False,
                         doc: Any = None) -> Dict[str, Any]:
         """
         Read a window of body paragraphs with their indices and styles
 
         count is capped at MAX_PARAGRAPH_COUNT. total_paragraphs always
         reflects the whole document, so the caller can page through it.
+
+        `anchors` hands each paragraph a token that keeps pointing at it after
+        the indices have moved, which is what a plan of several edits needs.
         """
         try:
             doc, error = self._writer_document(doc, "Reading paragraphs")
@@ -70,6 +74,8 @@ class ReadingMixin:
                     entry = _text_payload(element.getString())
                     entry["paragraph"] = total
                     entry["style"] = _get_property(element, "ParaStyleName")
+                    if anchors:
+                        entry["anchor"] = self._hold_anchor(doc, element)
                     paragraphs.append(entry)
                 total += 1
 
@@ -269,6 +275,7 @@ class ReadingMixin:
                   case_sensitive: bool = False,
                   max_results: int = DEFAULT_SEARCH_RESULTS,
                   paragraphs_before: int = 0, paragraphs_after: int = 0,
+                  anchors: bool = False,
                   doc: Any = None) -> Dict[str, Any]:
         """
         Find text in the active Writer document
@@ -283,6 +290,11 @@ class ReadingMixin:
         next anyway: a heading like "Operation" is only interesting together
         with the code block under it, and fetching that separately is a
         second call per hit.
+
+        `anchors` adds a token to every hit that goes on pointing at the match
+        while the document changes around it: a plan made from one search
+        survives its own edits, where the paragraph numbers in the addresses
+        do not.
         """
         try:
             doc, error = self._writer_document(doc, "Searching")
@@ -313,6 +325,10 @@ class ReadingMixin:
             matches = [found.getByIndex(position)
                        for position in range(min(total, limit))]
             hits = self._locate_matches(doc, matches)
+
+            if anchors:
+                for hit, match in zip(hits, matches):
+                    hit["anchor"] = self._hold_anchor(doc, match)
 
             if paragraphs_before or paragraphs_after:
                 wanted = set()

@@ -1,9 +1,10 @@
 """The address model: how a place in a document is named.
 
-Three kinds of address — a body paragraph, a table cell, or the selection —
-and the two directions between an address and a UNO range. An annotation
-counts as a position for cursor movement while adding no characters, so
-offsets are walked over the text portions rather than counted with goRight.
+A body paragraph, a block of them, a table cell, the selection, or an anchor
+made earlier — and the two directions between an address and a UNO range. An
+annotation counts as a position for cursor movement while adding no
+characters, so offsets are walked over the text portions rather than counted
+with goRight.
 The table lookups live here because a cell address needs them.
 """
 
@@ -24,8 +25,12 @@ class AddressMixin:
 
         Accepts {"paragraph": i, "offset": k, "length": n} against the body
         text, where offset defaults to 0 and an omitted length means the rest
-        of the paragraph, or {"selection": true} for the current selection.
-        Raises AddressError for anything it cannot resolve.
+        of the paragraph; {"paragraph": i, "through": j} for whole paragraphs;
+        {"table": "Table1", "cell": "A1", …} inside a table; {"selection":
+        true} for the current selection; or {"anchor": "a7f3c1"}, which names
+        a place held from an earlier call and keeps pointing at it however
+        the paragraphs around it move. Raises AddressError for anything it
+        cannot resolve.
 
         A collapsed selection resolves to an empty range rather than an error:
         inserting at a caret is legitimate, so callers needing actual content
@@ -34,6 +39,15 @@ class AddressMixin:
         if not isinstance(address, dict):
             raise AddressError(
                 f"address must be an object, got {type(address).__name__}")
+
+        if "anchor" in address:
+            for other in ("paragraph", "through", "table", "cell", "offset",
+                          "length", "selection"):
+                if other in address:
+                    raise AddressError(
+                        f"an anchor already says where: it takes no "
+                        f"{other!r} beside it")
+            return self._anchor_range(doc, address["anchor"])
 
         if address.get("selection"):
             controller = doc.getCurrentController()
@@ -60,8 +74,8 @@ class AddressMixin:
             return self._resolve_cell_address(doc, address)
 
         if "paragraph" not in address:
-            raise AddressError("address needs 'paragraph', 'cell' or "
-                               "'selection'")
+            raise AddressError("address needs 'paragraph', 'cell', "
+                               "'selection' or 'anchor'")
 
         if address.get("through") is not None:
             return self._resolve_block(doc, address)

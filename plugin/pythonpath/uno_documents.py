@@ -350,6 +350,11 @@ class DocumentsMixin:
                 except Exception as e:
                     logger.info(f"Could not clear the modified flag: {e}")
 
+        # Anchors are cursors into this document; once it closes they are
+        # disposed proxies, so they go with it rather than waiting to be
+        # asked and throwing.
+        let_go = self._drop_document_anchors(doc)
+
         try:
             doc.close(True)
         except Exception as e:
@@ -365,6 +370,7 @@ class DocumentsMixin:
         return {"success": True, "closed": title, "path": path,
                 "url": url or None, "changes_saved": saved,
                 "changes_discarded": modified and not saved,
+                "anchors_let_go": let_go,
                 "documents_still_open": remaining}
 
     def rename_document(self, new_name: str, doc: Any = None,

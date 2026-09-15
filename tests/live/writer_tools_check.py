@@ -196,10 +196,10 @@ try:
     selection.goRight(5, True)          # "Alpha"
     doc.getCurrentController().select(selection)
 
-    result = bridge.replace_selection("Первый", doc=doc)
+    result = bridge.replace_selection("First", doc=doc)
     print(result)
     check("replace succeeded", result.get("success"), True)
-    check("paragraph rewritten", target.getString(), "Первый beta alpha.")
+    check("paragraph rewritten", target.getString(), "First beta alpha.")
     check("original text is gone", "Alpha beta" in target.getString(), False)
     check("reported paragraph", result.get("paragraph"), 1)
     check("tracked", result.get("tracked"), False)
@@ -223,10 +223,10 @@ try:
     selection = body.createTextCursorByRange(target.getStart())
     selection.goRight(5, True)
     doc.getCurrentController().select(selection)
-    tracked = bridge.replace_selection("Второй", track_changes=True, doc=doc)
+    tracked = bridge.replace_selection("Second", track_changes=True, doc=doc)
     print(tracked)
     check("tracked flag", tracked.get("tracked"), True)
-    check("new text present", "Второй" in target.getString(), True)
+    check("new text present", "Second" in target.getString(), True)
     check("original still there as a tracked deletion",
           "Alpha" in target.getString(), True)
     check("redlines recorded", doc.getRedlines().getCount() > 0, True)
@@ -238,14 +238,14 @@ try:
     heading = outline_before["headings"][1]        # "Section A" at its index
     print("heading to rewrite:", heading)
     replaced = bridge.replace_range({"paragraph": heading["paragraph"]},
-                                    "Раздел А", doc=doc)
+                                    "Section Two", doc=doc)
     print(replaced)
     check("replace_range succeeded", replaced.get("success"), True)
 
     outline_after = bridge.get_outline(doc)
     check("heading text is translated",
           [h["text"] for h in outline_after["headings"]],
-          ["Chapter One", "Раздел А"])
+          ["Chapter One", "Section Two"])
     check("heading is still a heading at the same level",
           outline_after["headings"][1]["level"], heading["level"])
     check("heading is still at the same paragraph",
@@ -256,19 +256,19 @@ try:
     print("\n--- replace_range on part of a paragraph ---")
     body_paragraph = 3                              # "Gamma delta."
     part = bridge.replace_range(
-        {"paragraph": body_paragraph, "offset": 0, "length": 5}, "Гамма", doc=doc)
+        {"paragraph": body_paragraph, "offset": 0, "length": 5}, "GAMMA", doc=doc)
     check("partial replace succeeded", part.get("success"), True)
     check("only the addressed part changed",
           bridge.read_paragraphs(start=body_paragraph, count=1,
                                  doc=doc)["paragraphs"][0]["text"],
-          "Гамма delta.")
+          "GAMMA delta.")
 
     print("\n--- a search hit's address can be rewritten straight away ---")
     hit = bridge.find_text("beta", doc=doc)["hits"][0]
-    rewritten = bridge.replace_range(hit["address"], "БЕТА", doc=doc)
+    rewritten = bridge.replace_range(hit["address"], "BETA", doc=doc)
     check("hit rewritten", rewritten.get("success"), True)
     check("text now holds the replacement",
-          "БЕТА" in bridge.read_paragraphs(
+          "BETA" in bridge.read_paragraphs(
               start=hit["address"]["paragraph"], count=1,
               doc=doc)["paragraphs"][0]["text"], True)
 
@@ -635,7 +635,7 @@ try:
     check("the italic run is reported as italic",
           [r["italic"] for r in before["runs"]], [False, False, True, False])
 
-    refused = bridge.replace_range({"paragraph": 3}, "перевод", doc=doc)
+    refused = bridge.replace_range({"paragraph": 3}, "translation", doc=doc)
     print(refused)
     check("refused", refused.get("success"), False)
     check("the refusal names the run count",
@@ -662,7 +662,7 @@ try:
           "hyperlink" in linked_refused["error"].lower(), True)
 
     print("\n--- flatten=true goes ahead and reports the damage ---")
-    flattened = bridge.replace_range({"paragraph": 3}, "перевод",
+    flattened = bridge.replace_range({"paragraph": 3}, "translation",
                                      language="ru-RU", flatten=True, doc=doc)
     print(flattened)
     check("went ahead", flattened.get("success"), True)
@@ -672,7 +672,7 @@ try:
           bridge.read_runs({"paragraph": 3}, doc=doc)["count"], 1)
 
     print("\n--- a uniform paragraph is replaced without ceremony ---")
-    plain = bridge.replace_range({"paragraph": 3}, "простой текст", doc=doc)
+    plain = bridge.replace_range({"paragraph": 3}, "plain text", doc=doc)
     check("allowed", plain.get("success"), True)
     check("nothing was flattened", plain.get("runs_flattened"), None)
 
@@ -689,8 +689,8 @@ try:
         code.CharStyleName = "Source Text"
 
     anchored = bridge.add_comment({"paragraph": 3, "offset": 0, "length": 18},
-                                  "Термин – не переводится",
-                                  author="Ревьюер", doc=doc)
+                                  "A term, left untranslated",
+                                  author="Reviewer", doc=doc)
     print(anchored)
     check("the comment was anchored", anchored.get("success"), True)
     check("over the text it is about", anchored.get("anchor_text"),
@@ -702,9 +702,9 @@ try:
     listed = bridge.list_comments(doc=doc)
     print(listed)
     check("it is listed once", listed.get("count"), 1)
-    check("with its author", listed["comments"][0]["author"], "Ревьюер")
+    check("with its author", listed["comments"][0]["author"], "Reviewer")
     check("with its text", listed["comments"][0]["content"],
-          "Термин – не переводится")
+          "A term, left untranslated")
     check("and the address of the text it covers",
           listed["comments"][0]["address"],
           {"paragraph": 3, "offset": 0, "length": 18})
@@ -720,13 +720,13 @@ try:
     check("the covered runs carry it", [r["text"] for r in covered],
           ["query", " and ", "mutation"])
     check("all reporting the same comment",
-          all(r["comments"][0]["content"] == "Термин – не переводится"
+          all(r["comments"][0]["content"] == "A term, left untranslated"
               for r in covered), True)
     check("the run past the anchor carries none",
           [r["comments"] for r in runs if r["text"] == " are roots"], [[]])
 
     print("\n--- a flat replacement is refused, and counts it once ---")
-    refused = bridge.replace_range({"paragraph": 3}, "перевод", doc=doc)
+    refused = bridge.replace_range({"paragraph": 3}, "translation", doc=doc)
     print(refused)
     check("refused", refused.get("success"), False)
     check("naming one comment, not one per run",
@@ -748,8 +748,8 @@ try:
     print(after)
     check("one comment afterwards, not three", after.get("count"), 1)
     check("its text survived", after["comments"][0]["content"],
-          "Термин – не переводится")
-    check("its author survived", after["comments"][0]["author"], "Ревьюер")
+          "A term, left untranslated")
+    check("its author survived", after["comments"][0]["author"], "Reviewer")
     check("and it still covers the translated stretch",
           after["comments"][0]["anchor_text"], "query и mutation")
     check("the monospace runs survived the translation",
@@ -779,7 +779,7 @@ try:
     check("and it is still there", bridge.list_comments(doc=doc)["count"], 1)
 
     print("\n--- flatten=true drops it and says so ---")
-    flat = bridge.replace_range({"paragraph": 3}, "перевод", language="ru-RU",
+    flat = bridge.replace_range({"paragraph": 3}, "translation", language="ru-RU",
                                 flatten=True, doc=doc)
     print(flat)
     check("went ahead", flat.get("success"), True)
@@ -788,7 +788,7 @@ try:
 
     print("\n--- a comment on a point, with no text under it ---")
     point = bridge.add_comment({"paragraph": 3, "offset": 3, "length": 0},
-                               "здесь", doc=doc)
+                               "here", doc=doc)
     check("anchored", point.get("success"), True)
     point_listed = bridge.list_comments(doc=doc)
     check("listed", point_listed.get("count"), 1)
@@ -804,7 +804,7 @@ try:
     removed = bridge.delete_comment(point_id, doc=doc)
     print(removed)
     check("deleted", removed.get("success"), True)
-    check("saying what it removed", removed.get("content"), "здесь")
+    check("saying what it removed", removed.get("content"), "here")
     check("no comments left", bridge.list_comments(doc=doc)["count"], 0)
     check("the text is untouched",
           bridge.read_paragraphs(start=3, count=1,
@@ -822,9 +822,9 @@ try:
     plain.CharStyleName = "Standard"
 
     first = bridge.add_comment({"paragraph": 1, "offset": 0, "length": 5},
-                               "про Alpha", author="Ревьюер", doc=doc)
-    second = bridge.add_comment({"paragraph": 3}, "про весь абзац",
-                                author="Клод", doc=doc)
+                               "about Alpha", author="Reviewer", doc=doc)
+    second = bridge.add_comment({"paragraph": 3}, "about the whole paragraph",
+                                author="Claude", doc=doc)
     check("both anchored", (first.get("success"), second.get("success")),
           (True, True))
 
@@ -844,7 +844,7 @@ try:
                         for h in outline["headings"]])
     section = bridge.list_comments({"heading": 2}, doc=doc)
     check("the section under 'Section A' holds one", section.get("count"), 1)
-    check("which one", section["comments"][0]["content"], "про весь абзац")
+    check("which one", section["comments"][0]["content"], "about the whole paragraph")
     check("and the scope names its paragraphs", section["scope"]["paragraphs"][0], 2)
     check("the chapter above holds both",
           bridge.list_comments({"heading": 0}, doc=doc)["count"], 2)
@@ -871,18 +871,18 @@ try:
     print(selected)
     check("the selection holds one", selected.get("count"), 1)
     check("the one over the selected words", selected["comments"][0]["content"],
-          "про Alpha")
+          "about Alpha")
 
     print("\n--- editing a comment, not the document ---")
     target = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
-    changed = bridge.update_comment(target["id"], text="переформулировано",
+    changed = bridge.update_comment(target["id"], text="reworded",
                                     doc=doc)
     print(changed)
     check("changed", changed.get("success"), True)
     check("reporting what changed", changed.get("changed"), ["text"])
     after = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
-    check("the new text is there", after["content"], "переформулировано")
-    check("the author is untouched", after["author"], "Ревьюер")
+    check("the new text is there", after["content"], "reworded")
+    check("the author is untouched", after["author"], "Reviewer")
     check("it is the same comment", after["id"], target["id"])
     check("the document text is untouched",
           bridge.read_paragraphs(start=1, count=1,
@@ -891,12 +891,12 @@ try:
     check("its anchor still covers the same words",
           after["anchor_text"], "Alpha")
 
-    resolved = bridge.update_comment(target["id"], resolved=True, author="Клод",
+    resolved = bridge.update_comment(target["id"], resolved=True, author="Claude",
                                      doc=doc)
     check("resolved and reassigned", resolved.get("success"), True)
     settled = bridge.list_comments({"paragraph": 1}, doc=doc)["comments"][0]
     check("resolved", settled["resolved"], True)
-    check("reassigned", settled["author"], "Клод")
+    check("reassigned", settled["author"], "Claude")
     check("reopened again",
           bridge.update_comment(target["id"], resolved=False,
                                 doc=doc).get("resolved"), False)
@@ -931,7 +931,7 @@ try:
     check("with the same text", reloaded["comments"][0]["content"],
           survivor["content"])
     check("editing it by that id works after reopening",
-          bridge.update_comment(survivor["id"], text="после перезагрузки",
+          bridge.update_comment(survivor["id"], text="after reloading",
                                 doc=reopened).get("success"), True)
     reopened.setModified(False)
     reopened.close(True)
@@ -951,13 +951,13 @@ try:
     check("before any comment", (at(0, 5), at(6, 2), at(10, 3)),
           ("query", "is", "he "))
     first_note = bridge.add_comment({"paragraph": 1, "offset": 0, "length": 5},
-                                    "про query", doc=doc)
+                                    "about query", doc=doc)
     check("the anchor is the term", first_note.get("anchor_text"), "query")
     check("an offset past one comment still lands right",
           (at(0, 5), at(6, 2), at(10, 3)), ("query", "is", "he "))
 
     second_note = bridge.add_comment({"paragraph": 1, "offset": 6, "length": 2},
-                                     "про is", doc=doc)
+                                     "about is", doc=doc)
     check("the second anchor is right too", second_note.get("anchor_text"), "is")
     check("an offset past two comments still lands right",
           (at(0, 5), at(6, 2), at(10, 3), at(14, 5)),
@@ -1118,7 +1118,7 @@ try:
         span.getText().insertTextContent(span, picture, False)
 
     put_picture(6, "Schema", title="GraphQL schema",
-                description="схема запроса")
+                description="a query diagram")
     listed = bridge.list_images(doc=doc)
     print(listed)
     check("the document holds one picture", listed.get("count"), 1)
@@ -1133,7 +1133,7 @@ try:
           (24.3, 24.5))
     check("its size in pixels", picture["pixels"], {"width": 8, "height": 8})
     check("its title", picture["title"], "GraphQL schema")
-    check("its alternative text", picture["description"], "схема запроса")
+    check("its alternative text", picture["description"], "a query diagram")
 
     selectable = body.createTextCursorByRange(
         bridge._paragraph_at(body, 1).getStart())
@@ -1178,7 +1178,7 @@ try:
         os.unlink(leftover)
 
     print("\n--- a rewrite that would destroy it is refused ---")
-    refused = bridge.replace_range({"paragraph": 1}, "перевод", doc=doc)
+    refused = bridge.replace_range({"paragraph": 1}, "translation", doc=doc)
     print(refused)
     check("refused", refused.get("success"), False)
     check("naming the picture", "inline picture" in refused["error"], True)
@@ -1215,7 +1215,7 @@ try:
     check("and its own name", after["images"][0]["name"], "Schema")
 
     print("\n--- flatten=true destroys it, and says so ---")
-    flattened = bridge.replace_range({"paragraph": 1}, "перевод целиком",
+    flattened = bridge.replace_range({"paragraph": 1}, "a whole translation",
                                      flatten=True, doc=doc)
     print(flattened)
     check("went ahead", flattened.get("success"), True)
@@ -1231,7 +1231,7 @@ try:
     anchored = bridge.list_images(doc=doc)["images"][0]
     check("reported as not inline", anchored["inline"], False)
     check("with its anchor kind", anchored["anchor"], "AT_CHARACTER")
-    allowed = bridge.replace_range({"paragraph": 1}, "перевод", flatten=True,
+    allowed = bridge.replace_range({"paragraph": 1}, "translation", flatten=True,
                                    doc=doc)
     check("the rewrite went ahead", allowed.get("success"), True)
     check("nothing was reported destroyed", allowed.get("images_dropped"), 0)
@@ -1243,13 +1243,13 @@ try:
     caret = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
     caret.goRight(3, False)
     doc.getCurrentController().select(caret)
-    point = bridge.replace_range({"selection": True}, "ПРОБА", doc=doc)
+    point = bridge.replace_range({"selection": True}, "PROBE", doc=doc)
     print(point)
     check("refused", point.get("success"), False)
     check("saying there is nothing to replace",
           "nothing to replace" in point["error"], True)
     explicit = bridge.replace_range({"paragraph": 1, "offset": 3, "length": 0},
-                                    "ПРОБА", doc=doc)
+                                    "PROBE", doc=doc)
     check("an explicit zero length too", explicit.get("success"), False)
     check("and nothing was written",
           bridge.read_paragraphs(start=1, count=1,
@@ -1328,7 +1328,7 @@ try:
     mark = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
     mark.gotoEndOfParagraph(True)
     doc.getCurrentController().select(mark)
-    commented = bridge.add_comment({"selection": True}, "по выделению", doc=doc)
+    commented = bridge.add_comment({"selection": True}, "on the selection", doc=doc)
     print("   ", commented)
     check("a comment goes on the selection", commented.get("success"), True)
     check("anchored to what was selected", commented.get("anchor_text"),
@@ -1338,8 +1338,8 @@ try:
     print("\n--- a block of paragraphs is one address ---")
     body = doc.getText()
     tail = body.createTextCursorByRange(body.getEnd())
-    for line in ("БЛОК-НАЧАЛО", "{", "  hero {", "    name", "  }", "}",
-                 "БЛОК-КОНЕЦ"):
+    for line in ("BLOCK-START", "{", "  hero {", "    name", "  }", "}",
+                 "BLOCK-END"):
         body.insertControlCharacter(tail, PARAGRAPH_BREAK, False)
         body.insertString(tail, line, False)
     total = bridge.read_paragraphs(start=0, count=200, doc=doc)["count"]
@@ -1350,9 +1350,9 @@ try:
     print("   the block reads:", repr(span.getString()[:40]), "…",
           len(span.getString()), "chars")
     check("a block resolves to all of it",
-          span.getString().splitlines()[0], "БЛОК-НАЧАЛО")
+          span.getString().splitlines()[0], "BLOCK-START")
     check("through the last of them",
-          span.getString().splitlines()[-1], "БЛОК-КОНЕЦ")
+          span.getString().splitlines()[-1], "BLOCK-END")
     check("a block that runs backwards is refused",
           _refused(bridge, doc, {"paragraph": last, "through": first}), True)
     check("and one that takes an offset too",
@@ -1372,7 +1372,7 @@ try:
                                columns=2,
                                cells=[["Operation", "Response"],
                                       ["{ hero }", '{ "R2-D2" }']],
-                               name="ИзБлока", replace=True, doc=doc)
+                               name="FromBlock", replace=True, doc=doc)
     print("   ", made)
     check("a table replaces the whole block", made.get("success"), True)
     check("saying which paragraphs went",
@@ -1381,30 +1381,30 @@ try:
           bridge.read_paragraphs(start=0, count=200, doc=doc)["count"],
           total - 7)
     check("while the table stands there",
-          bridge.read_table("ИзБлока", cell="A1", doc=doc)["text"], "Operation")
-    bridge.delete_table("ИзБлока", doc=doc)
+          bridge.read_table("FromBlock", cell="A1", doc=doc)["text"], "Operation")
+    bridge.delete_table("FromBlock", doc=doc)
 
     print("\n--- making a table, and taking one away ---")
     body = doc.getText()
     before_tables = len(doc.getTextTables().getElementNames())
     made = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
-                               cells=[["Операция", "Ответ"],
+                               cells=[["Operation", "Response"],
                                       ["{ hero { name } }", '{ "R2-D2" }']],
-                               name="ЖивойПример", header_rows=1,
+                               name="LiveExample", header_rows=1,
                                repeat_heading=True, doc=doc)
     print("   ", made)
     check("made", made.get("success"), True)
-    check("with the name asked for", made.get("table"), "ЖивойПример")
+    check("with the name asked for", made.get("table"), "LiveExample")
     check("and every cell filled", made.get("cells_filled"), 4)
-    read = bridge.read_table("ЖивойПример", doc=doc)
+    read = bridge.read_table("LiveExample", doc=doc)
     check("holding what it was given",
           [[cell["text"] for cell in row] for row in read["rows"]],
-          [["Операция", "Ответ"], ["{ hero { name } }", '{ "R2-D2" }']])
+          [["Operation", "Response"], ["{ hero { name } }", '{ "R2-D2" }']])
     check("marked as having a heading", read["table"]["header_rows"], 1)
     check("the document has one more table",
           len(doc.getTextTables().getElementNames()), before_tables + 1)
     check("a name already taken is refused",
-          bridge.create_table({"paragraph": 1}, name="ЖивойПример",
+          bridge.create_table({"paragraph": 1}, name="LiveExample",
                               doc=doc).get("success"), False)
     check("a silly size is refused",
           bridge.create_table({"paragraph": 1}, rows=0,
@@ -1415,13 +1415,13 @@ try:
     # document as they expect it — they share one, which is easy to forget.
     tail = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(tail, PARAGRAPH_BREAK, False)
-    body.insertString(tail, "Операция: { hero }", False)
+    body.insertString(tail, "Operation: { hero }", False)
     paragraphs_before = bridge.read_paragraphs(start=0, count=60,
                                                doc=doc)["count"]
     mine = paragraphs_before - 1
     replaced = bridge.create_table({"paragraph": mine}, rows=1, columns=2,
-                                   cells=[["Операция", "{ hero }"]],
-                                   name="ВместоТекста", replace=True, doc=doc)
+                                   cells=[["Operation", "{ hero }"]],
+                                   name="InsteadOfText", replace=True, doc=doc)
     print("   ", replaced)
     check("the table stands in its place", replaced.get("success"), True)
     check("saying which paragraphs it replaced",
@@ -1430,19 +1430,19 @@ try:
           bridge.read_paragraphs(start=0, count=60, doc=doc)["count"],
           paragraphs_before - 1)
     check("while the table holds their text",
-          bridge.read_table("ВместоТекста", cell="B1", doc=doc)["text"],
+          bridge.read_table("InsteadOfText", cell="B1", doc=doc)["text"],
           "{ hero }")
 
     print("\n   and taking them away again")
-    removed = bridge.delete_table("ВместоТекста", doc=doc)
+    removed = bridge.delete_table("InsteadOfText", doc=doc)
     print("   ", {k: v for k, v in removed.items() if k != "held"})
     check("removed", removed.get("success"), True)
     check("saying what it held",
           sorted(entry["text"] for entry in removed["held"]),
-          sorted(["Операция", "{ hero }"]))
+          sorted(["Operation", "{ hero }"]))
     check("a table that is not there is refused",
-          bridge.delete_table("Нет такой", doc=doc).get("success"), False)
-    bridge.delete_table("ЖивойПример", doc=doc)
+          bridge.delete_table("No such table", doc=doc).get("success"), False)
+    bridge.delete_table("LiveExample", doc=doc)
     check("the document is back to the tables it had",
           len(doc.getTextTables().getElementNames()), before_tables)
 
@@ -1480,11 +1480,11 @@ try:
     check("read_runs reads a cell", [run["text"] for run in runs["runs"]],
           ["Operation"])
     rewritten = bridge.replace_range({"table": table_name, "cell": "B2"},
-                                     "R2-D2 и C-3PO", doc=doc)
+                                     "R2-D2 and C-3PO", doc=doc)
     check("replace_range writes into a cell", rewritten.get("success"), True)
     check("and the cell holds it",
           bridge.read_table(table_name, cell="B2", doc=doc)["text"],
-          "R2-D2 и C-3PO")
+          "R2-D2 and C-3PO")
     check("apply_paragraph_style works there",
           bridge.apply_paragraph_style({"table": table_name, "cell": "A2"},
                                        "Preformatted Text",
@@ -1496,7 +1496,7 @@ try:
           bridge.format_range({"table": table_name, "cell": "B1"}, bold=True,
                               doc=doc).get("success"), True)
     commented = bridge.add_comment({"table": table_name, "cell": "A1"},
-                                   "Термин", doc=doc)
+                                   "A term", doc=doc)
     check("a comment can be anchored in a cell", commented.get("success"), True)
     check("on the cell's text", commented.get("anchor_text"), "Operation")
     listed_comments = [comment for comment
@@ -1640,11 +1640,11 @@ try:
     # have been rewritten by the checks above, and borrowing them is how a
     # section comes to depend on what ran before it.
     marker = body.createTextCursorByRange(body.getEnd())
-    for line in ("МАЯК-ПОИСКА", "первый после", "второй после"):
+    for line in ("SEARCH-BEACON", "first after", "second after"):
         body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
         body.insertString(marker, line, False)
 
-    found = bridge.find_text("МАЯК-ПОИСКА", paragraphs_after=2,
+    found = bridge.find_text("SEARCH-BEACON", paragraphs_after=2,
                              paragraphs_before=1, doc=doc)
     print("   ", found["hits"][0] if found["hits"] else found)
     check("the hit is there", found.get("total_hits"), 1)
@@ -1652,16 +1652,16 @@ try:
     at = first["address"]["paragraph"]
     check("with the paragraphs after it",
           [entry["text"] for entry in first["after"]],
-          ["первый после", "второй после"])
+          ["first after", "second after"])
     check("and the one before",
           [entry["paragraph"] for entry in first["before"]], [at - 1])
     check("each with its style",
           all(entry["style"] for entry in first["after"]), True)
     check("asking for too much neighbourhood is refused",
-          bridge.find_text("МАЯК-ПОИСКА", paragraphs_after=500,
+          bridge.find_text("SEARCH-BEACON", paragraphs_after=500,
                            doc=doc).get("success"), False)
     check("and without asking, none come",
-          "after" in bridge.find_text("МАЯК-ПОИСКА", doc=doc)["hits"][0],
+          "after" in bridge.find_text("SEARCH-BEACON", doc=doc)["hits"][0],
           False)
 
     in_cell = bridge.find_text("Operation", paragraphs_after=2, doc=doc)
@@ -1741,15 +1741,15 @@ try:
     check("and the coloured pieces of their text",
           any(run["color"] for run in cells["A2"]["runs"]), True)
     check("describing a table that is not there is refused",
-          bridge.describe_table("Нет такой", doc=doc).get("success"), False)
+          bridge.describe_table("No such table", doc=doc).get("success"), False)
 
     print("\n   and the look reads back into format_table:")
     look = described["table"]
     second = bridge.create_table({"paragraph": 1}, rows=2, columns=2,
-                                 name="Копия", doc=doc)
+                                 name="Copy", doc=doc)
     check("a second table was made", second.get("success"), True)
     copied = bridge.format_table(
-        "Копия", border=True,
+        "Copy", border=True,
         border_color=look["border"]["outer"]["color"],
         border_width=look["border"]["outer"]["width_mm"],
         padding_mm=look["padding_mm"],
@@ -1757,11 +1757,11 @@ try:
         header_rows=look["header_rows"],
         header_background_color=cells["A1"]["background_color"], doc=doc)
     check("dressed from what was read", copied.get("success"), True)
-    twin = bridge.describe_table("Копия", doc=doc)
+    twin = bridge.describe_table("Copy", doc=doc)
     check("and the copy looks like the original",
           (twin["table"]["border"]["outer"], twin["table"]["padding_mm"]),
           (look["border"]["outer"], look["padding_mm"]))
-    bridge.delete_table("Копия", doc=doc)
+    bridge.delete_table("Copy", doc=doc)
 
     print("\n--- a selection running from text through a table ---")
     body = doc.getText()
@@ -1793,7 +1793,7 @@ try:
           runs.get("spans_tables"), [{"name": table_name, "rows": 2,
                                       "columns": 2}])
 
-    refused = bridge.replace_selection("перевод", doc=doc)
+    refused = bridge.replace_selection("translation", doc=doc)
     print("   replace_selection:", refused)
     check("replacing it is refused", refused.get("success"), False)
     check("naming the table and its size",
@@ -1804,7 +1804,7 @@ try:
     print("\n   and with flatten, the damage is done and counted:")
     before_paragraphs = bridge.read_paragraphs(start=3, count=1,
                                                doc=doc)["paragraphs"][0]["text"]
-    flattened = bridge.replace_selection("всё заменено", flatten=True, doc=doc)
+    flattened = bridge.replace_selection("all replaced", flatten=True, doc=doc)
     print("   ", flattened)
     check("went ahead", flattened.get("success"), True)
     check("counting the table it destroyed", flattened.get("tables_dropped"), 1)
@@ -1891,7 +1891,7 @@ try:
     plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
     plain.gotoEndOfParagraph(True)
     plain.setString("query is the entry point")
-    put_picture(6, "Chosen", title="the chosen one", description="выделенная")
+    put_picture(6, "Chosen", title="the chosen one", description="the selected one")
     chosen = doc.getGraphicObjects().getByName("Chosen")
     doc.getCurrentController().select(chosen)
 
@@ -1927,7 +1927,7 @@ try:
           b"\x89PNG\r\n\x1a\x0a")
     os.unlink(saved["path"])
 
-    refused = bridge.replace_selection("перевод", doc=doc)
+    refused = bridge.replace_selection("translation", doc=doc)
     print(refused)
     check("a text tool says what is really selected",
           "a picture is selected" in refused.get("error", ""), True)
@@ -2006,6 +2006,102 @@ try:
                      "/tmp/mcp_live_addr.png"):
         os.unlink(leftover)
 
+    print("\n--- an anchor keeps pointing while the paragraphs move ---")
+    # Paragraphs of this section's own, so nothing here depends on what ran
+    # before it.
+    marker = body.createTextCursorByRange(body.getEnd())
+    for line in ("ANCHOR-ABOVE", "ANCHOR-ONE", "ANCHOR-TWO"):
+        body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+        body.insertString(marker, line, False)
+    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    above, first, second = total - 3, total - 2, total - 1
+
+    held = bridge.anchor([{"paragraph": first}, {"paragraph": second}], doc=doc)
+    print("   ", held)
+    check("both places anchored", held.get("held"), 2)
+    one, two = [entry["anchor"] for entry in held["anchors"]]
+    check("and each says what it holds",
+          [entry["text"] for entry in held["anchors"]],
+          ["ANCHOR-ONE", "ANCHOR-TWO"])
+
+    body.removeTextContent(bridge._paragraph_at(body, above))
+    check("the index it was found at now names the next paragraph",
+          bridge._resolve_address(doc, {"paragraph": first}).getString(),
+          "ANCHOR-TWO")
+    check("the anchor still holds its own text",
+          bridge._resolve_address(doc, {"anchor": one}).getString(),
+          "ANCHOR-ONE")
+    listed = bridge.list_anchors(doc=doc)
+    moved = [entry for entry in listed["anchors"] if entry["anchor"] == one][0]
+    check("and reports where it has moved to",
+          moved["address"]["paragraph"], first - 1)
+
+    written = bridge.replace_range({"anchor": one}, "ANCHOR-REWRITTEN", doc=doc)
+    check("an anchor is an address a replacement takes",
+          written.get("success"), True)
+    check("and it goes on pointing at what it replaced with",
+          bridge._resolve_address(doc, {"anchor": one}).getString(),
+          "ANCHOR-REWRITTEN")
+
+    bridge.replace_range({"paragraph": second - 1}, "REWRITTEN PAST IT", doc=doc)
+    stale = False
+    try:
+        bridge._resolve_address(doc, {"anchor": two})
+    except AddressError as e:
+        stale = True
+        print("   refused:", e)
+    check("an anchor whose text was rewritten past it refuses", stale, True)
+    dead = [entry for entry in bridge.list_anchors(doc=doc)["anchors"]
+            if entry["anchor"] == two][0]
+    check("and is listed as dead, saying what it held",
+          (dead["alive"], dead["held_when_made"]), (False, "ANCHOR-TWO"))
+
+    hits = bridge.find_text("ANCHOR-REWRITTEN", anchors=True, doc=doc)
+    check("a search can hand back an anchor per hit",
+          bridge._resolve_address(
+              doc, {"anchor": hits["hits"][0]["anchor"]}).getString(),
+          "ANCHOR-REWRITTEN")
+
+    table.getCellByName("A1").setString("ANCHOR-IN-CELL")
+    in_cell = bridge.anchor({"table": table_name, "cell": "A1"}, doc=doc)
+    check("a cell can be anchored too",
+          bridge._resolve_address(
+              doc, {"anchor": in_cell["anchors"][0]["anchor"]}).getString(),
+          "ANCHOR-IN-CELL")
+
+    # A cursor into a cell whose table is taken away is disposed, not merely
+    # emptied: it throws, and the refusal has to say so rather than pass the
+    # exception on.
+    doomed = doc.createInstance("com.sun.star.text.TextTable")
+    doomed.initialize(1, 1)
+    doomed.setName("AnchorTable")
+    end = body.createTextCursorByRange(body.getEnd())
+    body.insertTextContent(end, doomed, False)
+    doomed.getCellByName("A1").setString("WILL-VANISH")
+    gone = bridge.anchor({"table": "AnchorTable", "cell": "A1"},
+                         doc=doc)["anchors"][0]["anchor"]
+    body.removeTextContent(doomed)
+    refused = None
+    try:
+        bridge._resolve_address(doc, {"anchor": gone})
+    except AddressError as e:
+        refused = str(e)
+    check("an anchor in a table that is gone refuses rather than throwing",
+          refused is not None and "is gone" in refused, True)
+    check("and list_anchors says the same without raising",
+          [entry["alive"] for entry in bridge.list_anchors(doc=doc)["anchors"]
+           if entry["anchor"] == gone], [False])
+
+    check("anchors are let go when asked",
+          bridge.drop_anchors(doc=doc).get("count") >= 3, True)
+    check("and then the token means nothing",
+          _refused(bridge, doc, {"anchor": one}), True)
+
+    for _ in range(2):                      # take this section's paragraphs away
+        last = bridge._paragraph_at(body, bridge.read_paragraphs(
+            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+        body.removeTextContent(last)
+
     print("\n--- saving under a name, closing, renaming ---")
     import zipfile
     yard = "/tmp/mcp_live_documents"
@@ -2017,7 +2113,7 @@ try:
 
     fresh = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                          0, ())
-    fresh.getText().setString("Документ для проверки сохранения")
+    fresh.getText().setString("A document to check saving")
     check("a new document lives nowhere yet", fresh.hasLocation(), False)
     check("and saving it without a name is refused",
           bridge.save_document(doc=fresh).get("success"), False)
@@ -2073,7 +2169,7 @@ try:
           os.path.join(yard, "Руководство.docx"))
 
     print("\n   closing:")
-    fresh.getText().setString("изменено и не сохранено")
+    fresh.getText().setString("changed and unsaved")
     check("a document with unsaved changes is not closed",
           bridge.close_document(doc=fresh).get("success"), False)
     check("it is still open", fresh.hasLocation(), True)
@@ -2087,7 +2183,7 @@ try:
 
     throwaway = desktop.loadComponentFromURL("private:factory/swriter",
                                              "_blank", 0, ())
-    throwaway.getText().setString("это не нужно сохранять")
+    throwaway.getText().setString("this need not be saved")
     check("a document that lives nowhere cannot save on the way out",
           bridge.close_document(doc=throwaway, unsaved="save").get("success"),
           False)

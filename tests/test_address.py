@@ -97,7 +97,7 @@ def test_rejects_a_negative_paragraph(bridge, doc):
 
 def test_rejects_an_address_with_neither_key(bridge, doc):
     with pytest.raises(AddressError,
-                       match="'paragraph', 'cell' or 'selection'"):
+                       match="'paragraph', 'cell', 'selection' or 'anchor'"):
         bridge._resolve_address(doc, {"offset": 3})
 
 

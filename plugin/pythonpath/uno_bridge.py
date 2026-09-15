@@ -12,6 +12,8 @@ Where a method lives:
     uno_address.py     the address model, and the two directions between an
                        address and a UNO range; the table lookups a cell
                        address needs
+    uno_anchors.py     anchors: a held cursor that keeps pointing at a place
+                       while the paragraphs around it move
     uno_documents.py   documents themselves: active, open, saved, closed,
                        renamed, exported
     uno_view.py        the caret, the selection, the page
@@ -37,6 +39,7 @@ import logging
 from uno_values import (AddressError, MAX_OUTLINE_ENTRIES,  # noqa: F401
                         MAX_PARAGRAPH_COUNT, MAX_TEXT_CHARS)
 from uno_address import AddressMixin
+from uno_anchors import AnchorsMixin
 from uno_documents import DocumentsMixin
 from uno_view import ViewMixin
 from uno_reading import ReadingMixin
@@ -56,7 +59,8 @@ logger = logging.getLogger(__name__)
 
 class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
                 CommentsMixin, RunsMixin, FormattingMixin, EditingMixin,
-                ReadingMixin, ViewMixin, DocumentsMixin, AddressMixin):
+                ReadingMixin, ViewMixin, DocumentsMixin, AnchorsMixin,
+                AddressMixin):
     """Bridge between MCP operations and LibreOffice UNO API"""
 
     def __init__(self):

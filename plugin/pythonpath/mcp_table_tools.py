@@ -17,8 +17,9 @@ class TableTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Where it goes: {\"paragraph\": N} puts the table before that paragraph, {\"paragraph\": N, \"through\": M} covers a whole block of paragraphs (which is what replace=true then clears away), {\"selection\": true} before the selected text. Omit for the selection",
+                        "description": "Where it goes: {\"paragraph\": N} puts the table before that paragraph, {\"paragraph\": N, \"through\": M} covers a whole block of paragraphs (which is what replace=true then clears away), {\"selection\": true} before the selected text. Omit for the selection. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
+                            "anchor": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

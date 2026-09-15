@@ -6,6 +6,7 @@ document a tool is asked to act on — while the tools themselves live beside
 their subject, one module per part:
 
     mcp_reading_tools.py     where the reader is, what the document says
+    mcp_anchor_tools.py      names for places that outlast an edit
     mcp_text_tools.py        changing text, its language, its spelling
     mcp_formatting_tools.py  how text looks, and the styles behind it
     mcp_document_tools.py    documents: making, saving, closing, renaming
@@ -23,6 +24,7 @@ import logging
 from typing import Dict, Any, Optional, List
 from uno_bridge import UNOBridge
 from mcp_reading_tools import ReadingTools
+from mcp_anchor_tools import AnchorTools
 from mcp_text_tools import TextTools
 from mcp_formatting_tools import FormattingTools
 from mcp_document_tools import DocumentTools
@@ -37,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
-                           ReadingTools):
+                           AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
     
     def __init__(self):
@@ -50,6 +52,7 @@ class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools,
     def _register_tools(self):
         """Register all available MCP tools, part by part."""
         self._register_reading()
+        self._register_anchor()
         self._register_text()
         self._register_formatting()
         self._register_document()
