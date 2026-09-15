@@ -116,8 +116,8 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 41 | ~398 | 200+ | 40 | 9 (× actions) |
-| addressing | paragraph / block / range / cell / selection | cursor + index | paragraph id | index **+ stable anchor** | index |
+| tools | 44 | ~398 | 200+ | 40 | 9 (× actions) |
+| addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
 | comments | list/add/update/delete, language, ids | list/add/update/delete/resolve | + **threads** | + threads | list/add |
@@ -142,23 +142,37 @@ What nobody else in the survey has, and we should not lose while copying from th
 
 ## 3. What to add here, in order
 
-### 3.1 Session anchors — the one real interface gap
+### 3.1 Session anchors — **done**, and what it turned out to be
 
 Our addresses are indices, and indices move. Our own note for the GraphQL document
-tells an agent to walk blocks **from the last to the first** so that a `create_table`
-with `replace: true` does not invalidate the indices it collected — that instruction
-exists only because the interface has no stable handle.
+told an agent to walk blocks **from the last to the first** so that a `create_table`
+with `replace: true` would not invalidate the indices it collected — that instruction
+existed only because the interface had no stable handle.
 
-UNO gives us a better primitive than Word's `paraId`: a `XTextRange`/`XTextCursor`
-**moves with the text on its own**. So: a server-side registry mapping a token
-(`"a7f3"`) to a live range, an extra address form `{"anchor": "a7f3"}`, `find_text`
-and `read_paragraphs` handing back an anchor per hit or paragraph, and every mutating
-tool returning the anchors of what it touched. Cheap, and it removes a whole class of
-"re-read after every edit" round trips. Open questions to measure: whether a range
-survives the edits that matter (it should, that is what `XTextRange` is for), what
-happens when its paragraph is deleted, and whether a bookmark is wanted for the case
-where a handle must outlive the session (a bookmark is saved in the file, which is a
-different promise).
+UNO turned out to give a better primitive than Word's `paraId`: a text cursor is kept
+by the document and moves with the text. `anchor` hands out a token for one,
+`{"anchor": "a7f3c1"}` is an address anywhere an address is taken, and `find_text` and
+`read_paragraphs` hand one back per hit or paragraph with `anchors: true`.
+`list_anchors` says where each points now, `drop_anchors` lets them go.
+
+The open questions in the first draft of this section were measured rather than
+guessed, and the answers shaped the tool:
+
+- A held cursor keeps its text when a paragraph above it is removed or inserted, and
+  grows when text is inserted inside it.
+- The cursor that performs the rewrite **keeps the new text**, so a replacement made
+  *through* an anchor leaves that anchor pointing at the replacement. Any other cursor
+  over the same stretch collapses to an empty position — without throwing, and
+  indistinguishable from a caret by asking. So an anchor records what it covered when
+  it was made, and a stale one is refused by name rather than resolved to the hole it
+  left.
+- A cursor into a cell whose table is removed, or into a closed document, throws
+  `SwXTextCursor: disposed or invalid` — caught, and reported as "is gone".
+- Documents are told apart by `RuntimeUID`, which is what makes an anchor refuse a
+  document it was not made in.
+- A **bookmark** moves the same way and is saved in the file, so it is the answer when
+  a handle must outlive the session — at the cost of showing up in the user's
+  Navigator. Anchors deliberately do not.
 
 ### 3.2 Origin/Host validation, and no `Access-Control-Allow-Origin: *`
 
