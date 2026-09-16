@@ -119,6 +119,7 @@ try:
     bridge = UNOBridge.__new__(UNOBridge)  # no local desktop wanted
     bridge.ctx = ctx
     bridge.smgr = ctx.ServiceManager
+    bridge.desktop = desktop        # for the tools that find a document themselves
 
     print("--- get_outline ---")
     outline = bridge.get_outline(doc)
@@ -2098,6 +2099,80 @@ try:
           _refused(bridge, doc, {"anchor": one}), True)
 
     for _ in range(2):                      # take this section's paragraphs away
+        last = bridge._paragraph_at(body, bridge.read_paragraphs(
+            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+        body.removeTextContent(last)
+
+    print("\n--- a plan carried out in one call, and taken back in one step ---")
+    from mcp_server import LibreOfficeMCPServer
+    server = LibreOfficeMCPServer.__new__(LibreOfficeMCPServer)
+    server.uno_bridge = bridge
+    server.tools = {}
+    server._register_tools()
+    check("the server registers its tools", len(server.tools) >= 45, True)
+
+    marker = body.createTextCursorByRange(body.getEnd())
+    for line in ("BATCH-ONE", "BATCH-TWO", "BATCH-THREE"):
+        body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+        body.insertString(marker, line, False)
+    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    first = total - 3
+
+    batched = server.batch_live(
+        [{"tool": "replace_range_live",
+          "parameters": {"address": {"paragraph": first + offset},
+                         "text": f"BATCHED-{offset}"}}
+         for offset in (0, 1, 2)],
+        undo_title="MCP: three at once")
+    print("   ", {key: batched[key] for key in
+                  ("success", "steps", "done", "failed", "undo_title")})
+    check("every step ran", (batched["done"], batched["failed"]), (3, 0))
+    check("and the text is theirs",
+          [entry["text"] for entry in bridge.read_paragraphs(
+              start=first, count=3, doc=doc)["paragraphs"]],
+          ["BATCHED-0", "BATCHED-1", "BATCHED-2"])
+    titles = list(doc.UndoManager.getAllUndoActionTitles())
+    # Not by counting: Writer's undo stack has a limit, and on a full one a
+    # new entry pushes the oldest out without the count moving.
+    check("three edits left one undo entry, named after the batch",
+          (titles[0], titles[1] != "MCP: three at once"),
+          ("MCP: three at once", True))
+
+    doc.UndoManager.undo()
+    check("and one undo takes all three back",
+          [entry["text"] for entry in bridge.read_paragraphs(
+              start=first, count=3, doc=doc)["paragraphs"]],
+          ["BATCH-ONE", "BATCH-TWO", "BATCH-THREE"])
+
+    failing = server.batch_live(
+        [{"tool": "replace_range_live",
+          "parameters": {"address": {"paragraph": first}, "text": "HALF-DONE"}},
+         {"tool": "replace_range_live",
+          "parameters": {"address": {"paragraph": 99999}, "text": "nowhere"}}],
+        on_error="undo")
+    print("   ", failing.get("error"))
+    check("a failed batch is taken back whole",
+          (failing["success"], failing["undone"]), (False, True))
+    check("so the document is as it was",
+          bridge.read_paragraphs(start=first, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "BATCH-ONE")
+
+    check("a batch of a tool that does not exist is refused before it runs",
+          server.batch_live([{"tool": "translate_live"}]).get("success"), False)
+    check("and a batch inside a batch",
+          server.batch_live([{"tool": "batch_live"}]).get("success"), False)
+
+    top_before_reading = doc.UndoManager.getAllUndoActionTitles()[0]
+    read_back = server.batch_live([{"tool": "read_paragraphs_live",
+                                    "parameters": {"start": first, "count": 1}}])
+    check("a batch that only reads leaves no undo entry",
+          doc.UndoManager.getAllUndoActionTitles()[0], top_before_reading)
+    check("and carries the result of every step",
+          read_back["results"][0]["result"]["paragraphs"][0]["text"],
+          "BATCH-ONE")
+
+    for _ in range(3):                      # take this section's paragraphs away
         last = bridge._paragraph_at(body, bridge.read_paragraphs(
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)

@@ -234,16 +234,66 @@ class FakeController:
 
 
 class FakeUndoManager:
-    """Records the undo contexts a tool opens and closes."""
+    """Records the undo contexts a tool opens, and can take an edit back.
 
-    def __init__(self):
+    Faithful to what was measured on a real Writer: contexts nest and only
+    the outermost becomes an entry, a context that wrote nothing leaves no
+    entry at all, and one undo takes back everything the outer context held.
+    """
+
+    # Writer keeps a limited number of undo steps and drops the oldest, so a
+    # new entry on a full stack does not make the stack longer — measured,
+    # after a failed batch went untaken-back because the count had not moved.
+    limit = 100
+
+    def __init__(self, text=None):
         self.calls = []
+        self.text = text
+        self.entries = []
+        self._depth = 0
+        self._snapshot = None
+        self._title = ""
+
+    def _state(self):
+        if self.text is None:
+            return None
+        return (list(self.text.paragraphs), list(self.text.styles),
+                list(self.text.outline_levels),
+                {key: list(value) for key, value in self.text.portions.items()})
+
+    def _restore(self, state):
+        paragraphs, styles, levels, portions = state
+        self.text.paragraphs[:] = paragraphs
+        self.text.styles[:] = styles
+        self.text.outline_levels[:] = levels
+        self.text.portions.clear()
+        self.text.portions.update(portions)
 
     def enterUndoContext(self, title):
         self.calls.append(("enter", title))
+        if self._depth == 0:
+            self._snapshot = self._state()
+            self._title = title            # the outer one is what is seen
+        self._depth += 1
 
     def leaveUndoContext(self):
         self.calls.append(("leave", None))
+        self._depth = max(0, self._depth - 1)
+        if self._depth or self._snapshot is None:
+            return
+        if self._state() != self._snapshot:      # nothing written, no entry
+            self.entries.append((self._title, self._snapshot))
+            del self.entries[:-self.limit]
+        self._snapshot = None
+
+    def getAllUndoActionTitles(self):
+        return tuple(title for title, _ in reversed(self.entries))
+
+    def undo(self):
+        if not self.entries:
+            raise RuntimeError("nothing to undo")
+        _title, state = self.entries.pop()
+        self._restore(state)
 
 
 class FakeRedlines:
@@ -376,7 +426,7 @@ class FakeWriterDoc(FakeDoc):
         self._controller = controller
         self.tables = []
         text.owner_document = self          # so a new table joins the document
-        self.UndoManager = FakeUndoManager()
+        self.UndoManager = FakeUndoManager(text)
         # A comment belongs to the document it is in, and follows its
         # "Comment" style unless its own text was typed in a language.
         for paragraph in range(len(text.paragraphs)):

@@ -13,6 +13,7 @@ their subject, one module per part:
     mcp_image_tools.py       pictures, and a picture of a page
     mcp_comment_tools.py     the notes in the margin
     mcp_table_tools.py       tables
+    mcp_batch_tools.py       several calls as one edit
 
 Adding a tool is still three edits, now in two files: a UNOBridge method in
 its part of the bridge, a thin *_live handler here in its part of the server,
@@ -31,13 +32,14 @@ from mcp_document_tools import DocumentTools
 from mcp_image_tools import ImageTools
 from mcp_comment_tools import CommentTools
 from mcp_table_tools import TableTools
+from mcp_batch_tools import BatchTools
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools, 
+class LibreOfficeMCPServer(BatchTools, TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
                            AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
@@ -59,6 +61,7 @@ class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools,
         self._register_image()
         self._register_comment()
         self._register_table()
+        self._register_batch()
 
     async def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -79,12 +82,7 @@ class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools,
                     "available_tools": list(self.tools.keys())
                 }
             
-            tool = self.tools[tool_name]
-            handler = tool["handler"]
-            
-            # Execute the tool handler
-            result = handler(**parameters)
-            
+            result = self._run_tool(tool_name, parameters)
             logger.info(f"Executed tool '{tool_name}' successfully")
             return result
             
@@ -97,6 +95,28 @@ class LibreOfficeMCPServer(TableTools, CommentTools, ImageTools,
                 "parameters": parameters
             }
     
+    def _run_tool(self, tool_name: str,
+                  parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Call one tool's handler and answer with a dict, whatever happens.
+
+        The dispatch execute_tool has always done, split out so batch_live
+        can make the same call without going round the transport again.
+        """
+        if tool_name not in self.tools:
+            return {"success": False,
+                    "error": f"Unknown tool: {tool_name}",
+                    "available_tools": list(self.tools.keys())}
+        try:
+            return self.tools[tool_name]["handler"](**(parameters or {}))
+        except TypeError as e:
+            logger.error(f"Tool '{tool_name}' was called wrongly: {e}")
+            return {"success": False, "error": str(e), "tool": tool_name,
+                    "parameters": parameters}
+        except Exception as e:
+            logger.error(f"Error executing tool '{tool_name}': {e}")
+            return {"success": False, "error": str(e), "tool": tool_name,
+                    "parameters": parameters}
+
     def get_tool_list(self) -> List[Dict[str, Any]]:
         """Get list of available tools with their descriptions"""
         return [

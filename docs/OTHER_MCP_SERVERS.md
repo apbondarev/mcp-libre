@@ -116,7 +116,7 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 44 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 45 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
@@ -220,15 +220,32 @@ We have richer material than they do (`runs_kept`, `runs_rewritten`, `comments_k
 `comments_written` are already in our results) — what is missing is somewhere to
 accumulate them and one tool to print them.
 
-### 3.7 Batch beyond `format_ranges`, and undo across calls
+### 3.7 Batch — **done**; undo across separate calls is not
 
-`format_ranges` proved the shape: validate everything, then write once, one undo step.
-The same argument applies to replacing several ranges, inserting several paragraphs,
-commenting several places. Two routes, not exclusive: plural tools (knorq) or one
-`batch` tool taking `{tool, parameters}` entries (the fork) — with their warning
-written down, that a batch holding the only UNO lock has no per-operation timeout.
-Explicit `begin_undo_context` / `end_undo_context` would also let a *plan* of several
-calls collapse into one Ctrl+Z, which is what a user expects from "переделай раздел".
+`format_ranges` proved the shape, and `batch_live` now generalises it: a list of
+`{tool, parameters}` steps, run in order inside one undo context, so a plan an
+assistant carries out is one edit to the reader instead of twelve. Measured on the
+real translation: 33 requests and 6.61s became 22 and 4.30s, and twelve entries in
+the Undo menu became one.
+
+What the measurements added to the design:
+
+- Undo contexts nest and only the outermost becomes an entry; a context that wrote
+  nothing leaves none. So a batch that fails before writing cannot be "undone" — a
+  bare `undo()` there would take back the reader's own last action.
+- Counting entries does not say whether a batch wrote: Writer's undo stack has a
+  limit, and on a full one a new entry pushes the oldest out without the count
+  moving. `undo_group` watches the top of the stack too — a real bug, caught by the
+  live harness on a long session.
+- `on_error` is `stop` (keep what was done and report), `continue`, or `undo` (take
+  the whole batch back), rather than the fork's never-roll-back.
+- The fork's warning is carried over: a batch holds the server for as long as it
+  runs and no step can be timed out on its own, so it is capped at 50 steps.
+
+A step cannot read an earlier step's result, which keeps batching to plans already
+worked out. Explicit `begin_undo_context` / `end_undo_context` **across** calls is
+deliberately not built: a context left open by a client that went away would swallow
+the reader's own later edits into an assistant's undo step.
 
 ### 3.8 Comment threads
 

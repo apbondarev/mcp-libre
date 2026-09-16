@@ -297,6 +297,62 @@ class EditingMixin:
         result.update(outcome or {})
         return result
 
+    def open_undo_group(self, doc: Any, title: str) -> Optional[Dict[str, Any]]:
+        """Start collapsing everything written from here into one undo entry.
+
+        Measured: undo contexts nest, and the outer one is what the reader
+        sees — three edits, each in a context of its own, inside one outer
+        context left a single entry with the outer title, and one Ctrl+Z took
+        all three back. Redo puts them all back too.
+        """
+        undo = _get_property(doc, "UndoManager", None)
+        if undo is None:
+            return None
+        try:
+            titles = list(undo.getAllUndoActionTitles())
+            undo.enterUndoContext(title)
+        except Exception as e:
+            logger.info(f"Could not group the undo steps: {e}")
+            return None
+        return {"manager": undo, "entries_before": len(titles),
+                "top_before": titles[0] if titles else None, "title": title}
+
+    def close_undo_group(self, group: Optional[Dict[str, Any]]) -> None:
+        """Close the group, so what follows is the reader's own work again."""
+        if not group:
+            return
+        try:
+            group["manager"].leaveUndoContext()
+        except Exception as e:
+            logger.error(f"Could not close an undo group: {e}")
+
+    def undo_group(self, group: Optional[Dict[str, Any]]) -> bool:
+        """Take back everything the group wrote, if it wrote anything.
+
+        A context that wrote nothing leaves no entry at all — measured — so a
+        bare undo() would take back whatever the reader did before the batch
+        began. Counting the entries is not enough to tell one case from the
+        other either: Writer's undo stack has a limit, and on a full one a
+        new entry pushes the oldest out and the count does not move — which
+        is how a failed batch first went untaken-back. So the top of the
+        stack is watched as well as its size.
+        """
+        if not group:
+            return False
+        undo = group["manager"]
+        try:
+            titles = list(undo.getAllUndoActionTitles())
+            top = titles[0] if titles else None
+            wrote = (len(titles) > group["entries_before"]
+                     or top != group["top_before"])
+            if not wrote:
+                return False
+            undo.undo()
+            return True
+        except Exception as e:
+            logger.error(f"Could not take back a batch: {e}")
+            return False
+
     def set_language(self, address: Any, language: str,
                      doc: Any = None) -> Dict[str, Any]:
         """
