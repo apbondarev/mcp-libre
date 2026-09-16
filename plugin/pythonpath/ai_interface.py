@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional
 from urllib.parse import parse_qs, urlparse
 import socketserver
 
+from mcp_guide import INSTRUCTIONS
 from mcp_server import get_mcp_server
 
 logging.basicConfig(level=logging.INFO)
@@ -49,10 +50,15 @@ def _handle_mcp_request(session_id: str, msg: dict):
     req_id = msg.get("id")
 
     if method == "initialize":
+        # The client is told how this server wants to be used before its
+        # first call: the address forms, what refuses what, and the way
+        # round each refusal. Everything a caller would otherwise learn by
+        # breaking a document.
         resp = _jsonrpc_response(req_id, {
             "protocolVersion": "2024-11-05",
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "libreoffice-mcp", "version": "1.0.0"},
+            "instructions": INSTRUCTIONS,
         })
     elif method == "notifications/initialized":
         return  # notification, no response

@@ -195,13 +195,25 @@ mutation** to get a clean run. Either their finding does not apply to us and we
 should say why, or our claim is wrong and a process-wide lock plus bounded admission
 belongs in `ai_interface`. This needs a live burst test, not an opinion.
 
-### 3.4 Hand the agent the manual: `instructions` + a shipped skill
+### 3.4 Hand the agent the manual — **done**
 
 `CLAUDE.md` holds everything measured about Writer through UNO, and an agent using
-the server over MCP sees none of it. Two ways in, both cheap:
+the server over MCP saw none of it. Both routes are now taken, from one source:
 
-- the `initialize` result takes an `instructions` string — a compact operating guide (address forms, which tools refuse what, "read runs before rewriting", "walk blocks back-to-front until anchors exist") belongs there;
-- docx-mcp ships a Skill alongside the server and updates it with the package. We can do the same from the extension's own files.
+- `mcp_guide.INSTRUCTIONS` goes out as the `instructions` of the MCP `initialize`
+  result — 4058 characters, about 650 words: the five address forms, what the
+  refusals mean and the way round each, that comments and pictures are not text,
+  the language rule, tables, batching, and which calls are cheap.
+- `scripts/write_skill.py` writes the same text into `skills/libreoffice-mcp/SKILL.md`
+  as a Claude Code skill, so a client that does not show `instructions` still gets it.
+  `tests/test_guide.py` fails if the checked-in skill is stale, if the guide names a
+  tool this server does not register, or if `initialize` stops carrying it.
+
+Unlike docx-mcp, the skill is **not** auto-installed into the user's
+`~/.claude/skills` when the server starts: that directory is theirs, and on this
+machine the name `libreoffice-writer` was already taken by a skill about driving
+LibreOffice from the command line — which is why the skill here is called
+`libreoffice-mcp`. Installing it is one `cp -r`, recorded in CLAUDE.md.
 
 ### 3.5 Review tools for tracked changes
 
