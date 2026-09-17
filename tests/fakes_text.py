@@ -260,6 +260,44 @@ def _insert_text_content(self, text_range, content, absorb):
 class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
+    def _insert_paragraph_at(self, index, line, style="Standard", level=0):
+        """Put a paragraph in, moving everything below it down one.
+
+        The enumeration keeps its order — a table sits *between* paragraphs,
+        and sorting the items would have moved every table to the end.
+        """
+        self.paragraphs.insert(index, line)
+        self.styles.insert(index, style)
+        self.outline_levels.insert(index, level)
+        self.portions = {(key + 1 if key >= index else key): value
+                         for key, value in self.portions.items()}
+        items, placed = [], False
+        for item in self.enumeration_items:
+            if isinstance(item, int):
+                if item >= index and not placed:
+                    items.append(index)
+                    placed = True
+                items.append(item + 1 if item >= index else item)
+            else:
+                items.append(item)
+        if not placed:
+            items.append(index)
+        self.enumeration_items = items
+
+    def _remove_paragraph_at(self, index):
+        """Take a paragraph out, moving everything below it up one."""
+        del self.paragraphs[index]
+        del self.styles[index]
+        del self.outline_levels[index]
+        self.portions.pop(index, None)
+        self.portions = {(key - 1 if key > index else key): value
+                         for key, value in self.portions.items()}
+        self.enumeration_items = [
+            item if not isinstance(item, int) else
+            (item - 1 if item > index else item)
+            for item in self.enumeration_items
+            if not isinstance(item, int) or item != index]
+
     def insertControlCharacter(self, text_range, character, absorb):
         """A paragraph break splits the paragraph where the range starts.
 
@@ -272,33 +310,61 @@ class FakeText:
         index, offset = text_range.start
         line = self.paragraphs[index]
         head, tail = line[:offset], line[offset:]
-        self.paragraphs[index] = head
-        self.paragraphs.insert(index + 1, tail)
         heading = self.outline_levels[index] > 0
-        self.styles.insert(index + 1,
-                           "Standard" if heading else self.styles[index])
-        self.outline_levels.insert(index + 1, 0 if heading
-                                   else self.outline_levels[index])
         declared = self.portions.pop(index, None)
-        self.portions = {(key + 1 if key > index else key): value
-                         for key, value in self.portions.items()}
+        self.paragraphs[index] = head
+        self._insert_paragraph_at(
+            index + 1, tail,
+            style="Standard" if heading else self.styles[index],
+            level=0 if heading else self.outline_levels[index])
         if declared is not None:
             before, after = self._split_portions(declared, offset)
             self.portions[index] = before
             self.portions[index + 1] = after
-        self.enumeration_items = [
-            item if not isinstance(item, int) else
-            (item + 1 if item > index else item)
-            for item in self.enumeration_items]
-        self.enumeration_items.append(index + 1)
-        self.enumeration_items.sort(
-            key=lambda item: item if isinstance(item, int) else 10 ** 9)
         # The cursor that made the break is left in the new paragraph, as a
         # real one is.
         if hasattr(text_range, "mark"):
             text_range.mark = text_range.pos = (index + 1, 0)
         else:
             text_range.start = text_range.end = (index + 1, 0)
+
+    def insert_index(self, text_range, index):
+        """An index lands between paragraphs, before the one it is put at.
+
+        Measured: it costs **one** paragraph going in, and as many as it has
+        entries on its first update — which is why every address below an
+        index moves when the index is written.
+        """
+        at = text_range.start[0]
+        self._insert_paragraph_at(at, "", style="Contents Heading")
+        index.at = at
+        index.lines = [""]
+        document = self.owner_document
+        if document is not None:
+            held = document.getDocumentIndexes().items
+            same = sum(1 for one in held if one.kind == index.kind)
+            from tests.fakes_indexes import NAME_OF_KIND
+            index.Name = f"{NAME_OF_KIND[index.kind]}{same + 1}"
+            held.append(index)
+            for other in held:
+                if other is not index and other.at is not None \
+                        and other.at >= at:
+                    other.at += 1
+
+    def remove_index(self, index):
+        """Taking an index away takes the paragraphs it wrote with it."""
+        for _ in range(len(index.lines)):
+            self._remove_paragraph_at(index.at)
+        document = self.owner_document
+        if document is not None:
+            held = document.getDocumentIndexes().items
+            if index in held:
+                held.remove(index)
+            for other in held:
+                if other.at is not None and other.at > index.at:
+                    other.at -= len(index.lines)
+        index.at = None
+        index.lines = []
 
     def _split_portions(self, declared, offset):
         """The portions of a paragraph, cut in two at a character offset"""
@@ -343,6 +409,16 @@ class FakeText:
 
     def insertTextContent(self, text_range, content, absorb):
         """A bookmark goes on the range and changes no text."""
+        if hasattr(content, "update") and hasattr(content, "IsProtected"):
+            self.insert_index(text_range, content)
+            return
+        if hasattr(content, "PrimaryKey"):
+            # An index mark covers its text and leaves it, like a bookmark.
+            content._anchor = FakeRange(self, text_range.start, text_range.end)
+            if not hasattr(self, "index_marks"):
+                self.index_marks = []
+            self.index_marks.append(content)
+            return
         if hasattr(content, "getPresentation") \
                 and not hasattr(content, "Author"):
             # A caption's number or a cross-reference: a field, not a note.
@@ -381,8 +457,16 @@ class FakeText:
     def removeTextContent(self, content):
         """Dropping a comment drops its markers, never the text under them.
 
-        A table goes altogether; a paragraph takes its line with it.
+        A table goes altogether; a paragraph takes its line with it, and an
+        index takes every paragraph it wrote.
         """
+        if hasattr(content, "update") and hasattr(content, "IsProtected"):
+            self.remove_index(content)
+            return
+        if hasattr(content, "PrimaryKey"):
+            if content in getattr(self, "index_marks", []):
+                self.index_marks.remove(content)
+            return
         if hasattr(content, "getName") and hasattr(content, "setName") \
                 and not hasattr(content, "getCellNames"):
             if hasattr(self, "bookmarks") and content in self.bookmarks:
@@ -564,9 +648,20 @@ class FakeText:
         return None
 
     def set_style(self, start, end, style):
+        """A paragraph's style, and the outline level that comes with it.
+
+        Applying "Heading 2" in Writer makes the paragraph a level-2 heading
+        — the style carries the level — so a table of contents built here
+        lists it. A fake that changed only the name left the outline behind.
+        """
         (start_para, _), (end_para, _) = sorted([start, end])
+        level = 0
+        if style.startswith("Heading "):
+            suffix = style[len("Heading "):].strip()
+            level = int(suffix) if suffix.isdigit() else 0
         for paragraph in range(start_para, end_para + 1):
             self.styles[paragraph] = style
+            self.outline_levels[paragraph] = level
 
     def locale_at(self, position):
         """The locale of the portion holding a position."""

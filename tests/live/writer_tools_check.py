@@ -2385,6 +2385,112 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- the tables a document writes about itself ---")
+    # On a document of its own again: an index's entries are body paragraphs,
+    # so it moves every address in the document it is put into.
+    indexed = desktop.loadComponentFromURL("private:factory/swriter",
+                                           "_blank", 0, ())
+    written = indexed.getText()
+    pen = written.createTextCursor()
+    for style, line in (("Heading 1", "Introduction"),
+                        ("Default Paragraph Style", "Intro body with GraphQL"),
+                        ("Heading 2", "Scalar types"),
+                        ("Default Paragraph Style", "Scalars body"),
+                        ("Heading 1", "Conclusion"),
+                        ("Default Paragraph Style", "The end")):
+        pen.ParaStyleName = style
+        written.insertString(pen, line, False)
+        written.insertControlCharacter(pen, PARAGRAPH_BREAK, False)
+
+    contents = bridge.insert_index({"paragraph": 0}, title="Содержание",
+                                   doc=indexed)
+    print("   ", {key: contents.get(key) for key in
+                  ("success", "name", "kind", "entries", "paragraphs_added")})
+    check("a table of contents goes in and writes itself",
+          (contents.get("success"), contents.get("entries")), (True, 3))
+    check("naming itself, which is how it is named back",
+          contents.get("name"), "Table of Contents1")
+    # UNO's own defaults are CreateFromOutline False and CreateFromMarks
+    # True, which lists nothing at all in a document nobody has marked up.
+    check("built from the headings rather than from marks",
+          (contents.get("from_outline"), contents.get("from_marks")),
+          (True, False))
+    check("and it cost the document four paragraphs",
+          contents.get("paragraphs_added"), 4)
+    entry = bridge.read_paragraphs(start=0, count=4, doc=indexed)["paragraphs"]
+    check("the entries are ordinary paragraphs, in the contents styles",
+          (entry[1]["text"], entry[1]["style"]), ("Introduction\t1",
+                                                  "Contents 1"))
+
+    print("\n   a heading rewritten, and the index updated:")
+    heading = bridge.find_text("Introduction", doc=indexed)["hits"][-1]
+    bridge.replace_range({"paragraph": heading["address"]["paragraph"]},
+                         "Введение", flatten=True, doc=indexed)
+    stale = bridge.read_paragraphs(start=1, count=1,
+                                   doc=indexed)["paragraphs"][0]["text"]
+    updated = bridge.update_indexes(all=True, doc=indexed)
+    check("the entry was stale until it was updated", stale, "Introduction\t1")
+    check("and follows the heading afterwards",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=indexed)["paragraphs"][0]["text"],
+          "Введение\t1")
+    check("with the result saying nothing moved this time",
+          updated.get("paragraphs_moved"), 0)
+
+    print("\n   an alphabetical index, from the marks:")
+    word = bridge.find_text("GraphQL", doc=indexed)["hits"][0]
+    marked = bridge.add_index_mark(word["address"], "GraphQL", doc=indexed)
+    check("a mark covers its word and leaves it",
+          (marked.get("success"), marked.get("marked")), (True, "GraphQL"))
+    total = bridge.read_paragraphs(start=0, count=1,
+                                   doc=indexed)["total_paragraphs"]
+    alphabetical = bridge.insert_index({"paragraph": total - 1},
+                                       kind="alphabetical", title="Указатель",
+                                       doc=indexed)
+    check("an alphabetical index lists what was marked",
+          (alphabetical.get("success"), alphabetical.get("kind")),
+          (True, "alphabetical"))
+    check("under its key",
+          bridge.read_paragraphs(start=alphabetical["address"]["paragraph"],
+                                 count=3,
+                                 doc=indexed)["paragraphs"][1]["text"]
+          .startswith("GraphQL"), True)
+
+    listed = bridge.list_indexes(doc=indexed)
+    print("   ", [(one["name"], one["kind"], one["entries"])
+                  for one in listed["indexes"]])
+    check("both are listed, in the order they stand in",
+          [one["kind"] for one in listed["indexes"]],
+          ["contents", "alphabetical"])
+    check("and Writer protects them from being typed over",
+          all(one["protected"] for one in listed["indexes"]), True)
+    check("one can be updated by name",
+          bridge.update_indexes(name="Table of Contents1",
+                                doc=indexed).get("updated"),
+          ["Table of Contents1"])
+    check("naming none, or two ways at once",
+          (bridge.update_indexes(doc=indexed).get("code"),
+           bridge.update_indexes(name="Table of Contents1", all=True,
+                                 doc=indexed).get("code")),
+          ("INVALID_PARAMETER", "INVALID_PARAMETER"))
+    check("an index nobody has",
+          bridge.update_indexes(name="Нетакой", doc=indexed).get("code"),
+          "NOT_FOUND")
+    check("a kind nobody knows",
+          bridge.insert_index({"paragraph": 0}, kind="gossip",
+                              doc=indexed).get("code"), "INVALID_PARAMETER")
+
+    removed = bridge.delete_index("Table of Contents1", doc=indexed)
+    check("removing an index takes the paragraphs it wrote",
+          (removed.get("success"), removed.get("paragraphs_removed")),
+          (True, 4))
+    check("leaving the document as it was",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=indexed)["paragraphs"][0]["text"],
+          "Введение")
+    indexed.setModified(False)
+    indexed.close(True)
+
     print("\n--- changing a table's shape, and the order of its rows ---")
     shaped = doc.createInstance("com.sun.star.text.TextTable")
     shaped.initialize(4, 3)

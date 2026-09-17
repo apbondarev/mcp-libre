@@ -41,6 +41,8 @@ from tests.fakes_styles import (FAKE_STYLE_DEFAULTS, FAKE_STYLE_OWN,
                                 FakeStyleFamily)
 from tests.fakes_references import (FakeFieldMaster, FakeReferenceField,
                                    FakeSequenceField)
+from tests.fakes_indexes import (FakeDocumentIndex, FakeIndexMark,
+                                 SERVICE_OF_KIND)
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
                                      FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
@@ -351,6 +353,15 @@ class FakeRedlines:
         return self.entries[index]
 
 
+# The services an index is created under, and which kind each one is.
+_INDEX_SERVICES = {
+    "ContentIndex": "contents", "DocumentIndex": "alphabetical",
+    "IllustrationsIndex": "illustrations", "TableIndex": "tables",
+    "ObjectIndex": "objects", "UserIndex": "user",
+    "Bibliography": "bibliography",
+}
+
+
 class FakeMasters:
     """The field masters, reachable by the long service-style name.
 
@@ -438,6 +449,22 @@ class FakeDoc:
                 for index in range(fields.getCount())
                 if hasattr(fields.getByIndex(index), "attachTextFieldMaster")]
 
+    def getDocumentIndexes(self):
+        """The indexes the document holds, by the names they gave themselves"""
+        if not hasattr(self, "_document_indexes"):
+            self._document_indexes = FakeNameAccess([])
+            self._text.indexes = self._document_indexes.items
+        return self._document_indexes
+
+    def _index_paragraphs(self):
+        """Which body paragraphs belong to an index rather than to the text"""
+        taken = set()
+        for index in self.getDocumentIndexes().items:
+            if index.at is None:
+                continue
+            taken.update(range(index.at, index.at + len(index.lines)))
+        return taken
+
     def getRedlines(self):
         held = getattr(self, "redlines", None)
         if held is not None:
@@ -445,6 +472,12 @@ class FakeDoc:
         return FakeRedlines(getattr(self, "redline_count", 0))
 
     def createInstance(self, service):
+        if service.startswith("com.sun.star.text.") \
+                and service[len("com.sun.star.text."):] in _INDEX_SERVICES:
+            return FakeDocumentIndex(
+                self, _INDEX_SERVICES[service[len("com.sun.star.text."):]])
+        if service == "com.sun.star.text.DocumentIndexMark":
+            return FakeIndexMark()
         if service == "com.sun.star.text.TextField.SetExpression":
             field = FakeSequenceField(self, next(self._sequence_ids))
             return field

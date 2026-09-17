@@ -52,6 +52,13 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+A table of contents writes itself: `insert_index` puts one in and
+`update_indexes` writes them again from what the document says now — a
+heading that has been translated shows in the old words until then. **An
+index's entries are body paragraphs**, so putting one in or updating it moves
+every paragraph number below it; the result says by how many, and a plan that
+edits by address should write the indexes last.
+
 An anchor lives as long as this session. A **bookmark** is the same handle kept
 by the document itself: it is saved in the file, comes back when the document is
 reopened, shows in the Navigator, and survives a rewrite of the very text it

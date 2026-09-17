@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -392,11 +392,18 @@ after it instead. A reference whose target is gone says so only as "Error: Refer
 source not found" in the text, in the office's language, so the target is checked
 before the field is written and `list_references` reports `broken` itself.
 
-#### 3.9.4 Tables of contents and indexes
+#### 3.9.4 Tables of contents and indexes — **done**
 
-Insert a table of contents, an alphabetical index, index marks, and update them.
-A tutorial whose headings have been translated has a table of contents in the old
-language until someone updates it, and nothing here can.
+`insert_index` (contents, alphabetical, illustrations, tables, objects, user,
+bibliography), `list_indexes`, `update_indexes`, `delete_index`, `add_index_mark`.
+
+The measurement that shapes the tools: an index's entries are **body paragraphs**, so
+inserting or updating one moves every address below it — a table of contents of seven
+entries cost eight paragraphs on the real tutorial — and both tools say by how many.
+The other one worth knowing is that `CreateFromOutline` defaults to False, so an index
+inserted with UNO's own defaults lists nothing at all; a table of contents here is
+built from the headings. A translated tutorial now updates its own contents, which was
+the complaint this section opened with.
 
 #### 3.9.5 Footnotes and endnotes
 
