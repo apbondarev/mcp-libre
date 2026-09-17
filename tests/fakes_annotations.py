@@ -7,8 +7,9 @@ came to skip both.
 
 import itertools
 
-from tests.fakes_values import FakeDateTime, FakeEnum, FakeLocale, FakeSize
-from tests.fakes_text import FakeRange
+from tests.fakes_values import (FakeDateTime, FakeEnum, FakeEnumeration,
+                                FakeLocale, FakeSize)
+from tests.fakes_text import FakeRange, FakeTextPortion
 
 
 class FakeGraphic:

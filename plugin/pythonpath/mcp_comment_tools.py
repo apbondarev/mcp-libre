@@ -109,13 +109,18 @@ class CommentTools:
         }
 
         self.tools["delete_comment_live"] = {
-            "description": "Delete a comment, named by the id list_comments_live reports. The text it was anchored to stays; the result says what was removed, so it can be put back if that was a mistake",
+            "description": "Delete a comment, named by the id list_comments_live reports. The text it was anchored to stays; the result says what was removed, so it can be put back if that was a mistake. A comment carrying replies is refused unless with_replies says to take the whole thread, since deleting the parent alone leaves its replies in the margin pointing at nothing",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "comment_id": {
                         "type": "string",
                         "description": "The comment's id, from list_comments_live"
+                    },
+                    "with_replies": {
+                        "type": "boolean",
+                        "description": "Remove the replies hanging off it as well — the whole thread",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -154,15 +159,17 @@ class CommentTools:
             return error
         return self.uno_bridge.list_comments(address=address, doc=doc)
 
-    def add_comment_live(self, address: Any, text: str, author: str = "",
-                         language: Optional[str] = None,
+    def add_comment_live(self, text: str, address: Any = None,
+                         author: str = "", language: Optional[str] = None,
+                         reply_to: Optional[str] = None,
                          document: Optional[str] = None) -> Dict[str, Any]:
-        """Anchor a new comment to the text at an address"""
+        """Anchor a new comment to the text at an address, or reply to one"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.add_comment(address, text, author=author,
-                                           language=language, doc=doc)
+                                           language=language,
+                                           reply_to=reply_to, doc=doc)
 
     def update_comment_live(self, comment_id: str, text: Optional[str] = None,
                             author: Optional[str] = None,
@@ -177,13 +184,15 @@ class CommentTools:
                                               author=author, resolved=resolved,
                                               language=language, doc=doc)
 
-    def delete_comment_live(self, comment_id: str,
+    def delete_comment_live(self, comment_id: str, with_replies: bool = False,
                             document: Optional[str] = None) -> Dict[str, Any]:
         """Delete a comment, leaving the text it was anchored to"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.delete_comment(comment_id, doc=doc)
+        return self.uno_bridge.delete_comment(comment_id,
+                                              with_replies=with_replies,
+                                              doc=doc)
 
     def set_comment_language_live(self, language: str,
                                   document: Optional[str] = None

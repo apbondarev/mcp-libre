@@ -259,12 +259,26 @@ worked out. Explicit `begin_undo_context` / `end_undo_context` **across** calls 
 deliberately not built: a context left open by a client that went away would swallow
 the reader's own later edits into an assistant's undo step.
 
-### 3.8 Comment threads
+### 3.8 Comment threads — **done**
 
-Writer supports replies to a comment; our `list_comments` reports a flat list. Both
-docx servers model threads, because that is how review conversations actually look.
-Needs a measurement first: how a reply is represented in UNO (`ParentName` on the
-annotation) and whether it survives our rewrite path.
+Both docx servers model threads because that is how review conversations look, and
+Writer has them: an annotation carries `ParentName`, saved as `loext:parent-name`.
+Reading them needed nothing new — `_describe_comment` already reported `reply_to` —
+so the work was the other three sides of it:
+
+- `add_comment(reply_to=…)` makes a reply, on its parent's own anchor and with no
+  address of its own; `list_comments` adds `replies` per comment and counts
+  `threads` against `replies`.
+- `delete_comment` refuses a comment that carries replies unless `with_replies`
+  says to take the thread: measured, removing the parent alone leaves the replies
+  in the margin naming a comment that is gone, and Writer says nothing.
+- A re-anchored comment gets a **new id**, so `replace_runs` now keeps a map of old
+  to new and joins the threads again afterwards, and `update_comment(language=…)` —
+  which has to make the note again — re-points its replies. A four-note thread
+  survives a rewrite of the text it sits on, checked live.
+
+Writer accepts a reply to a reply, so a thread is a chain, not two levels; that is
+reported as it is rather than flattened.
 
 ### 3.9 Document structure: the honest gap list
 

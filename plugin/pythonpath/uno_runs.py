@@ -446,6 +446,8 @@ class RunsMixin:
 
         def edit():
             written_comments = 0
+            renamed = {}                 # old comment id -> the new one
+            replies_written = []         # (comment, note) for every reply
             rewritten = 0
             # Right to left, so the offsets of the earlier segments still hold
             # after a segment has been replaced with text of another length.
@@ -492,8 +494,27 @@ class RunsMixin:
                         doc, self._address_in(
                             located, placement["start"],
                             placement["end"] - placement["start"]))
-                    self._anchor_comment(doc, span, placement["comment"])
+                    made = self._anchor_comment(doc, span,
+                                                placement["comment"])
                     written_comments += 1
+                    was = placement["comment"].get("id")
+                    if was:
+                        renamed[was] = _get_property(made, "Name", "") or ""
+                    if placement["comment"].get("reply_to"):
+                        replies_written.append((placement["comment"],
+                                                made))
+
+            # A re-anchored comment is a new annotation with a new id, so a
+            # reply written beside its parent named the parent's *old* id.
+            # Now that every new id is known, the threads are joined again.
+            for comment, note in replies_written:
+                wanted = renamed.get(comment["reply_to"])
+                if not wanted:
+                    continue          # the parent was kept, so its id stands
+                try:
+                    note.ParentName = wanted
+                except Exception as e:
+                    logger.info(f"Could not keep a reply with its parent: {e}")
 
             return {"runs": len(prepared), "runs_rewritten": rewritten,
                     "runs_kept": len(keep), "paragraph": paragraph,

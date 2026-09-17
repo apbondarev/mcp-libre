@@ -53,6 +53,15 @@ a string. `list_comments` and `list_images` report them with addresses,
 out. A caret in a table cell belongs to no body paragraph — `get_cursor_info`
 says so, naming the table and the cell.
 
+## Review conversations
+
+A reply is a comment joined to its parent, sitting on the parent's own
+anchor: `add_comment` with `reply_to` and no address makes one, and
+`list_comments` reports `reply_to` and `replies` on each, with `threads` and
+`replies` counted. Deleting a comment that carries replies is refused —
+`with_replies: true` takes the whole thread — because the parent alone would
+leave them in the margin pointing at nothing.
+
 ## Language
 
 Writer spell-checks each run against its own locale, so correct Russian

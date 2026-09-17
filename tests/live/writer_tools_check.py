@@ -2103,6 +2103,92 @@ try:
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
+    print("\n--- a review conversation: a comment and the replies on it ---")
+    marker = body.createTextCursorByRange(body.getEnd())
+    body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+    body.insertString(marker, "query is the entry point", False)
+    talk = bridge.read_paragraphs(start=0, count=1,
+                                  doc=doc)["total_paragraphs"] - 1
+
+    parent = bridge.add_comment({"paragraph": talk, "offset": 0, "length": 5},
+                                "Is this the right term?", author="Reviewer",
+                                doc=doc)
+    reply = bridge.add_comment(text="Yes — the spec uses it.", author="Claude",
+                               reply_to=parent["id"], doc=doc)
+    print("   ", {key: reply.get(key) for key in
+                  ("success", "reply_to", "anchor_text")})
+    check("a reply is anchored on its parent's own text",
+          (reply.get("success"), reply.get("anchor_text")), (True, "query"))
+    check("a reply takes no address of its own",
+          bridge.add_comment({"paragraph": talk}, "no",
+                             reply_to=parent["id"], doc=doc).get("success"),
+          False)
+    check("and a parent that is not there is refused",
+          bridge.add_comment(text="hello?", reply_to="__Annotation__nobody",
+                             doc=doc).get("code"), "NOT_FOUND")
+
+    listed = bridge.list_comments({"paragraph": talk}, doc=doc)
+    check("the thread is reported as one conversation",
+          (listed["threads"], listed["replies"]), (1, 1))
+    top = [one for one in listed["comments"] if not one["reply_to"]][0]
+    check("with the replies hanging off the parent",
+          top["replies"], [reply["id"]])
+
+    deeper = bridge.add_comment(text="Agreed.", author="Reviewer",
+                                reply_to=reply["id"], doc=doc)
+    check("a reply to a reply is a chain",
+          bridge.add_comment(text="one more", reply_to=deeper["id"],
+                             doc=doc).get("success"), True)
+
+    refused = bridge.delete_comment(parent["id"], doc=doc)
+    print("   ", refused.get("error"))
+    check("deleting the parent alone is refused rather than orphaning",
+          (refused.get("success"), refused.get("code")),
+          (False, "INVALID_PARAMETER"))
+
+    print("\n   the thread through a rewrite of the text it sits on:")
+    runs = bridge.read_runs({"paragraph": talk}, doc=doc)
+    carried = [len(run.get("comments") or []) for run in runs["runs"]]
+    check("the runs carry all four notes", max(carried), 4)
+    translated = [dict(run, text="запрос" if run["text"] == "query"
+                       else run["text"]) for run in runs["runs"]]
+    written = bridge.replace_runs({"paragraph": talk}, translated, doc=doc)
+    print("   ", {key: written.get(key) for key in
+                  ("success", "comments_kept", "comments_written")})
+    check("the rewrite went through", written.get("success"), True)
+    after = bridge.list_comments({"paragraph": talk}, doc=doc)
+    check("the conversation is still one thread of four",
+          (after["count"], after["threads"], after["replies"]), (4, 1, 3))
+    root = [one for one in after["comments"] if not one["reply_to"]][0]
+    check("and the parent is the one it was",
+          root["content"], "Is this the right term?")
+    check("every reply still names a comment that is there",
+          all(one["reply_to"] in {c["id"] for c in after["comments"]}
+              for one in after["comments"] if one["reply_to"]), True)
+
+    print("\n   making the parent again, in another language:")
+    remade = bridge.update_comment(root["id"], language="ru-RU", doc=doc)
+    check("the parent was made again", remade.get("recreated"), True)
+    check("and its replies were re-pointed at the new id",
+          len(remade.get("replies_repointed") or []), 1)
+    joined = bridge.list_comments({"paragraph": talk}, doc=doc)
+    check("so the thread survived the new id",
+          (joined["threads"], joined["replies"]), (1, 3))
+
+    whole = bridge.delete_comment(
+        [one for one in joined["comments"] if not one["reply_to"]][0]["id"],
+        with_replies=True, doc=doc)
+    check("and the whole thread can be taken at once",
+          (whole.get("success"), len(whole.get("replies_deleted") or [])),
+          (True, 3))
+    check("leaving no comments on that paragraph",
+          bridge.list_comments({"paragraph": talk}, doc=doc)["count"], 0)
+    check("and the text it was about",
+          bridge.read_paragraphs(start=talk, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "запрос is the entry point")
+    body.removeTextContent(bridge._paragraph_at(body, talk))
+
     print("\n--- a plan carried out in one call, and taken back in one step ---")
     from mcp_server import LibreOfficeMCPServer
     server = LibreOfficeMCPServer.__new__(LibreOfficeMCPServer)

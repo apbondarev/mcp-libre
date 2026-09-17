@@ -361,17 +361,46 @@ class FakeText:
         )
 
     def insert_comment(self, start, end, note):
-        """What insertTextContent(range, annotation, True) does to the runs."""
+        """What insertTextContent(range, annotation, True) does to the runs.
+
+        The markers are threaded *into* whatever portions the paragraph
+        already has: a second comment over the same words leaves the first
+        alone, which is what makes a reply possible — a thread is several
+        annotations over one stretch. Rebuilding the paragraph from its plain
+        text instead, as this once did, silently destroyed the comment that
+        was there, and a reply came back as the only comment in the document.
+        """
         self.created_comments.append({"span": (start, end), "note": note})
-        (start_para, start_offset), (_, end_offset) = sorted([start, end])
-        body = self.paragraphs[start_para]
-        self.portions[start_para] = [
-            {"text": body[:start_offset]},
-            {"kind": "Annotation", "text": "", "field": note},
-            {"text": body[start_offset:end_offset]},
-            {"kind": "AnnotationEnd", "text": ""},
-            {"text": body[end_offset:]},
-        ]
+        (paragraph, start_offset), (_, end_offset) = sorted([start, end])
+        pieces = self.portions.get(paragraph)
+        if pieces is None:
+            pieces = [{"text": self.paragraphs[paragraph]}]
+
+        pending = [(start_offset, {"kind": "Annotation", "text": "",
+                                   "field": note}),
+                   (end_offset, {"kind": "AnnotationEnd", "text": ""})]
+        rebuilt = []
+        offset = 0
+        for piece in pieces:
+            if piece.get("kind", "Text") != "Text":
+                rebuilt.append(piece)           # a marker costs no characters
+                continue
+            text = piece.get("text", "")
+            taken = 0
+            while pending and offset <= pending[0][0] <= offset + len(text):
+                at, marker = pending.pop(0)
+                cut = at - offset
+                if cut > taken:
+                    rebuilt.append(dict(piece, text=text[taken:cut]))
+                    taken = cut
+                rebuilt.append(marker)
+            if taken < len(text):
+                rebuilt.append(dict(piece, text=text[taken:]))
+            offset += len(text)
+        rebuilt.extend(marker for _, marker in pending)
+        self.portions[paragraph] = [
+            piece for piece in rebuilt
+            if piece.get("kind", "Text") != "Text" or piece.get("text")]
 
     def record_border_property(self, start, end, name, value):
         self.border_formatting.append({"span": (start, end), name: value})
@@ -583,15 +612,18 @@ class FakeText:
             kind = portion.get("kind", "Text")
             text = portion.get("text", "")
             if kind != "Text":
-                # Measured on a live LibreOffice: an AnnotationEnd marker is
-                # destroyed by a replacement that reaches either of its
-                # boundaries, while an opening Annotation only dies when it
-                # is strictly inside. That is why a rewrite of the stretch
-                # right after a comment took the comment with it.
+                # Measured on a live LibreOffice, and it is the arithmetic of
+                # a half-open deleted range. An opening Annotation dies when
+                # it sits in the characters that go, start included and end
+                # excluded — so rewriting the commented word destroys its
+                # comment outright, while a stretch that *ends* where an
+                # anchor begins is harmless. An AnnotationEnd dies at either
+                # boundary, which is why a rewrite of the stretch right after
+                # a comment took the comment with it.
                 if kind == "AnnotationEnd":
                     doomed = start_offset <= offset <= end_offset
                 else:
-                    doomed = start_offset < offset < end_offset
+                    doomed = start_offset <= offset < end_offset
                 if doomed:
                     continue
                 rebuilt.append(portion)

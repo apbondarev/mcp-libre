@@ -51,6 +51,16 @@ class CommentsMixin:
             logger.info(f"Could not rebuild the anchor, using it as it is: {e}")
             walked = span
         owner.insertTextContent(walked, note, True)
+        parent = comment.get("reply_to")
+        if parent:
+            # A reply is an annotation like any other, joined to its parent by
+            # ParentName — measured, and it survives saving as
+            # loext:parent-name. Set after insertion, which is when the note
+            # belongs to a document.
+            try:
+                note.ParentName = str(parent)
+            except Exception as e:
+                logger.info(f"Could not make a comment a reply: {e}")
         if not (_get_property(note, "Name", "") or ""):
             try:
                 note.Name = f"__Annotation__mcp_{uuid.uuid4().hex[:16]}"
@@ -231,12 +241,26 @@ class CommentsMixin:
                           else was["author"],
                           "content": text if text is not None else was["content"],
                           "resolved": was["resolved"] if resolved is None
-                          else bool(resolved)}
+                          else bool(resolved),
+                          "reply_to": was["reply_to"]}
                 previous_language = self._set_comment_style_language(doc,
                                                                      language)
+                # The replies are noted before the parent goes: the new note
+                # has a new id, and a reply left naming the old one would
+                # hang in the margin pointing at nothing.
+                hanging = self._replies_to(doc, was["id"])
                 note.getAnchor().getText().removeTextContent(note)
                 span = self._resolve_address(doc, anchor_address)
                 remade = self._anchor_comment(doc, span, wanted)
+                repointed = []
+                for one in hanging:
+                    if (_get_property(one, "ParentName", "") or "") != was["id"]:
+                        continue                  # a reply to a reply
+                    try:
+                        one.ParentName = _get_property(remade, "Name", "") or ""
+                        repointed.append(_get_property(one, "Name", "") or "")
+                    except Exception as e:
+                        logger.info(f"Could not re-point a reply: {e}")
                 changed.append("language")
                 if text is not None:
                     changed.append("text")
@@ -247,6 +271,8 @@ class CommentsMixin:
                 described = _describe_comment(remade)
                 return {"id": described["id"], "previous_id": was["id"],
                         "recreated": True, "changed": changed,
+                        "reply_to": described["reply_to"],
+                        "replies_repointed": repointed,
                         "author": described["author"],
                         "content": described["content"],
                         "resolved": described["resolved"],
@@ -275,12 +301,38 @@ class CommentsMixin:
 
         return self._guarded_edit(doc, "MCP: edit comment", None, edit)
 
-    def delete_comment(self, comment_id: str, doc: Any = None) -> Dict[str, Any]:
+    def _replies_to(self, doc: Any, comment_id: str) -> List[Any]:
+        """Every annotation hanging off this one, replies to replies included.
+
+        Measured: removing a comment that has replies leaves them behind,
+        still naming a parent that is no longer in the document — Writer says
+        nothing and the margin shows orphans. So whoever deletes has to know
+        what hangs off what.
+        """
+        by_parent = {}
+        for note in self._annotations(doc):
+            parent = _get_property(note, "ParentName", "") or ""
+            if parent:
+                by_parent.setdefault(parent, []).append(note)
+        found = []
+        pending = [comment_id]
+        while pending:
+            for note in by_parent.get(pending.pop(), []):
+                found.append(note)
+                pending.append(_get_property(note, "Name", "") or "")
+        return found
+
+    def delete_comment(self, comment_id: str, with_replies: bool = False,
+                       doc: Any = None) -> Dict[str, Any]:
         """
         Remove a comment, leaving the text it was anchored to
 
         Returns what was deleted, so an assistant can say what it removed —
         and so the text can be commented again if that was a mistake.
+
+        A comment with replies is refused unless `with_replies` says to take
+        the thread: deleting the parent alone leaves its replies in the
+        margin pointing at nothing.
         """
         doc, error = self._writer_document(doc, "Deleting a comment")
         if error:
@@ -295,6 +347,16 @@ class CommentsMixin:
                     "error": f"No comment with id {comment_id} in this "
                              f"document. Take an id from list_comments."}
 
+        hanging = self._replies_to(doc, comment_id)
+        if hanging and not with_replies:
+            return refusal(
+                "INVALID_PARAMETER",
+                f"this comment carries {len(hanging)} repl"
+                f"{'ies' if len(hanging) > 1 else 'y'}, which deleting it "
+                f"alone would leave in the margin pointing at nothing; pass "
+                f"with_replies=true to remove the whole thread",
+                replies=[_describe_comment(one)["id"] for one in hanging])
+
         described = _describe_comment(note)
         anchor_text = None
         try:
@@ -303,11 +365,21 @@ class CommentsMixin:
             logger.info(f"Could not read a comment's anchor: {e}")
 
         def edit():
+            removed = []
+            # Replies first: a thread is taken from the leaves inward, so
+            # nothing is left naming a parent that has gone.
+            for one in reversed(hanging):
+                try:
+                    one.getAnchor().getText().removeTextContent(one)
+                    removed.append(_get_property(one, "Name", "") or "")
+                except Exception as e:
+                    logger.info(f"Could not remove a reply: {e}")
             anchor = note.getAnchor()
             anchor.getText().removeTextContent(note)
             return {"id": described["id"], "author": described["author"],
                     "content": described["content"],
-                    "anchor_text": anchor_text}
+                    "anchor_text": anchor_text,
+                    "replies_deleted": removed}
 
         return self._guarded_edit(doc, "MCP: delete comment", None, edit)
 
@@ -441,20 +513,38 @@ class CommentsMixin:
                     address.get("offset") or 0)
 
         comments.sort(key=where)
+        # A reply is joined to its parent by ParentName and sits on the same
+        # anchor, so a thread arrives as several comments over one stretch.
+        # Saying which replies hang off which comment saves the caller
+        # rebuilding it, and `threads` counts what a reader would call
+        # conversations rather than notes.
+        children = {}
+        for comment in comments:
+            if comment.get("reply_to"):
+                children.setdefault(comment["reply_to"], []).append(comment["id"])
+        for comment in comments:
+            comment["replies"] = children.get(comment["id"], [])
         return {"success": True, "comments": comments, "count": len(comments),
+                "threads": sum(1 for one in comments if not one.get("reply_to")),
+                "replies": sum(1 for one in comments if one.get("reply_to")),
                 "scope": scope}
 
-    def add_comment(self, address: Any, text: str, author: str = "",
-                    language: Optional[str] = None,
+    def add_comment(self, address: Any = None, text: str = "",
+                    author: str = "", language: Optional[str] = None,
+                    reply_to: Optional[str] = None,
                     doc: Any = None) -> Dict[str, Any]:
         """
-        Anchor a new comment to the text at an address
+        Anchor a new comment to the text at an address, or reply to one
 
         `language` marks the note's own text, which is what Writer spell
         checks: a Russian note left at the document's language is underlined
         word by word in the margin. It cannot be given to one comment alone,
         so passing it also sets the language of the document's comments —
         which the result says.
+
+        `reply_to` makes the new comment a reply: it goes on its parent's own
+        anchor, so a thread sits over one stretch of text the way Writer's
+        own replies do, and needs no address of its own.
         """
         doc, error = self._writer_document(doc, "Adding a comment")
         if error:
@@ -463,8 +553,28 @@ class CommentsMixin:
         if not isinstance(text, str) or not text:
             return {"success": False, "code": "INVALID_PARAMETER", "error": "text must be a non-empty string"}
 
+        parent = None
+        if reply_to is not None:
+            if address is not None:
+                return refusal("INVALID_PARAMETER",
+                               "a reply goes on its parent's own anchor, so "
+                               "it takes no address of its own")
+            try:
+                parent = self._find_comment(doc, reply_to)
+            except AddressError as e:
+                return refusal("INVALID_PARAMETER", e)
+            if parent is None:
+                return refusal("NOT_FOUND",
+                               f"no comment with id {reply_to} in this "
+                               f"document; take an id from list_comments")
+        elif address is None:
+            return refusal("INVALID_PARAMETER",
+                           "say where the comment goes: an address, or "
+                           "reply_to for a reply to another comment")
+
         try:
-            target = self._resolve_address(doc, address)
+            target = (parent.getAnchor() if parent is not None
+                      else self._resolve_address(doc, address))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
@@ -480,11 +590,13 @@ class CommentsMixin:
             if language is not None:
                 was = self._set_comment_style_language(doc, language)
             note = self._anchor_comment(doc, target,
-                                        {"author": author, "content": text})
+                                        {"author": author, "content": text,
+                                         "reply_to": reply_to})
             result = {"id": _get_property(note, "Name", "") or "",
                       "anchor_text": _text_payload(target.getString())["text"],
                       "author": author, "content": text,
-                      "language": _comment_language(note)}
+                      "language": _comment_language(note),
+                      "reply_to": reply_to}
             if language is not None:
                 result["comment_language_set"] = {
                     "language": language, "was": was,

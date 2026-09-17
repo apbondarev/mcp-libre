@@ -27,6 +27,7 @@ NOT_TOOLS = {
     "language", "flatten", "anchors", "runs", "on_error", "track_changes",
     "paragraphs_before", "paragraphs_after", "replace", "true", "false",
     "undo", "anchor_text", "instructions", "code", "elapsed_ms",
+    "reply_to", "replies", "threads", "with_replies",
 }
 
 
