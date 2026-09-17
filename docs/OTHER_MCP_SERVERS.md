@@ -397,21 +397,20 @@ consolidation is the blunter version of the same economy.
 - **Document events** (`wait_for_document_event`): the fork's caveat is instructive — with one process-wide lock, waiting for an event that another tool call would raise deadlocks by construction.
 - **`unoserver`** as the model for a warm headless process, if the external `src/libremcp.py` server is ever taken seriously again.
 
-### 3.14 Two inconsistencies to clear up
+### 3.14 Two inconsistencies — one cleared up
 
 Neither is a missing capability; both are the server being untrue to itself.
 
-- **Four tools cannot be pointed at a document.** `insert_text_live`,
-  `format_text_live`, `export_document_live` and `get_text_content_live` take no
-  `document`, where the other forty do (`get_cursor_info_live`,
-  `get_document_info_live`, `create_document_live` and `list_open_documents` are
-  about the session rather than a document, so they are right as they are). The two
-  that *write* are the problem: they go to whichever document is active, which is how
-  an accidental call during a check went to the user's own document instead of the
-  scratch one it was meant for. It wrote nothing — only because an earlier call in
-  the same script had already failed. They should take `document` like their
-  neighbours, and the guide should say plainly that a mutating call without one
-  writes wherever the reader happens to be standing.
+- ~~**Four tools cannot be pointed at a document.**~~ **Done.** `insert_text_live`,
+  `format_text_live`, `export_document_live` and `get_text_content_live` took no
+  `document` and the first two *write*, so they went wherever the focus happened to
+  be — which is how an accidental call during a check reached the user's own
+  document instead of the scratch one it was meant for. All four take it now, and so
+  do `get_document_info_live` and `get_cursor_info_live`, which leaves exactly
+  `create_document_live` and `list_open_documents` without one: neither has a
+  document to be pointed at. A test holds that line, the guide says it, and
+  `format_text_live` stopped being `**kwargs` — which is what had hidden its schema
+  promising five parameters the handler never named.
 - **The external server in `src/libremcp.py` is a different product** with the same
   name: 14 tools, files on disk, editing that destroys formatting by design. Nothing
   in this survey applies to it, and the two are easy to confuse from the outside —

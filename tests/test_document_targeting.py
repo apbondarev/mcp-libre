@@ -126,3 +126,89 @@ def test_listing_open_documents_skips_components_that_are_not_documents():
 
     assert result["count"] == 1
     assert result["documents"][0]["type"] == "writer"
+
+
+def _server_with(active, other):
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    server.uno_bridge.get_active_document = lambda: active
+    server.uno_bridge.desktop = FakeDesktop([active, other])
+    return server
+
+
+def test_every_tool_that_acts_on_a_document_can_be_told_which():
+    """Four of them could not, and two of those write.
+
+    insert_text_live and format_text_live went to whichever document was
+    active, which is how a call meant for a scratch document reached the
+    reader's own.
+    """
+    import inspect
+
+    from mcp_server import LibreOfficeMCPServer
+
+    server = LibreOfficeMCPServer()
+    server.tools = {}
+    server._register_tools()
+    # These are about the session, not about a document: making a new one,
+    # and listing what is open.
+    session = {"create_document_live", "list_open_documents"}
+
+    without = {name for name, tool in server.tools.items()
+               if "document" not in inspect.signature(tool["handler"]).parameters}
+
+    assert without == session
+
+
+def test_inserting_text_goes_to_the_document_it_was_told_to():
+    active = writer_doc(["Active document."], caret=(0, 0))
+    active.Title = "active.odt"
+    other = writer_doc(["Other document."], caret=(0, 0))
+    other.Title = "other.odt"
+    server = _server_with(active, other)
+
+    server.insert_text_live("вставлено", document="file:///tmp/other.odt")
+
+    assert "вставлено" in other.getText().getString()
+    assert "вставлено" not in active.getText().getString()
+
+
+def test_reading_the_whole_text_of_the_document_it_was_told_to():
+    active = writer_doc(["Active document."], caret=(0, 0))
+    active.Title = "active.odt"
+    other = writer_doc(["Other document."], caret=(0, 0))
+    other.Title = "other.odt"
+    server = _server_with(active, other)
+
+    read = server.get_text_content_live(document="file:///tmp/other.odt")
+
+    assert read["content"] == "Other document."
+
+
+def test_the_cursor_of_the_document_it_was_told_about():
+    active = writer_doc(["Active document."], caret=(0, 0))
+    active.Title = "active.odt"
+    other = writer_doc(["Other document.", "Second line."], caret=(1, 3))
+    other.Title = "other.odt"
+    server = _server_with(active, other)
+
+    where = server.get_cursor_info_live(document="file:///tmp/other.odt")
+
+    assert where["paragraph"]["text"] == "Second line."
+
+
+def test_a_document_that_is_not_open_is_refused_by_all_of_them():
+    active = writer_doc(["Active document."], caret=(0, 0))
+    other = writer_doc(["Other document."], caret=(0, 0))
+    server = _server_with(active, other)
+
+    for call in (lambda: server.insert_text_live("x", document="file:///tmp/no.odt"),
+                 lambda: server.get_text_content_live(document="file:///tmp/no.odt"),
+                 lambda: server.get_cursor_info_live(document="file:///tmp/no.odt"),
+                 lambda: server.get_document_info_live(document="file:///tmp/no.odt"),
+                 lambda: server.format_text_live(bold=True,
+                                                 document="file:///tmp/no.odt")):
+        refused = call()
+        assert refused["success"] is False
+        assert refused["code"] == "NOT_FOUND"

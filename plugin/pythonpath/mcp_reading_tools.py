@@ -38,10 +38,15 @@ class ReadingTools:
         }
         
         self.tools["get_cursor_info_live"] = {
-            "description": "Get the cursor position, the paragraph containing the cursor, and the selected text in the active Writer document",
+            "description": "Get the cursor position, the paragraph containing the cursor, and the selected text of a Writer document — where the reader is standing and what they have picked out",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
             },
             "handler": self.get_cursor_info_live
         }
@@ -141,10 +146,15 @@ class ReadingTools:
 
         # Content reading tools
         self.tools["get_text_content_live"] = {
-            "description": "Get the text content of the currently active document",
+            "description": "Get the whole text of a document as one string. For anything but a quick look prefer read_paragraphs_live, whose paragraphs carry indices and styles to act on",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
             },
             "handler": self.get_text_content_live
         }
@@ -157,9 +167,13 @@ class ReadingTools:
             return error
         return self.uno_bridge.select(address, doc=doc)
 
-    def get_cursor_info_live(self) -> Dict[str, Any]:
+    def get_cursor_info_live(self,
+                             document: Optional[str] = None) -> Dict[str, Any]:
         """Get cursor position, current paragraph and selected text"""
-        return self.uno_bridge.get_cursor_info()
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.get_cursor_info(doc=doc)
 
     def read_paragraphs_live(self, start: int = 0, count: int = 50,
                              anchors: bool = False,
@@ -192,6 +206,10 @@ class ReadingTools:
             max_results=max_results, paragraphs_before=paragraphs_before,
             paragraphs_after=paragraphs_after, anchors=anchors, doc=doc)
 
-    def get_text_content_live(self) -> Dict[str, Any]:
-        """Get text content of the currently active document"""
-        return self.uno_bridge.get_text_content()
+    def get_text_content_live(self,
+                              document: Optional[str] = None) -> Dict[str, Any]:
+        """Get the whole text of a document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.get_text_content(doc=doc)

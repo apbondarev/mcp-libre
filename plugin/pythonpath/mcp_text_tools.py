@@ -10,7 +10,7 @@ class TextTools:
         """The tools of this part, as clients see them."""
         # Text manipulation tools
         self.tools["insert_text_live"] = {
-            "description": "Insert text into the currently active document. This inserts and never replaces: with text selected it inserts at the start of the selection and leaves the original in place. To replace text use replace_selection_live or replace_range_live",
+            "description": "Insert text into a document, at the caret unless a position is given. This inserts and never replaces: with text selected it inserts at the start of the selection and leaves the original in place. To replace text use replace_selection_live or replace_range_live",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -21,6 +21,10 @@ class TextTools:
                     "position": {
                         "type": "integer",
                         "description": "Position to insert at (optional, defaults to cursor position)"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 },
                 "required": ["text"]
@@ -248,9 +252,13 @@ class TextTools:
             "handler": self.replace_runs_live
         }
 
-    def insert_text_live(self, text: str, position: Optional[int] = None) -> Dict[str, Any]:
-        """Insert text into the currently active document"""
-        return self.uno_bridge.insert_text(text, position)
+    def insert_text_live(self, text: str, position: Optional[int] = None,
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """Insert text into a document, at the caret unless told otherwise"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.insert_text(text, position, doc=doc)
 
     def replace_selection_live(self, text: str,
                                track_changes: Optional[bool] = None,

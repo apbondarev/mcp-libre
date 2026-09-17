@@ -9,6 +9,15 @@ This server edits the documents open in LibreOffice, live and in place. There
 are no files to read or write: a tool changes the document the reader is
 looking at, and one tool call is one Ctrl+Z.
 
+## Which document
+
+Every tool that acts on a document takes `document`, the URL
+`list_open_documents` reports; leaving it out means the one the reader is
+looking at. Name it whenever the work is about a particular document —
+"the active document" is whichever window has focus, and that can change
+under you. Only `create_document` and `list_open_documents` take none,
+having no document to be pointed at.
+
 ## Addressing
 
 A place in a document is named in one of five ways:

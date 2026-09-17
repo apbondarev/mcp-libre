@@ -10,7 +10,7 @@ class FormattingTools:
         """The tools of this part, as clients see them."""
         # Text formatting tools
         self.tools["format_text_live"] = {
-            "description": "Apply formatting to selected text in active document",
+            "description": "Apply formatting to the selected text. Use format_range_live to format text at an address instead of whatever is selected, and format_ranges_live for many places at once",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -33,6 +33,10 @@ class FormattingTools:
                     "font_name": {
                         "type": "string",
                         "description": "Font family name"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 }
             },
@@ -267,9 +271,24 @@ class FormattingTools:
             "handler": self.describe_style_live
         }
 
-    def format_text_live(self, **formatting) -> Dict[str, Any]:
-        """Apply formatting to selected text"""
-        return self.uno_bridge.format_text(formatting)
+    def format_text_live(self, bold: Optional[bool] = None,
+                         italic: Optional[bool] = None,
+                         underline: Optional[bool] = None,
+                         font_size: Optional[float] = None,
+                         font_name: Optional[str] = None,
+                         document: Optional[str] = None) -> Dict[str, Any]:
+        """Apply formatting to the selected text"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        # Named rather than **kwargs: the schema is the only thing a client
+        # sees, and one that promises what the handler does not take is a
+        # feature that does not exist over the wire.
+        asked = {name: value for name, value in
+                 (("bold", bold), ("italic", italic), ("underline", underline),
+                  ("font_size", font_size), ("font_name", font_name))
+                 if value is not None}
+        return self.uno_bridge.format_text(asked, doc=doc)
 
     def format_ranges_live(self, ranges: Any,
                            track_changes: Optional[bool] = None,

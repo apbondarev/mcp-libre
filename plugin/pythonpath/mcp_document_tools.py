@@ -27,10 +27,15 @@ class DocumentTools:
 
         # Document info tools
         self.tools["get_document_info_live"] = {
-            "description": "Get information about the currently active document, including whether changes are being recorded (track_changes) and how many recorded changes await acceptance (tracked_changes)",
+            "description": "Get information about a document, including whether changes are being recorded (track_changes) and how many recorded changes await acceptance (tracked_changes)",
             "parameters": {
                 "type": "object",
-                "properties": {}
+                "properties": {
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
+                    }
+                }
             },
             "handler": self.get_document_info_live
         }
@@ -113,7 +118,7 @@ class DocumentTools:
 
         # Document export tools
         self.tools["export_document_live"] = {
-            "description": "Export the currently active document to a different format",
+            "description": "Export a document to another format — a copy is written and the document goes on living where it was, which is the difference from save_document_live",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -125,6 +130,10 @@ class DocumentTools:
                     "file_path": {
                         "type": "string",
                         "description": "Path to export document to"
+                    },
+                    "document": {
+                        "type": "string",
+                        "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 },
                 "required": ["export_format", "file_path"]
@@ -158,9 +167,13 @@ class DocumentTools:
         except Exception as e:
             return {"success": False, "code": "FAILED", "error": str(e)}
 
-    def get_document_info_live(self) -> Dict[str, Any]:
-        """Get information about the currently active document"""
-        doc_info = self.uno_bridge.get_document_info()
+    def get_document_info_live(self,
+                               document: Optional[str] = None) -> Dict[str, Any]:
+        """Get information about a document"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        doc_info = self.uno_bridge.get_document_info(doc)
         if "error" in doc_info:
             return {"success": False, **doc_info}
         else:
@@ -198,9 +211,14 @@ class DocumentTools:
                                                delete_original=delete_original,
                                                overwrite=overwrite)
 
-    def export_document_live(self, export_format: str, file_path: str) -> Dict[str, Any]:
-        """Export the currently active document"""
-        return self.uno_bridge.export_document(export_format, file_path)
+    def export_document_live(self, export_format: str, file_path: str,
+                             document: Optional[str] = None) -> Dict[str, Any]:
+        """Export a document to another format, leaving it where it lives"""
+        doc, error = self._target_document(document)
+        if error:
+            return error
+        return self.uno_bridge.export_document(export_format, file_path,
+                                               doc=doc)
 
     def list_open_documents(self) -> Dict[str, Any]:
         """List all open documents in LibreOffice"""

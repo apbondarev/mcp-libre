@@ -360,6 +360,17 @@ class FakeText:
             else list(enumeration_items)
         )
 
+    def insertString(self, text_range, value, absorb):
+        """insertString(range, text, bAbsorb) — the flag decides what happens.
+
+        Measured on a real Writer: with absorb False the text goes in at the
+        range's start and what was there stays, which is why "translate and
+        replace" once produced both texts; with absorb True the range is
+        rewritten.
+        """
+        start, end = sorted([text_range.start, text_range.end])
+        self.replace_range(start, end if absorb else start, value)
+
     def insert_comment(self, start, end, note):
         """What insertTextContent(range, annotation, True) does to the runs.
 

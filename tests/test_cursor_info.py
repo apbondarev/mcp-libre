@@ -233,7 +233,10 @@ def test_tool_is_registered_and_dispatches_to_the_bridge():
     server.uno_bridge.get_active_document = lambda: doc
 
     assert "get_cursor_info_live" in server.tools
-    assert server.tools["get_cursor_info_live"]["parameters"]["properties"] == {}
+    # It takes a document like every tool that acts on one; naming none
+    # means the active document.
+    assert set(server.tools["get_cursor_info_live"]["parameters"]
+               ["properties"]) == {"document"}
 
     result = asyncio.run(server.execute_tool("get_cursor_info_live", {}))
 
