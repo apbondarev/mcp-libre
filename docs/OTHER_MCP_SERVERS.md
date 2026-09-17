@@ -11,9 +11,12 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads, **3.10** error codes and `elapsed_ms`. Still open and worth doing next: **3.2** the `Origin` check, which
-is a defect rather than a feature, and **3.3** the concurrency claim nobody has
-measured here.
+comment threads and working on many comments at once, **3.9.15** table shape,
+**3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
+on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
+rather than a feature, and **3.3** the concurrency claim nobody has measured here.
+The structure gaps are broken out one by one in **3.9**, so any of them can be
+picked up on its own.
 
 ---
 
@@ -322,7 +325,7 @@ done, the check found that `add_comment_live`'s **schema** never mentioned
 died on a later assertion before its file was written. The bridge, the handler, 481
 unit tests and every live check passed, because all of them call the bridge or the
 handler; the schema is the only thing an MCP client sees, so over the wire the
-feature did not exist. `tests/test_schemas_match_handlers.py` now holds all 45 tools
+feature did not exist. `tests/test_schemas_match_handlers.py` now holds every tool
 to it: every advertised parameter must be one the handler takes, every parameter the
 handler takes must be advertised, and `required` must match the parameters that have
 no default. It caught `read_runs_live` too, whose `address` was mandatory in the
@@ -330,26 +333,113 @@ signature and optional in the schema.
 
 ### 3.9 Document structure: the honest gap list
 
-Everything a real Writer document has that we cannot touch: **fields** (date, page
-number, document property, and `update_fields`), **bookmarks**, **cross-references**
-and captions, **TOC/indexes**, **footnotes/endnotes**, **sections**, **headers and
-footers**, **page layout** (size, margins, orientation, breaks, columns). Any one of
-these turns "format this document properly" into a refusal today. They are ordinary
-UNO work; the reason they are missing is that nothing asked for them yet.
+Everything below is what a real Writer document has and this server cannot touch.
+Any one of them turns "format this document properly" into a refusal. **None of it
+has been measured** — the names come from the fork's tool list and from Writer's own
+menus, so each item is a measuring round first and a tool second, the way the rest of
+this repository was built. They are broken out so one can be picked up without
+reading the others.
 
-Table shape is **done** — rows and columns in and out, cells merged and split,
-rows sorted — and it turned up a UNO limitation worth knowing: `XSortable.sort`
-honours only the descriptor it made itself, so a Writer table cannot be sorted
-through UNO by any column but the first, and a rebuilt descriptor is ignored in
-silence. `sort_table` works the order out itself and writes the cells back.
-Converting text to a table and back is not done: `XTextConvert.convertToTable`
-exists on the body text, but its argument shapes need a measuring round of their
-own.
+Ordered by what the work in this repository has actually run into: 3.9.1, 3.9.4 and
+3.9.7 come up in a translated tutorial the moment anyone prints it; 3.9.9 and 3.9.11
+come up in every rewrite.
 
-Alongside them, the smaller ones still open: `list_hyperlinks` and
-`remove_hyperlink` (we can already *set* a link through `format_range`'s `link`
-property); paragraph split/merge/move; `find_by_style`; `get_direct_formatting` /
-`clear_direct_formatting`; style CRUD beyond `describe_style`; `undo`/`redo`.
+#### 3.9.1 Fields
+
+Date, page number, page count, document properties, and the `update_fields` that
+makes them redraw. A translated document with a date field is mostly untouchable
+today: the text tools see the field's *result* and rewriting it destroys the field.
+Measuring round: what a field portion looks like in `read_runs` (it will be an empty
+marker like a comment), which of `TextField` services Writer offers, and whether a
+field survives `replace_runs`.
+
+#### 3.9.2 Bookmarks
+
+Add, rename, delete, list, and go to one. Measured already, in passing, while
+building anchors: a bookmark moves with its text exactly as a held cursor does, and
+unlike an anchor it is saved in the file and shows in the Navigator — which is why
+anchors are the session's handle and bookmarks would be the document's.
+
+#### 3.9.3 Cross-references and captions
+
+A reference to a heading, a figure or a table, and the caption that gives a figure
+its number. This is the pair that makes a picture "Figure 3" and keeps the sentence
+that mentions it right when a figure is inserted before it.
+
+#### 3.9.4 Tables of contents and indexes
+
+Insert a table of contents, an alphabetical index, index marks, and update them.
+A tutorial whose headings have been translated has a table of contents in the old
+language until someone updates it, and nothing here can.
+
+#### 3.9.5 Footnotes and endnotes
+
+Add, list, read, delete; the note's own text is a text of its own, like a comment's.
+The docx servers validate their cross-references before delivery, which is the
+second half of this.
+
+#### 3.9.6 Sections
+
+Named sections of a document, which is how Writer carries protected regions, linked
+content and per-section columns. Reading them at least would say why a part of a
+document refuses to be edited.
+
+#### 3.9.7 Headers and footers
+
+Read and write them per page style. The page number a reader sees lives here, and so
+does the running title a translated document still shows in English.
+
+#### 3.9.8 Page layout
+
+Page size, margins, orientation, columns, page breaks, line numbering — through page
+styles, which `describe_style` can already read for a paragraph style and would need
+to learn for a page one.
+
+#### 3.9.9 Hyperlinks as a subject
+
+`list_hyperlinks` and `remove_hyperlink`. Setting one already works, through
+`format_range`'s `link` property, and `read_runs` reports the link a run carries —
+so what is missing is the document-wide view: which links a document holds, whether
+any of them are broken, and taking one away without touching its text.
+
+#### 3.9.10 Paragraph surgery
+
+Split a paragraph, merge two, move one up or down, copy a block. Today the way to
+move a paragraph is to read it, delete it and write it again somewhere else, which
+loses its comments and pictures on the way.
+
+#### 3.9.11 Finding by style, and direct formatting
+
+`find_by_style` (every paragraph in "Preformatted Text", say, which is how a code
+block is found), `get_direct_formatting` and `clear_direct_formatting` (the
+formatting applied over a style, which is what makes a document look inconsistent
+and what a clean-up removes).
+
+#### 3.9.12 Styles beyond describing one
+
+Create, clone, update, rename, delete, and replace one style with another
+throughout. `describe_style` reads a style's own definition already; writing one is
+the other half, and "make this document use our house styles" needs it.
+
+#### 3.9.13 Undo and redo
+
+The server groups every edit into one undo step and `batch_live` groups a plan into
+one, but nothing here can *take a step back*. The reader can, with Ctrl+Z; an
+assistant that has just made a mess cannot, and must undo it by editing again.
+
+#### 3.9.14 Text to a table, and back
+
+`XTextConvert.convertToTable` and `convertToTextFrame` are on the body text —
+measured that far, no further: the shape of their arguments needs a round of its own.
+Table *shape* is otherwise **done** (3.9.15 below).
+
+#### 3.9.15 Table shape — **done**
+
+Rows and columns in and out, cells merged and split, rows sorted. It turned up a UNO
+limitation worth keeping: `XSortable.sort` honours only the descriptor it made
+itself, so a Writer table cannot be sorted through UNO by any column but the first,
+and a rebuilt descriptor is ignored in silence — `sort_table` works the order out
+itself and writes the cells back.
 
 ### 3.10 Error codes and `elapsed_ms` — **done**
 
@@ -370,7 +460,7 @@ which is also why a batch's steps get them.
 Unlike the fork's envelope this is not a wrapper: the payload stays where it was,
 so nothing that read a result before has to change. What holds it together is
 `tests/test_result_contract.py` — it fails if a code turns up that `ERROR_CODES`
-does not declare, and if any of the 45 tools answers a refusal without one.
+does not declare, and if any tool answers a refusal without one.
 
 Smaller than the fork's fourteen codes on purpose: a code earns its place only
 when a caller would do something different about it. `AMBIGUOUS_SELECTOR`,
@@ -389,7 +479,7 @@ for clients that do not speak HTTP to a local port at all.
 
 ### 3.12 If the tool count grows: profiles and discovery
 
-Forty-eight tools with long, honest descriptions already cost a noticeable slice of
+Fifty-six tools with long, honest descriptions already cost a noticeable slice of
 the model's context. Before adding thirty more, take the fork's idea: `list_tools`,
 `get_tool_schema`, and **profiles** keyed to the active document's type, so a Writer
 session never carries Calc schemas. The Ubuntu server's `action`-dispatch
