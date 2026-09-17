@@ -1,12 +1,19 @@
 # Other office MCP servers, and what this one should take from them
 
-Surveyed 2026-09-15. Everything said here about another project comes from its own
-README or its source on GitHub, read but **not run** — treat their numbers (tool
-counts, benchmarks, "live-verified") as their claims, not as measurements made here.
+Surveyed 2026-09-15, kept up to date as the list is worked through — last on
+2026-09-17. Everything said here about another project comes from its own README or
+its source on GitHub, read but **not run** — treat their numbers (tool counts,
+benchmarks, "live-verified") as their claims, not as measurements made here.
 Everything said about *this* server was checked against the working tree.
 
 The point of the survey is not the tool counts. It is the three or four interface
 decisions other people made differently, each of which costs us something today.
+
+Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
+**3.7** batching into one undo step, **3.8** comment threads, **3.10** error codes
+and `elapsed_ms`. Still open and worth doing next: **3.2** the `Origin` check, which
+is a defect rather than a feature, and **3.3** the concurrency claim nobody has
+measured here.
 
 ---
 
@@ -120,13 +127,14 @@ LibreOffice process warm outside the GUI.
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
-| comments | list/add/update/delete, language, ids | list/add/update/delete/resolve | + **threads** | + threads | list/add |
+| comments | list/add/update/delete, language, ids, **threads** | list/add/update/delete/resolve | + threads | + threads | list/add |
 | track changes | record-or-not, three states | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
 | tables | read/describe/format/create/delete | + rows/cols/merge/sort/convert | + rows | + cells | — |
 | page image | **render_page** | — | — | — | — |
-| undo | one step per call | + explicit contexts, undo/redo | — | — | — |
+| undo | one step per call, **`batch_live`** for a whole plan | + explicit contexts, undo/redo | — | — | — |
 | concurrency | none (threaded server) | process lock + admission | n/a | n/a | n/a |
 | Origin/Host check | **no** (`ACAO: *`) | yes | n/a | n/a | n/a |
+| result shape | payload + `code` + `elapsed_ms` | full envelope | plain | plain | plain |
 | transport | HTTP+SSE, `2024-11-05` | SSE + JSON-RPC, session/version negotiation | stdio | stdio | stdio → HTTP |
 
 What nobody else in the survey has, and we should not lose while copying from them:
@@ -280,6 +288,18 @@ so the work was the other three sides of it:
 Writer accepts a reply to a reply, so a thread is a chain, not two levels; that is
 reported as it is rather than flattened.
 
+One thing this exposed is worth more than the feature. Asked to confirm 3.8 was
+done, the check found that `add_comment_live`'s **schema** never mentioned
+`reply_to` and still advertised `address` as required — the edit that was to add it
+died on a later assertion before its file was written. The bridge, the handler, 481
+unit tests and every live check passed, because all of them call the bridge or the
+handler; the schema is the only thing an MCP client sees, so over the wire the
+feature did not exist. `tests/test_schemas_match_handlers.py` now holds all 45 tools
+to it: every advertised parameter must be one the handler takes, every parameter the
+handler takes must be advertised, and `required` must match the parameters that have
+no default. It caught `read_runs_live` too, whose `address` was mandatory in the
+signature and optional in the schema.
+
 ### 3.9 Document structure: the honest gap list
 
 Everything a real Writer document has that we cannot touch: **fields** (date, page
@@ -333,8 +353,8 @@ for clients that do not speak HTTP to a local port at all.
 
 ### 3.12 If the tool count grows: profiles and discovery
 
-Forty-one tools with long, honest descriptions already cost a noticeable slice of the
-model's context. Before adding thirty more, take the fork's idea: `list_tools`,
+Forty-five tools with long, honest descriptions already cost a noticeable slice of
+the model's context. Before adding thirty more, take the fork's idea: `list_tools`,
 `get_tool_schema`, and **profiles** keyed to the active document's type, so a Writer
 session never carries Calc schemas. The Ubuntu server's `action`-dispatch
 consolidation is the blunter version of the same economy.
@@ -348,6 +368,26 @@ consolidation is the blunter version of the same economy.
 - **`lock_document_updates`** around a long batch: LibreOffice's own screen-update freeze, which is free speed.
 - **Document events** (`wait_for_document_event`): the fork's caveat is instructive — with one process-wide lock, waiting for an event that another tool call would raise deadlocks by construction.
 - **`unoserver`** as the model for a warm headless process, if the external `src/libremcp.py` server is ever taken seriously again.
+
+### 3.14 Two inconsistencies to clear up
+
+Neither is a missing capability; both are the server being untrue to itself.
+
+- **Four tools cannot be pointed at a document.** `insert_text_live`,
+  `format_text_live`, `export_document_live` and `get_text_content_live` take no
+  `document`, where the other forty do (`get_cursor_info_live`,
+  `get_document_info_live`, `create_document_live` and `list_open_documents` are
+  about the session rather than a document, so they are right as they are). The two
+  that *write* are the problem: they go to whichever document is active, which is how
+  an accidental call during a check went to the user's own document instead of the
+  scratch one it was meant for. It wrote nothing — only because an earlier call in
+  the same script had already failed. They should take `document` like their
+  neighbours, and the guide should say plainly that a mutating call without one
+  writes wherever the reader happens to be standing.
+- **The external server in `src/libremcp.py` is a different product** with the same
+  name: 14 tools, files on disk, editing that destroys formatting by design. Nothing
+  in this survey applies to it, and the two are easy to confuse from the outside —
+  the README should say which one a reader is looking at.
 
 ---
 
