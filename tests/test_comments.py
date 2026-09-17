@@ -12,7 +12,8 @@ import asyncio
 
 import pytest
 
-from tests.fake_writer import FakeAnnotation, FakeDesktop, FakeLocale, writer_doc
+from tests.fake_writer import (FakeAnnotation, FakeDesktop, FakeLocale,
+                               FakeRange, writer_doc)
 from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
@@ -675,3 +676,26 @@ def test_when_that_character_changes_the_comment_is_written_again(bridge,
     assert len(after) == 1
     assert after[0]["content"] == before["content"]
     assert after[0]["id"] != before["id"]      # a new annotation, honestly
+
+
+def test_anchors_are_placed_in_one_sweep_whatever_order_they_come_in(bridge):
+    """Addressing each comment on its own walked the body once per comment.
+
+    One sweep places them all, which needs them in document order —
+    getTextFields() does not promise that, so they are sorted first. Handed
+    back to front, they must still come back matched to their own range.
+    """
+    doc = writer_doc(["Первый абзац", "Второй абзац", "Третий абзац"],
+                     caret=(0, 0))
+    text = doc.getText()
+    ranges = [text.createTextCursorByRange(FakeRange(text, (index, 0),
+                                                     (index, 6)))
+              for index in (2, 0, 1)]
+
+    placed = bridge._addresses_in_order(doc, ranges)
+
+    assert [one["paragraph"] for one in placed] == [2, 0, 1]
+
+
+def test_placing_nothing_is_not_a_walk(bridge, doc):
+    assert bridge._addresses_in_order(doc, []) == []

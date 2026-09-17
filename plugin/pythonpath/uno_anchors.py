@@ -238,7 +238,11 @@ class AnchorsMixin:
                 return {"success": False, "code": "FAILED",
                         "error": f"could not hold an anchor on {address!r}"}
             payload = _text_payload(text_range.getString())
-            located, _, _ = self._locate_range(doc, text_range)
+            # With the hint this costs the walk the address already paid for;
+            # without it, every anchor walked the body again comparing
+            # regions — six anchors on a 300-paragraph document took 2.0s.
+            located, _, _ = self._locate_range(
+                doc, text_range, self._paragraph_hint(address, doc))
             made.append({"anchor": token, "text": payload["text"],
                          "truncated": payload["truncated"],
                          "address": located})

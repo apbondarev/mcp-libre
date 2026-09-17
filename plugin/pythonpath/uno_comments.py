@@ -7,6 +7,7 @@ paragraph style when the note is created, and rewriting the text under one
 takes the comment with it.
 """
 
+from functools import cmp_to_key
 from typing import Any, Optional, Dict, List
 import uuid
 import logging
@@ -444,6 +445,37 @@ class CommentsMixin:
 
         return self._guarded_edit(doc, "MCP: set comment language", None, edit)
 
+    def _addresses_in_order(self, doc: Any, ranges: List[Any]) -> List[Any]:
+        """An address for every range, in one walk of the body.
+
+        The sweep that places search hits wants them in document order, so
+        the ranges are sorted by `compareRegionStarts` first — the only
+        comparison that works across pyuno proxies. A range it cannot compare
+        (one inside a table cell throws) keeps its place and falls to the slow
+        path inside the sweep, which knows cell addresses.
+        """
+        if not ranges:
+            return []
+        body = doc.getText()
+
+        def before(one, other):
+            try:
+                return body.compareRegionStarts(one, other)
+            except Exception:
+                return 0            # not comparable: leave them as they are
+
+        order = list(range(len(ranges)))
+        try:
+            order.sort(key=cmp_to_key(
+                lambda left, right: -before(ranges[left], ranges[right])))
+        except Exception as e:
+            logger.info(f"Could not put the anchors in order: {e}")
+        located = [None] * len(ranges)
+        for position, placed in zip(
+                order, self._locate_matches(doc, [ranges[i] for i in order])):
+            located[position] = (placed or {}).get("address")
+        return located
+
     def _annotations(self, doc: Any) -> List[Any]:
         """Every comment field in the document"""
         found = []
@@ -484,19 +516,33 @@ class CommentsMixin:
             logger.error(f"Could not enumerate comments: {e}")
             return refusal("FAILED", e)
 
+        notes, anchors = [], []
         while fields.hasMoreElements():
             field = fields.nextElement()
             if not _supports(field, ANNOTATION_SERVICE):
                 continue
-            described = _describe_comment(field)
             try:
-                anchor = field.getAnchor()
-                located, _, _ = self._locate_range(doc, anchor)
-                described["address"] = located
-                described["anchor_text"] = _text_payload(anchor.getString())["text"]
+                anchors.append(field.getAnchor())
+                notes.append(field)
             except Exception as e:
-                logger.info(f"Could not locate a comment: {e}")
-                described["address"] = None
+                logger.info(f"A comment would not say where it is: {e}")
+
+        # Addressing each anchor on its own walks the body once per comment —
+        # a document with seven of them spent 1.3s in here. One sweep places
+        # them all, the same way find_text places its hits, which needs them
+        # in document order: getTextFields() does not promise that, so they
+        # are sorted by comparing regions first — n log n calls across the
+        # bridge against n walks of the document.
+        placed = self._addresses_in_order(doc, anchors)
+
+        for field, anchor, located in zip(notes, anchors, placed):
+            described = _describe_comment(field)
+            described["address"] = located
+            try:
+                described["anchor_text"] = \
+                    _text_payload(anchor.getString())["text"]
+            except Exception as e:
+                logger.info(f"Could not read a comment's anchor: {e}")
                 described["anchor_text"] = None
             if not covers(described["address"]):
                 continue
