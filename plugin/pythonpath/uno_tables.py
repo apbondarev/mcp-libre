@@ -934,3 +934,372 @@ class TablesMixin:
                     "changed": changed}
 
         return self._guarded_edit(doc, "MCP: format table", track_changes, edit)
+
+    # -- changing a table's shape, and the order of its rows ---------------
+
+    def _table_asked_for(self, doc: Any, name: Optional[str]) -> tuple:
+        """(table, refusal): the one named, or the one the caret sits in."""
+        if not name:
+            caret = self._caret_in_table(doc)
+            if caret is None:
+                listed = [_get_property(other, "Name", "") or "?"
+                          for other in self._tables(doc)]
+                return None, refusal(
+                    "INVALID_PARAMETER",
+                    f"The caret is not in a table and none was named. This "
+                    f"document holds: {', '.join(listed) or 'no tables'}.")
+            name = caret["table"]
+        table = self._table_by_name(doc, name)
+        if table is None:
+            listed = [_get_property(other, "Name", "") or "?"
+                      for other in self._tables(doc)]
+            return None, refusal(
+                "NOT_FOUND",
+                f"No table called {name!r} in this document. It holds: "
+                f"{', '.join(listed) or 'no tables'}.")
+        return table, None
+
+    def _lines_of(self, table: Any, what: str) -> Any:
+        """The rows or the columns of a table, as UNO hands them over."""
+        return table.getRows() if what == "rows" else table.getColumns()
+
+    def _change_lines(self, what: str, adding: bool, name: Optional[str],
+                      at: Optional[int], count: int,
+                      track_changes: Optional[bool], doc: Any) -> Dict[str, Any]:
+        """Insert or remove whole rows or columns. Measured: insertByIndex
+        puts them *before* the line at that index, and removeByIndex takes
+        them away from there — both 0-based."""
+        doc, error = self._writer_document(
+            doc, f"{'Adding' if adding else 'Removing'} table {what}")
+        if error:
+            return error
+        table, refused = self._table_asked_for(doc, name)
+        if refused:
+            return refused
+
+        if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+            return refusal("INVALID_PARAMETER",
+                           f"count must be a whole number from 1, got {count!r}")
+        lines = self._lines_of(table, what)
+        total = lines.getCount()
+        where = total if at is None else at
+        if not isinstance(where, int) or isinstance(where, bool) or where < 0 \
+                or where > total or (not adding and where >= total):
+            return refusal(
+                "INVALID_PARAMETER",
+                f"this table has {total} {what}, so {what[:-1]} {at!r} is not "
+                f"one of them" if not adding else
+                f"at must be between 0 and {total}, got {at!r}")
+        if not adding and where + count > total:
+            return refusal(
+                "INVALID_PARAMETER",
+                f"{count} {what} from {where} runs past the {total} this "
+                f"table has")
+        if not adding and count >= total:
+            return refusal(
+                "INVALID_PARAMETER",
+                f"a table cannot lose all {total} of its {what}; delete the "
+                f"whole table with delete_table instead")
+
+        removed = []
+        if not adding:
+            # What goes is reported, so an assistant can say what it took —
+            # and put it back if that was a mistake.
+            letters = [_column_letters(column) for column
+                       in range(table.getColumns().getCount())]
+            for line in range(where, where + count):
+                if what == "rows":
+                    removed.append([self._cell_text(table, f"{letter}{line + 1}")
+                                    for letter in letters])
+                else:
+                    letter = letters[line]
+                    removed.append([
+                        self._cell_text(table, f"{letter}{row + 1}")
+                        for row in range(table.getRows().getCount())])
+
+        def edit():
+            if adding:
+                lines.insertByIndex(where, count)
+            else:
+                lines.removeByIndex(where, count)
+            return {"table": _get_property(table, "Name", "") or "",
+                    what: self._lines_of(table, what).getCount(),
+                    "added" if adding else "removed_at": count if adding
+                    else where,
+                    "removed": removed or None}
+
+        return self._guarded_edit(
+            doc, f"MCP: {'insert' if adding else 'delete'} table {what}",
+            track_changes, edit)
+
+    def _cell_text(self, table: Any, name: str) -> Optional[str]:
+        """A cell's text, or None where a merge has taken the cell away."""
+        try:
+            return table.getCellByName(name).getString()
+        except Exception:
+            return None
+
+    def insert_table_rows(self, name: Optional[str] = None,
+                          at: Optional[int] = None, count: int = 1,
+                          track_changes: Optional[bool] = None,
+                          doc: Any = None) -> Dict[str, Any]:
+        """Put empty rows into a table, before the row `at` names"""
+        return self._change_lines("rows", True, name, at, count,
+                                  track_changes, doc)
+
+    def delete_table_rows(self, name: Optional[str] = None,
+                          at: Optional[int] = None, count: int = 1,
+                          track_changes: Optional[bool] = None,
+                          doc: Any = None) -> Dict[str, Any]:
+        """Take rows out of a table, reporting the text that went with them"""
+        return self._change_lines("rows", False, name, at, count,
+                                  track_changes, doc)
+
+    def insert_table_columns(self, name: Optional[str] = None,
+                             at: Optional[int] = None, count: int = 1,
+                             track_changes: Optional[bool] = None,
+                             doc: Any = None) -> Dict[str, Any]:
+        """Put empty columns into a table, before the column `at` names"""
+        return self._change_lines("columns", True, name, at, count,
+                                  track_changes, doc)
+
+    def delete_table_columns(self, name: Optional[str] = None,
+                             at: Optional[int] = None, count: int = 1,
+                             track_changes: Optional[bool] = None,
+                             doc: Any = None) -> Dict[str, Any]:
+        """Take columns out, reporting the text that went with them"""
+        return self._change_lines("columns", False, name, at, count,
+                                  track_changes, doc)
+
+    def merge_table_cells(self, cells: Any, name: Optional[str] = None,
+                          track_changes: Optional[bool] = None,
+                          doc: Any = None) -> Dict[str, Any]:
+        """
+        Make one cell out of a rectangle of them
+
+        Measured: the merged cell keeps every text that was in the rectangle,
+        joined by line breaks, and the cells that went are gone from
+        getCellNames — which is how a merged-away cell comes back as null in
+        read_table's grid.
+        """
+        doc, error = self._writer_document(doc, "Merging table cells")
+        if error:
+            return error
+        table, refused = self._table_asked_for(doc, name)
+        if refused:
+            return refused
+
+        try:
+            wanted = self._cells_asked_for(table, cells)
+        except AddressError as e:
+            return refusal("INVALID_PARAMETER", e)
+        if len(wanted) < 2:
+            return refusal("INVALID_PARAMETER",
+                           'merging takes at least two cells, as in "A1:B2"')
+
+        first, last = wanted[0], wanted[-1]
+        before = [self._cell_text(table, one) for one in wanted]
+
+        def edit():
+            cursor = table.createCursorByCellName(first)
+            cursor.gotoCellByName(last, True)
+            if not cursor.mergeRange():
+                raise AddressError(
+                    f"LibreOffice would not merge {first}:{last} — a merge "
+                    f"takes a rectangle of cells, and one of these is already "
+                    f"part of another merge")
+            return {"table": _get_property(table, "Name", "") or "",
+                    "merged": wanted, "into": first,
+                    "text": _text_payload(
+                        self._cell_text(table, first) or "")["text"],
+                    "was": before,
+                    "cells_left": len(table.getCellNames())}
+
+        return self._guarded_edit(doc, "MCP: merge table cells",
+                                  track_changes, edit)
+
+    def split_table_cells(self, cells: Any, into: int = 2,
+                          direction: str = "rows",
+                          name: Optional[str] = None,
+                          track_changes: Optional[bool] = None,
+                          doc: Any = None) -> Dict[str, Any]:
+        """
+        Divide cells in two or more
+
+        `direction` says which way the dividing line runs, in the words a
+        reader would use: "rows" stacks the new cells one above another,
+        "columns" puts them side by side. UNO's own flag is called
+        `bHorizontal` and means the first of those — measured, since the name
+        reads like the other.
+        """
+        doc, error = self._writer_document(doc, "Splitting table cells")
+        if error:
+            return error
+        table, refused = self._table_asked_for(doc, name)
+        if refused:
+            return refused
+
+        if direction not in ("rows", "columns"):
+            return refusal("INVALID_PARAMETER",
+                           f'direction is "rows" or "columns", got '
+                           f'{direction!r}')
+        if not isinstance(into, int) or isinstance(into, bool) or into < 2:
+            return refusal("INVALID_PARAMETER",
+                           f"into must be 2 or more, got {into!r}")
+        try:
+            wanted = self._cells_asked_for(table, cells)
+        except AddressError as e:
+            return refusal("INVALID_PARAMETER", e)
+
+        def edit():
+            done = []
+            # Right to left and bottom to top: splitting a cell renames the
+            # ones after it, and a name taken now would name something else
+            # in a moment.
+            for one in sorted(wanted, reverse=True):
+                cursor = table.createCursorByCellName(one)
+                if cursor.splitRange(into - 1, direction == "rows"):
+                    done.append(one)
+            return {"table": _get_property(table, "Name", "") or "",
+                    "split": done, "into": into, "direction": direction,
+                    "cells_now": len(table.getCellNames())}
+
+        return self._guarded_edit(doc, "MCP: split table cells",
+                                  track_changes, edit)
+
+    def sort_table(self, column: Any = 1, name: Optional[str] = None,
+                   descending: bool = False, numeric: bool = False,
+                   header_rows: Optional[int] = None, flatten: bool = False,
+                   track_changes: Optional[bool] = None,
+                   doc: Any = None) -> Dict[str, Any]:
+        """
+        Put a table's rows in the order of one column
+
+        Not through UNO's own sort: `XSortable.sort` on a Writer table
+        honours only the descriptor it made itself, and any sequence built in
+        Python — even one naming the same column the default does — is
+        ignored *silently*, the table left as it was. Measured four ways.
+        So the order is worked out here and the cells are written back.
+
+        That moves the text, not the look: a cell's background and its
+        paragraph style stay where they are, which is what makes banding stay
+        banded, while character formatting inside a moved cell is flattened
+        the way any rewrite flattens it — hence the refusal when a cell holds
+        more than one run, unless `flatten` says to go ahead.
+        """
+        doc, error = self._writer_document(doc, "Sorting a table")
+        if error:
+            return error
+        table, refused = self._table_asked_for(doc, name)
+        if refused:
+            return refused
+
+        rows = table.getRows().getCount()
+        columns = table.getColumns().getCount()
+        letters = [_column_letters(column) for column in range(columns)]
+        if len(table.getCellNames()) != rows * columns:
+            return refusal(
+                "UNSUPPORTED",
+                "this table has merged cells, and sorting moves whole rows — "
+                "which cannot be done while some of them are joined")
+
+        if isinstance(column, str) and column.strip():
+            letter = column.strip().upper()
+            if letter not in letters:
+                return refusal("INVALID_PARAMETER",
+                               f"this table has columns {', '.join(letters)}, "
+                               f"not {column!r}")
+            index = letters.index(letter)
+        elif isinstance(column, int) and not isinstance(column, bool) \
+                and 1 <= column <= columns:
+            index = column - 1
+        else:
+            return refusal(
+                "INVALID_PARAMETER",
+                f"column is a letter like \"B\" or a number from 1 to "
+                f"{columns}, got {column!r}")
+
+        keep = table.HeaderRowCount if header_rows is None else header_rows
+        if not isinstance(keep, int) or isinstance(keep, bool) or keep < 0 \
+                or keep >= rows:
+            return refusal("INVALID_PARAMETER",
+                           f"header_rows must be between 0 and {rows - 1}, "
+                           f"got {header_rows!r}")
+
+        grid = [[self._cell_text(table, f"{letter}{row + 1}") or ""
+                 for letter in letters] for row in range(rows)]
+        moving = grid[keep:]
+
+        if not flatten:
+            crowded = [f"{letter}{row + 1 + keep}"
+                       for row, line in enumerate(moving)
+                       for position, letter in enumerate(letters)
+                       if self._runs_in_cell(table, f"{letter}{row + 1 + keep}")
+                       > 1]
+            if crowded:
+                return refusal(
+                    "WOULD_LOSE_FORMATTING",
+                    f"sorting writes every cell's text back in its new place, "
+                    f"and {len(crowded)} cell"
+                    f"{'s' if len(crowded) > 1 else ''} "
+                    f"({', '.join(crowded[:5])}"
+                    f"{', …' if len(crowded) > 5 else ''}) hold more than one "
+                    f"formatted run, which that would flatten. Pass "
+                    f"flatten=true to accept it",
+                    cells=crowded)
+
+        def key(line):
+            value = line[index]
+            if not numeric:
+                return value.casefold()
+            try:
+                return float(value.replace(",", ".").strip() or 0)
+            except ValueError:
+                # A cell that is not a number sorts after every cell that is,
+                # rather than stopping the sort.
+                return float("inf")
+
+        order = sorted(range(len(moving)), key=lambda at: key(moving[at]),
+                       reverse=bool(descending))
+        if order == list(range(len(moving))):
+            return {"success": True, "table": _get_property(table, "Name", "")
+                    or "", "rows_moved": 0, "sorted_by": letters[index],
+                    "note": "the rows were already in that order"}
+
+        def edit():
+            for position, came_from in enumerate(order):
+                for letter, value in zip(letters, moving[came_from]):
+                    table.getCellByName(f"{letter}{position + 1 + keep}") \
+                        .setString(value)
+            return {"table": _get_property(table, "Name", "") or "",
+                    "sorted_by": letters[index],
+                    "descending": bool(descending), "numeric": bool(numeric),
+                    "header_rows_kept": keep,
+                    "rows_moved": sum(1 for position, came_from
+                                      in enumerate(order)
+                                      if position != came_from)}
+
+        return self._guarded_edit(doc, "MCP: sort table", track_changes, edit)
+
+    def _runs_in_cell(self, table: Any, name: str) -> int:
+        """How many pieces of differently formatted text a cell holds."""
+        try:
+            cell = table.getCellByName(name)
+        except Exception:
+            return 0
+        pieces = 0
+        try:
+            paragraphs = cell.createEnumeration()
+            while paragraphs.hasMoreElements():
+                paragraph = paragraphs.nextElement()
+                if not hasattr(paragraph, "createEnumeration"):
+                    continue
+                portions = paragraph.createEnumeration()
+                while portions.hasMoreElements():
+                    portion = portions.nextElement()
+                    if _get_property(portion, "TextPortionType", "Text") \
+                            == "Text" and portion.getString():
+                        pieces += 1
+        except Exception as e:
+            logger.info(f"Could not count the runs in {name}: {e}")
+        return pieces

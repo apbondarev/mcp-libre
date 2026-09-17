@@ -86,7 +86,14 @@ language means making it again.
 `describe_table` reports borders, padding, backgrounds and column shares in
 the units `format_table` takes, `create_table` puts one in — before the
 paragraph its address names, or, with `replace: true`, in place of a block —
-`format_table` dresses it, `delete_table` removes it.
+`format_table` dresses it, `delete_table` removes it. Its shape changes with
+`insert_table_rows` / `insert_table_columns` and the two that take them
+away again — which report the text that went with them — `merge_table_cells` and
+`split_table_cells`. `sort_table` puts the rows in the order of one column,
+leaving the heading rows where they are; it moves the text between cells, so
+a cell's background stays put while character formatting inside a moved cell
+is flattened, and a cell of several runs is refused unless `flatten` says
+otherwise.
 
 ## One edit, one undo
 

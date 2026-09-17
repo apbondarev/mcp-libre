@@ -2103,6 +2103,78 @@ try:
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
+    print("\n--- changing a table's shape, and the order of its rows ---")
+    shaped = doc.createInstance("com.sun.star.text.TextTable")
+    shaped.initialize(4, 3)
+    shaped.setName("Форма")
+    tail = body.createTextCursorByRange(body.getEnd())
+    body.insertTextContent(tail, shaped, False)
+    for row, values in enumerate((["Name", "Size", "Note"], ["b", "2", "x"],
+                                  ["a", "10", "y"], ["c", "1", "z"])):
+        for column, value in zip("ABC", values):
+            shaped.getCellByName(f"{column}{row + 1}").setString(value)
+    shaped.HeaderRowCount = 1
+
+    added = bridge.insert_table_rows("Форма", at=1, count=2, doc=doc)
+    print("   ", {key: added.get(key) for key in ("success", "rows")})
+    check("two rows added where asked", (added.get("success"), added.get("rows")),
+          (True, 6))
+    check("and the text moved down, not away",
+          bridge.read_table("Форма", cell="A4", doc=doc)["text"], "b")
+    taken = bridge.delete_table_rows("Форма", at=1, count=2, doc=doc)
+    check("and away again", (taken.get("success"), taken.get("rows")), (True, 4))
+    check("saying what went with them", taken.get("removed"), [["", "", ""],
+                                                               ["", "", ""]])
+
+    column_added = bridge.insert_table_columns("Форма", at=3, count=1, doc=doc)
+    check("a column at the end", column_added.get("columns"), 4)
+    column_gone = bridge.delete_table_columns("Форма", at=3, count=1, doc=doc)
+    check("and away", column_gone.get("columns"), 3)
+    check("a table cannot lose all its rows",
+          bridge.delete_table_rows("Форма", at=0, count=4,
+                                   doc=doc).get("code"), "INVALID_PARAMETER")
+    check("nor be asked for a row it has not got",
+          bridge.delete_table_rows("Форма", at=99, doc=doc).get("code"),
+          "INVALID_PARAMETER")
+
+    print("\n   sorting:")
+    sorted_out = bridge.sort_table(column="B", numeric=True, name="Форма",
+                                   doc=doc)
+    print("   ", {key: sorted_out.get(key) for key in
+                  ("success", "sorted_by", "rows_moved", "header_rows_kept")})
+    check("sorted by the column asked for",
+          [bridge.read_table("Форма", cell=f"A{row}", doc=doc)["text"]
+           for row in (1, 2, 3, 4)],
+          ["Name", "c", "b", "a"])
+    check("the heading stayed where it was",
+          bridge.read_table("Форма", cell="A1", doc=doc)["text"], "Name")
+    backwards = bridge.sort_table(column=1, descending=True, name="Форма",
+                                  doc=doc)
+    check("and by text, backwards",
+          [bridge.read_table("Форма", cell=f"A{row}", doc=doc)["text"]
+           for row in (2, 3, 4)], ["c", "b", "a"])
+    check("a column this table has not got is refused",
+          bridge.sort_table(column="Z", name="Форма", doc=doc).get("code"),
+          "INVALID_PARAMETER")
+
+    print("\n   merging and splitting:")
+    merged = bridge.merge_table_cells("A2:B2", name="Форма", doc=doc)
+    print("   ", {key: merged.get(key) for key in
+                  ("success", "into", "text", "cells_left")})
+    check("two cells became one", merged.get("success"), True)
+    check("keeping both texts", merged.get("text"), "c\n1")
+    check("a table with merged cells will not be sorted",
+          bridge.sort_table(column=1, name="Форма", doc=doc).get("code"),
+          "UNSUPPORTED")
+    split = bridge.split_table_cells("A2", into=2, direction="columns",
+                                     name="Форма", doc=doc)
+    check("and split back", split.get("success"), True)
+    check("one cell is not a merge",
+          bridge.merge_table_cells("A3", name="Форма", doc=doc).get("code"),
+          "INVALID_PARAMETER")
+
+    bridge.delete_table("Форма", doc=doc)
+
     print("\n--- reading the recorded changes, and settling them ---")
     marker = body.createTextCursorByRange(body.getEnd())
     for line in ("REVIEW-ONE stays as it is", "REVIEW-TWO loses a word"):

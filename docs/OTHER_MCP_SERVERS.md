@@ -123,13 +123,13 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 48 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 55 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
 | comments | list/add/update/delete, language, ids, **threads** | list/add/update/delete/resolve | + threads | + threads | list/add |
 | track changes | record-or-not (three states) **+ list/accept/reject** | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
-| tables | read/describe/format/create/delete | + rows/cols/merge/sort/convert | + rows | + cells | — |
+| tables | read/describe/format/create/delete **+ rows/cols/merge/split/sort** | + rows/cols/merge/sort/convert | + rows | + cells | — |
 | page image | **render_page** | — | — | — | — |
 | undo | one step per call, **`batch_live`** for a whole plan | + explicit contexts, undo/redo | — | — | — |
 | concurrency | none (threaded server) | process lock + admission | n/a | n/a | n/a |
@@ -337,11 +337,19 @@ footers**, **page layout** (size, margins, orientation, breaks, columns). Any on
 these turns "format this document properly" into a refusal today. They are ordinary
 UNO work; the reason they are missing is that nothing asked for them yet.
 
-Alongside them, the smaller ones: table rows/columns insert and delete, cell merge
-and split, `sort_table`; `list_hyperlinks` and `remove_hyperlink` (we can already
-*set* a link through `format_range`'s `link` property); paragraph split/merge/move;
-`find_by_style`; `get_direct_formatting` / `clear_direct_formatting`; style CRUD
-beyond `describe_style`; `undo`/`redo`.
+Table shape is **done** — rows and columns in and out, cells merged and split,
+rows sorted — and it turned up a UNO limitation worth knowing: `XSortable.sort`
+honours only the descriptor it made itself, so a Writer table cannot be sorted
+through UNO by any column but the first, and a rebuilt descriptor is ignored in
+silence. `sort_table` works the order out itself and writes the cells back.
+Converting text to a table and back is not done: `XTextConvert.convertToTable`
+exists on the body text, but its argument shapes need a measuring round of their
+own.
+
+Alongside them, the smaller ones still open: `list_hyperlinks` and
+`remove_hyperlink` (we can already *set* a link through `format_range`'s `link`
+property); paragraph split/merge/move; `find_by_style`; `get_direct_formatting` /
+`clear_direct_formatting`; style CRUD beyond `describe_style`; `undo`/`redo`.
 
 ### 3.10 Error codes and `elapsed_ms` — **done**
 
