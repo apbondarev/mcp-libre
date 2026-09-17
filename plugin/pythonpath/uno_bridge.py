@@ -23,6 +23,7 @@ Where a method lives:
     uno_runs.py        the formatted pieces a stretch is made of
     uno_comments.py    the notes in the margin
     uno_fields.py      the bits that write themselves: dates, page numbers
+    uno_bookmarks.py   names the document itself keeps for places
     uno_redlines.py    the changes a document is keeping, and settling them
     uno_tables.py      tables: reading, placing, dressing
     uno_images.py      pictures
@@ -50,6 +51,7 @@ from uno_formatting import FormattingMixin
 from uno_runs import RunsMixin
 from uno_comments import CommentsMixin
 from uno_fields import FieldsMixin
+from uno_bookmarks import BookmarksMixin
 from uno_redlines import RedlinesMixin
 from uno_tables import TablesMixin
 from uno_images import ImagesMixin
@@ -62,7 +64,8 @@ logger = logging.getLogger(__name__)
 
 
 class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
-                RedlinesMixin, FieldsMixin, CommentsMixin, RunsMixin,
+                RedlinesMixin, FieldsMixin, BookmarksMixin, CommentsMixin,
+                RunsMixin,
                 FormattingMixin, EditingMixin, ReadingMixin, ViewMixin,
                 DocumentsMixin, AnchorsMixin, AddressMixin):
     """Bridge between MCP operations and LibreOffice UNO API"""

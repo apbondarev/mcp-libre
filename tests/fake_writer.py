@@ -39,8 +39,8 @@ from tests.fakes_values import (CALC_SERVICES, FakeBorderLine, FakeComponents,
 from tests.fakes_styles import (FAKE_STYLE_DEFAULTS, FAKE_STYLE_OWN,
                                 FAKE_STYLE_PARENTS, FakeStyle, FakeStyleFamilies,
                                 FakeStyleFamily)
-from tests.fakes_annotations import (FakeAnnotation, FakeField, FakeGraphic,
-                                     FakeImage,
+from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
+                                     FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
                                      FakeNoteText)
 
@@ -375,6 +375,13 @@ class FakeDoc:
     def isReadonly(self):
         return self.readonly
 
+    def getBookmarks(self):
+        """The document's own names for places, by name."""
+        if not hasattr(self, "_bookmarks"):
+            self._bookmarks = FakeNameAccess([])
+            self._text.bookmarks = self._bookmarks.items
+        return self._bookmarks
+
     def getRedlines(self):
         held = getattr(self, "redlines", None)
         if held is not None:
@@ -384,6 +391,8 @@ class FakeDoc:
     def createInstance(self, service):
         if service == "com.sun.star.text.TextTable":
             return FakeTextTable(f"Table{len(getattr(self, 'tables', [])) + 1}")
+        if service == "com.sun.star.text.Bookmark":
+            return FakeBookmark()
         if service == "com.sun.star.text.textfield.Annotation":
             note = FakeAnnotation(named=False)
             note.document = self

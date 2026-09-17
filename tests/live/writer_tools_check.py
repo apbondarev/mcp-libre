@@ -2103,6 +2103,57 @@ try:
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
+    print("\n--- bookmarks: the names a document keeps for places ---")
+    marker = body.createTextCursorByRange(body.getEnd())
+    body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+    body.insertString(marker, "МЕТКА-СТРОКА для закладок", False)
+    where = bridge.read_paragraphs(start=0, count=1,
+                                   doc=doc)["total_paragraphs"] - 1
+
+    made = bridge.add_bookmark({"paragraph": where, "offset": 0, "length": 12},
+                               "Метка", doc=doc)
+    print("   ", {key: made.get(key) for key in
+                  ("success", "name", "text", "is_a_point")})
+    check("a bookmark covers the text it was put on",
+          (made.get("success"), made.get("text")), (True, "МЕТКА-СТРОКА"))
+    point = bridge.add_bookmark({"paragraph": where, "offset": 13,
+                                 "length": 0}, "Точка", doc=doc)
+    check("and one at a caret marks a spot", point.get("is_a_point"), True)
+    check("a name that is taken is refused",
+          bridge.add_bookmark({"paragraph": where}, "Метка",
+                              doc=doc).get("code"), "INVALID_PARAMETER")
+
+    listed = bridge.list_bookmarks({"paragraph": where}, doc=doc)
+    check("both are listed, in the order they sit in",
+          [one["name"] for one in listed["bookmarks"]], ["Метка", "Точка"])
+    check("each with the address of what it covers",
+          listed["bookmarks"][0]["address"]["length"], 12)
+
+    check("renaming leaves it where it is",
+          bridge.rename_bookmark("Метка", "Метка-2", doc=doc).get("success"),
+          True)
+    check("under the new name",
+          [one["name"] for one in bridge.list_bookmarks(
+              {"paragraph": where}, doc=doc)["bookmarks"]],
+          ["Метка-2", "Точка"])
+
+    print("\n   a bookmark outlives what would take a comment away:")
+    bridge.replace_range({"paragraph": where, "offset": 0, "length": 12},
+                         "ПЕРЕПИСАНО", flatten=True, doc=doc)
+    after = bridge.list_bookmarks({"paragraph": where}, doc=doc)
+    check("the rewrite left the bookmark in the document",
+          "Метка-2" in [one["name"] for one in after["bookmarks"]], True)
+
+    gone = bridge.delete_bookmark("Метка-2", doc=doc)
+    check("and it can be taken away", gone.get("success"), True)
+    check("leaving the text",
+          "ПЕРЕПИСАНО" in bridge.read_paragraphs(
+              start=where, count=1, doc=doc)["paragraphs"][0]["text"], True)
+    check("a bookmark that is not there",
+          bridge.delete_bookmark("Нетакой", doc=doc).get("code"), "NOT_FOUND")
+    bridge.delete_bookmark("Точка", doc=doc)
+    body.removeTextContent(bridge._paragraph_at(body, where))
+
     print("\n--- fields: the bits that write themselves ---")
     marker = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)

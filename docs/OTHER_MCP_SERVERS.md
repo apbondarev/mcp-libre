@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.15** table shape,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
 rather than a feature, and **3.3** the concurrency claim nobody has measured here.
@@ -359,12 +359,21 @@ cursor standing at a field's position hands back the field's text, so the offset
 range. A rewrite destroys a field and leaves its text, so the flatten guard counts
 them like comments and pictures.
 
-#### 3.9.2 Bookmarks
+#### 3.9.2 Bookmarks — **done**
 
-Add, rename, delete, list, and go to one. Measured already, in passing, while
-building anchors: a bookmark moves with its text exactly as a held cursor does, and
-unlike an anchor it is saved in the file and shows in the Navigator — which is why
-anchors are the session's handle and bookmarks would be the document's.
+`list_bookmarks`, `add_bookmark`, `rename_bookmark`, `delete_bookmark`; `select` and
+every address-taking tool reach one through the address it reports, so "go to" needs
+no tool of its own.
+
+A bookmark moves with its text exactly as a held cursor does, and unlike an anchor it
+is saved in the file and shows in the Navigator — which is why anchors are the
+session's handle and bookmarks are the document's. Two things measured while building
+it: a **rewrite leaves a bookmark alone**, where the same rewrite destroys a comment
+or a field, so nothing here has to guard it; and a name that is already taken is not
+refused by Writer but silently turned into "name Copy 1", so `add_bookmark` refuses
+it rather than letting a caller point at a bookmark that is not the one it asked for.
+A real document's 20 bookmarks were 6.4s to list before they were placed in one
+sweep, and 0.69s after.
 
 #### 3.9.3 Cross-references and captions
 

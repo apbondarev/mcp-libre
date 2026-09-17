@@ -56,6 +56,34 @@ class FakeImage:
                         "com.sun.star.text.BaseFrame")
 
 
+class FakeBookmark:
+    """com.sun.star.text.Bookmark: a name the document keeps for a place.
+
+    Measured on a real Writer: it moves with its text, survives a rewrite of
+    the very words it covers — where a comment or a field would go — and a
+    name that is taken is *not* refused: Writer mints "name Copy 1".
+    """
+
+    def __init__(self, name=""):
+        self._name = name
+        self._anchor = None
+
+    def getName(self):
+        return self._name
+
+    def setName(self, name):
+        self._name = name
+
+    def getAnchor(self):
+        if self._anchor is None:
+            raise RuntimeError("this bookmark is in no text")
+        return self._anchor
+
+    def supportsService(self, name):
+        return name in ("com.sun.star.text.Bookmark",
+                        "com.sun.star.text.TextContent")
+
+
 class FakeField:
     """com.sun.star.text.TextField, as the bridge touches it.
 

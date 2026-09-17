@@ -261,6 +261,16 @@ class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
     def insertTextContent(self, text_range, content, absorb):
+        """A bookmark goes on the range and changes no text."""
+        if hasattr(content, "getName") and hasattr(content, "setName") \
+                and not hasattr(content, "getCellNames"):
+            content._anchor = FakeRange(self, text_range.start, text_range.end)
+            if hasattr(self, "bookmarks"):
+                self.bookmarks.append(content)
+            return
+        return self._insert_text_content(text_range, content, absorb)
+
+    def _insert_text_content(self, text_range, content, absorb):
         """A comment is anchored to a range; a table takes its place between
         paragraphs, before the one the range starts in — which is where a
         real one lands cleanly."""
@@ -286,6 +296,11 @@ class FakeText:
 
         A table goes altogether; a paragraph takes its line with it.
         """
+        if hasattr(content, "getName") and hasattr(content, "setName") \
+                and not hasattr(content, "getCellNames"):
+            if hasattr(self, "bookmarks") and content in self.bookmarks:
+                self.bookmarks.remove(content)
+                return
         if hasattr(content, "getCellNames"):
             self.enumeration_items = [item for item in self.enumeration_items
                                       if item is not content]

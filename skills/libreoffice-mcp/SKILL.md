@@ -37,6 +37,12 @@ text itself. Make anchors with `anchor`, or ask `find_text` and
 `read_paragraphs` for them with `anchors: true`, and a plan survives its own
 edits. `select` puts an address under the reader's eyes.
 
+An anchor lives as long as this session. A **bookmark** is the same handle kept
+by the document itself: it is saved in the file, comes back when the document is
+reopened, shows in the Navigator, and survives a rewrite of the very text it
+covers. `add_bookmark`, `list_bookmarks`, `rename_bookmark` and `delete_bookmark`
+work in names, and the address a bookmark reports is what the other tools take.
+
 ## Rewriting text without destroying it
 
 Writing a string over a range flattens it: bold, italics, inline code (a

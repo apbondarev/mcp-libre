@@ -75,20 +75,30 @@ class FakeSize:
 
 
 class FakeNameAccess:
-    """com.sun.star.container.XNameAccess over things that carry a Name."""
+    """com.sun.star.container.XNameAccess over things that carry a Name.
+
+    An item names itself either with a Name attribute or with getName(), the
+    way a bookmark does.
+    """
 
     def __init__(self, items):
         self.items = list(items)
 
+    @staticmethod
+    def _name_of(item):
+        if hasattr(item, "getName"):
+            return item.getName()
+        return item.Name
+
     def getElementNames(self):
-        return tuple(item.Name for item in self.items)
+        return tuple(self._name_of(item) for item in self.items)
 
     def hasByName(self, name):
-        return any(item.Name == name for item in self.items)
+        return any(self._name_of(item) == name for item in self.items)
 
     def getByName(self, name):
         for item in self.items:
-            if item.Name == name:
+            if self._name_of(item) == name:
                 return item
         raise RuntimeError(f"no element named {name}")
 
