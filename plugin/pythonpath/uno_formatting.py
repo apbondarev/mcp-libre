@@ -12,7 +12,7 @@ import logging
 from uno_values import (AddressError, STYLE_EFFECTIVE, STYLE_FAMILIES, 
     UNVISITED_LINK_STYLE, VISITED_LINK_STYLE, WRITER_SERVICE, _border_line, 
     _colour, _colour_name, _get_property, _get_property_state, 
-    _points_to_uno, _raw, _style_value, _supports)
+    _points_to_uno, _raw, _style_value, _supports, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class FormattingMixin:
                 doc = self.get_active_document()
             
             if not doc or not _supports(doc, WRITER_SERVICE):
-                return {"success": False, "error": "No Writer document available"}
+                return {"success": False, "code": "NO_DOCUMENT", "error": "No Writer document available"}
             
             # The selection, which must actually hold something: a collapsed
             # caret answers getCount() == 1 with an empty range, so the old
@@ -44,11 +44,12 @@ class FormattingMixin:
             try:
                 text_range = self._resolve_address(doc, {"selection": True})
             except AddressError as e:
-                return {"success": False, "error": str(e)}
+                return refusal("INVALID_ADDRESS", e)
 
             if not text_range.getString():
                 return {
                     "success": False,
+                    "code": "INVALID_ADDRESS",
                     "error": "Nothing is selected, so there is nothing to "
                              "format. Select the text first, or use "
                              "format_range with an address."
@@ -75,7 +76,7 @@ class FormattingMixin:
             
         except Exception as e:
             logger.error(f"Failed to format text: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def format_ranges(self, ranges: Any, track_changes: Optional[bool] = None,
                       doc: Any = None) -> Dict[str, Any]:
@@ -97,7 +98,7 @@ class FormattingMixin:
             return error
 
         if not isinstance(ranges, (list, tuple)) or not ranges:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": 'ranges must be a list, each entry an address '
                              'with the formatting for it, as in '
                              '[{"address": {"paragraph": 3, "offset": 0, '
@@ -106,12 +107,12 @@ class FormattingMixin:
         prepared = []
         for position, entry in enumerate(ranges):
             if not isinstance(entry, dict):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"range {position} must be an object with an "
                                  f"address and the formatting for it"}
             address = entry.get("address")
             if address is None:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"range {position} has no address"}
 
             asked = {}
@@ -128,10 +129,10 @@ class FormattingMixin:
                         asked[key] = _colour_name(_colour(entry[key]))
                 target = self._resolve_address(doc, address)
             except AddressError as e:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_ADDRESS",
                         "error": f"range {position}: {e}"}
             if not asked:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"range {position} asks for no formatting"}
             prepared.append((target, asked, address))
 
@@ -182,10 +183,10 @@ class FormattingMixin:
             if background_color is not None:
                 asked["background_color"] = _colour_name(_colour(background_color))
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         if not asked:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "Nothing to apply: pass at least one of bold, "
                              "italic, underline, font_size, font_name, "
                              "color, background_color"}
@@ -281,10 +282,10 @@ class FormattingMixin:
             if padding is not None:
                 asked["padding"] = float(padding)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         if not asked:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "Nothing to apply: pass background_color, border "
                              "or padding"}
 
@@ -353,11 +354,12 @@ class FormattingMixin:
             return error
 
         if not isinstance(style, str) or not style:
-            return {"success": False, "error": "style must be a non-empty string"}
+            return {"success": False, "code": "INVALID_PARAMETER", "error": "style must be a non-empty string"}
 
         if not self._has_style(doc, "ParagraphStyles", style):
             return {
                 "success": False,
+                "code": "NOT_FOUND",
                 "error": f"This document has no paragraph style {style!r}. "
                          f"Use list_styles to see the names it does have."
             }
@@ -382,13 +384,14 @@ class FormattingMixin:
             if not families.hasByName(family):
                 return {
                     "success": False,
+                    "code": "NOT_FOUND",
                     "error": f"No style family {family!r}. This document has: "
                              f"{', '.join(families.getElementNames())}"
                 }
             names = list(families.getByName(family).getElementNames())
         except Exception as e:
             logger.error(f"Could not list styles: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         return {"success": True, "family": family, "styles": names,
                 "count": len(names)}
@@ -472,10 +475,10 @@ class FormattingMixin:
                                       if address is not None
                                       else {"selection": True}, family)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         if not styles.hasByName(name):
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"there is no {family} style called {name!r} in "
                              f"this document; list_styles reports what there "
                              f"is"}
@@ -517,7 +520,7 @@ class FormattingMixin:
                           in style.getPropertySetInfo().getProperties()]
         except Exception as e:
             logger.error(f"Could not list the properties of {name}: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         set_here, effective, everything = {}, {}, {}
         for prop in sorted(properties):

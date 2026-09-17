@@ -218,7 +218,7 @@ class AnchorsMixin:
 
         asked = addresses if isinstance(addresses, list) else [addresses]
         if not asked:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "addresses must hold at least one address"}
 
         # Every address is checked before any anchor is made, so a list with
@@ -228,14 +228,14 @@ class AnchorsMixin:
             try:
                 ranges.append(self._resolve_address(doc, address))
             except AddressError as e:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_ADDRESS",
                         "error": f"address {position}: {e}"}
 
         made = []
         for address, text_range in zip(asked, ranges):
             token = self._hold_anchor(doc, text_range)
             if token is None:
-                return {"success": False,
+                return {"success": False, "code": "FAILED",
                         "error": f"could not hold an anchor on {address!r}"}
             payload = _text_payload(text_range.getString())
             located, _, _ = self._locate_range(doc, text_range)
@@ -285,12 +285,12 @@ class AnchorsMixin:
             if isinstance(anchors, str):
                 anchors = [anchors]
             if not isinstance(anchors, list):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"anchors must be a list of tokens, got "
                                  f"{type(anchors).__name__}"}
             unknown = [token for token in anchors if token not in store]
             if unknown:
-                return {"success": False,
+                return {"success": False, "code": "NOT_FOUND",
                         "error": f"no such anchor: {', '.join(map(str, unknown))}"}
             dropped = list(anchors)
 

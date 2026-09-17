@@ -652,6 +652,37 @@ def _is_document(component: Any) -> bool:
     return any(_supports(component, service) for service in DOCUMENT_SERVICES)
 
 
+# Why a tool said no, as a word a caller can branch on instead of matching
+# on English. Kept small on purpose: a code earns its place only when a
+# caller would do something different about it.
+#
+#   NO_DOCUMENT           nothing to act on — no document, or none open
+#   WRONG_DOCUMENT_TYPE   a Writer tool pointed at Calc, Draw, a dialog
+#   READ_ONLY             the document refuses every edit
+#   INVALID_ADDRESS       the address does not resolve here and now
+#   NOT_FOUND             a thing named by the caller is not in the document
+#   INVALID_PARAMETER     an argument is missing, of the wrong kind or range
+#   WOULD_LOSE_FORMATTING the write was refused because it would destroy runs,
+#                         links, comments, pictures or a table
+#   UNSUPPORTED           LibreOffice here cannot do it at all
+#   FAILED                UNO said no, or nothing better is known
+ERROR_CODES = frozenset({
+    "NO_DOCUMENT", "WRONG_DOCUMENT_TYPE", "READ_ONLY", "INVALID_ADDRESS",
+    "NOT_FOUND", "INVALID_PARAMETER", "WOULD_LOSE_FORMATTING", "UNSUPPORTED",
+    "FAILED",
+})
+
+
+def refusal(code, message, **extra):
+    """A refusal a caller can act on: the reason in English and in a word."""
+    if code not in ERROR_CODES:
+        raise ValueError(f"unknown error code {code!r}; "
+                         f"known: {', '.join(sorted(ERROR_CODES))}")
+    answer = {"success": False, "error": str(message), "code": code}
+    answer.update(extra)
+    return answer
+
+
 class AddressError(Exception):
     """An address that cannot be resolved to a text range"""
 

@@ -9,7 +9,7 @@ import logging
 from uno_values import (DEFAULT_PARAGRAPH_COUNT, DEFAULT_SEARCH_RESULTS, 
     MAX_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
     MAX_TEXT_CHARS, WRITER_SERVICE, _get_property, _heading_level, 
-    _supports, _text_payload)
+    _supports, _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +27,17 @@ class ReadingMixin:
                 doc = self.get_active_document()
             
             if not doc:
-                return {"success": False, "error": "No document available"}
+                return {"success": False, "code": "NO_DOCUMENT", "error": "No document available"}
             
             if _supports(doc, WRITER_SERVICE):
                 text = doc.getText().getString()
                 return {"success": True, "content": text, "length": len(text)}
             else:
-                return {"success": False, "error": f"Text extraction not supported for {self._get_document_type(doc)}"}
+                return {"success": False, "code": "WRONG_DOCUMENT_TYPE", "error": f"Text extraction not supported for {self._get_document_type(doc)}"}
                 
         except Exception as e:
             logger.error(f"Failed to get text content: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def read_paragraphs(self, start: int = 0,
                         count: int = DEFAULT_PARAGRAPH_COUNT,
@@ -58,7 +58,7 @@ class ReadingMixin:
                 return error
 
             if not isinstance(start, int) or isinstance(start, bool) or start < 0:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"start must be a non-negative integer, got {start!r}"}
 
             window = max(1, min(int(count), MAX_PARAGRAPH_COUNT))
@@ -89,7 +89,7 @@ class ReadingMixin:
 
         except Exception as e:
             logger.error(f"Failed to read paragraphs: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def get_outline(self, doc: Any = None) -> Dict[str, Any]:
         """
@@ -136,7 +136,7 @@ class ReadingMixin:
 
         except Exception as e:
             logger.error(f"Failed to get outline: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def _match_in(self, body: Any, paragraph: Any, index: int, match: Any,
                   start: Any) -> Dict[str, Any]:
@@ -302,14 +302,14 @@ class ReadingMixin:
                 return error
 
             if not isinstance(query, str) or not query:
-                return {"success": False, "error": "query must be a non-empty string"}
+                return {"success": False, "code": "INVALID_PARAMETER", "error": "query must be a non-empty string"}
 
             limit = max(1, min(int(max_results), MAX_SEARCH_RESULTS))
             for label, value in (("paragraphs_before", paragraphs_before),
                                  ("paragraphs_after", paragraphs_after)):
                 if not isinstance(value, int) or isinstance(value, bool) \
                         or value < 0 or value > MAX_NEIGHBOUR_PARAGRAPHS:
-                    return {"success": False,
+                    return {"success": False, "code": "INVALID_PARAMETER",
                             "error": f"{label} must be between 0 and "
                                      f"{MAX_NEIGHBOUR_PARAGRAPHS}, got "
                                      f"{value!r}"}
@@ -364,4 +364,4 @@ class ReadingMixin:
 
         except Exception as e:
             logger.error(f"Failed to search: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)

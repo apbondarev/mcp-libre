@@ -281,13 +281,31 @@ and split, `sort_table`; `list_hyperlinks` and `remove_hyperlink` (we can alread
 `find_by_style`; `get_direct_formatting` / `clear_direct_formatting`; style CRUD
 beyond `describe_style`; `undo`/`redo`.
 
-### 3.10 A uniform result envelope with error codes
+### 3.10 Error codes and `elapsed_ms` — **done**
 
-Ours are plain dicts with `success` and a free-text `error`. A closed set of codes
-(`NO_ACTIVE_DOCUMENT`, `INVALID_RANGE`, `WOULD_LOSE_FORMATTING`, …) lets a caller
-branch instead of matching on English, and `elapsed_ms` in every result would have
-made the `find_text` slowness visible to the agent rather than to a human with a
-stopwatch. Worth doing when the next batch of tools lands, not as a rewrite.
+Ours were plain dicts with `success` and a free-text `error`, so a caller could
+only match on English. Every refusal now carries a `code` from a closed set of
+nine — `NO_DOCUMENT`, `WRONG_DOCUMENT_TYPE`, `READ_ONLY`, `INVALID_ADDRESS`,
+`NOT_FOUND`, `INVALID_PARAMETER`, `WOULD_LOSE_FORMATTING`, `UNSUPPORTED`,
+`FAILED` — and every result carries `elapsed_ms`.
+
+Done without the rewrite the first draft of this section feared. Two of the
+refusals mean the same thing everywhere and became one call each
+(`refusal("INVALID_ADDRESS", e)` for a caught `AddressError`, `FAILED` for a
+caught `Exception`); the rest were stamped where they stand, so the messages and
+their extra keys are untouched and the diff reads as one added key per site. The
+stamps themselves live in `_run_tool`, the single place every call goes through —
+which is also why a batch's steps get them.
+
+Unlike the fork's envelope this is not a wrapper: the payload stays where it was,
+so nothing that read a result before has to change. What holds it together is
+`tests/test_result_contract.py` — it fails if a code turns up that `ERROR_CODES`
+does not declare, and if any of the 45 tools answers a refusal without one.
+
+Smaller than the fork's fourteen codes on purpose: a code earns its place only
+when a caller would do something different about it. `AMBIGUOUS_SELECTOR`,
+`FILE_EXISTS`, `TIMEOUT` and the rest are `INVALID_PARAMETER` or `FAILED` here
+until something needs to tell them apart.
 
 ### 3.11 Transport: we are two revisions behind
 

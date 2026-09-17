@@ -15,7 +15,7 @@ import re
 import logging
 from uno_values import (AddressError, GRAPHIC_SERVICE, IMAGE_EXTENSIONS, 
     IMAGE_TYPES, INLINE_ANCHOR, MAX_INLINE_IMAGE_BYTES, _anchor_kind, 
-    _file_url, _get_property, _millimetres, _supports, _text_payload)
+    _file_url, _get_property, _millimetres, _supports, _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +191,7 @@ class ImagesMixin:
         try:
             covers, scope = self._comment_scope(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         images = []
         for image in self._graphics(doc):
@@ -241,28 +241,28 @@ class ImagesMixin:
             elif len(pictures) > 1:
                 names = ", ".join(_get_property(picture, "Name", "") or "?"
                                   for picture in pictures)
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{len(pictures)} pictures are selected "
                                  f"({names}); name the one to write"}
             else:
-                return {"success": False,
+                return {"success": False, "code": "NOT_FOUND",
                         "error": f"No picture is selected and none was named. "
                                  f"This document holds: "
                                  f"{', '.join(known) or 'none'}."}
         elif not isinstance(name, str):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "name must be the name of a picture, as "
                              "list_images reports it"}
         else:
             wanted = by_name.get(name)
         if wanted is None:
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No picture named {name} in this document. "
                              f"It holds: {', '.join(known) or 'none'}."}
 
         graphic = _get_property(wanted, "Graphic", None)
         if graphic is None:
-            return {"success": False,
+            return {"success": False, "code": "FAILED",
                     "error": f"The picture {name} carries no graphic to write"}
 
         asked = (image_format or "png").lower()
@@ -272,7 +272,7 @@ class ImagesMixin:
         elif asked in IMAGE_TYPES:
             mime = IMAGE_TYPES[asked]
         else:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f'format must be one of '
                              f'{", ".join(sorted(IMAGE_TYPES))} or "original", '
                              f'got {image_format!r}'}
@@ -285,7 +285,7 @@ class ImagesMixin:
         target = os.path.abspath(os.path.expanduser(target))
         directory = os.path.dirname(target)
         if not os.path.isdir(directory):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"There is no directory {directory} to write into"}
 
         try:
@@ -298,10 +298,10 @@ class ImagesMixin:
             provider.storeGraphic(graphic, (url, kind))
         except Exception as e:
             logger.error(f"Could not write the picture {name}: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         if not os.path.exists(target):
-            return {"success": False,
+            return {"success": False, "code": "FAILED",
                     "error": f"LibreOffice reported no error but wrote no "
                              f"file at {target}"}
 

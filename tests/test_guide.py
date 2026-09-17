@@ -26,7 +26,7 @@ from mcp_server import LibreOfficeMCPServer  # noqa: E402
 NOT_TOOLS = {
     "language", "flatten", "anchors", "runs", "on_error", "track_changes",
     "paragraphs_before", "paragraphs_after", "replace", "true", "false",
-    "undo", "anchor_text", "instructions",
+    "undo", "anchor_text", "instructions", "code", "elapsed_ms",
 }
 
 

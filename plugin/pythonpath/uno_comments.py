@@ -13,7 +13,7 @@ import logging
 from uno_values import (ANNOTATION_SERVICE, AddressError, COMMENT_STYLE, 
     _comment_language, _describe_comment, _get_property, _heading_level, 
     _locale, _locale_name, _stamp_comment, _supports, _text_payload, 
-    _write_comment_text)
+    _write_comment_text, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class CommentsMixin:
 
         if text is None and author is None and resolved is None \
                 and language is None:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "Nothing to change: pass text, author, language "
                              "or resolved"}
         if language is not None:
@@ -191,18 +191,18 @@ class CommentsMixin:
                 _locale(language)
                 self._comment_style(doc)
             except AddressError as e:
-                return {"success": False, "error": str(e)}
+                return refusal("INVALID_ADDRESS", e)
         if text is not None and (not isinstance(text, str) or not text):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "text must be a non-empty string; to remove a "
                              "comment use delete_comment"}
 
         try:
             note = self._find_comment(doc, comment_id)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         if note is None:
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No comment with id {comment_id} in this "
                              f"document. Take an id from list_comments."}
 
@@ -215,7 +215,7 @@ class CommentsMixin:
             except Exception as e:
                 logger.info(f"Could not locate a comment's anchor: {e}")
             if anchor_address is None or anchor_address.get("paragraph") is None:
-                return {"success": False,
+                return {"success": False, "code": "UNSUPPORTED",
                         "error": "This comment's anchor is outside the body "
                                  "text, so it cannot be made again in another "
                                  "language"}
@@ -289,9 +289,9 @@ class CommentsMixin:
         try:
             note = self._find_comment(doc, comment_id)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         if note is None:
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No comment with id {comment_id} in this "
                              f"document. Take an id from list_comments."}
 
@@ -352,10 +352,10 @@ class CommentsMixin:
             locale = _locale(language)
             style = self._comment_style(doc)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"Could not reach the comment style: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         was = _locale_name(_get_property(style, "CharLocale", None))
 
@@ -403,14 +403,14 @@ class CommentsMixin:
         try:
             covers, scope = self._comment_scope(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         comments = []
         try:
             fields = doc.getTextFields().createEnumeration()
         except Exception as e:
             logger.error(f"Could not enumerate comments: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         while fields.hasMoreElements():
             field = fields.nextElement()
@@ -461,19 +461,19 @@ class CommentsMixin:
             return error
 
         if not isinstance(text, str) or not text:
-            return {"success": False, "error": "text must be a non-empty string"}
+            return {"success": False, "code": "INVALID_PARAMETER", "error": "text must be a non-empty string"}
 
         try:
             target = self._resolve_address(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         if language is not None:
             try:
                 _locale(language)          # refuse a bad tag before editing
                 self._comment_style(doc)
             except AddressError as e:
-                return {"success": False, "error": str(e)}
+                return refusal("INVALID_ADDRESS", e)
 
         def edit():
             was = None

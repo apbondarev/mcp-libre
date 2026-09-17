@@ -22,6 +22,7 @@ clients see, since execute_tool splats it as **parameters.
 """
 
 import logging
+import time
 from typing import Dict, Any, Optional, List
 from uno_bridge import UNOBridge
 from mcp_reading_tools import ReadingTools
@@ -78,6 +79,7 @@ class LibreOfficeMCPServer(BatchTools, TableTools, CommentTools, ImageTools,
             if tool_name not in self.tools:
                 return {
                     "success": False,
+                    "code": "NOT_FOUND",
                     "error": f"Unknown tool: {tool_name}",
                     "available_tools": list(self.tools.keys())
                 }
@@ -90,6 +92,7 @@ class LibreOfficeMCPServer(BatchTools, TableTools, CommentTools, ImageTools,
             logger.error(f"Error executing tool '{tool_name}': {e}")
             return {
                 "success": False,
+                "code": "FAILED",
                 "error": str(e),
                 "tool": tool_name,
                 "parameters": parameters
@@ -102,20 +105,42 @@ class LibreOfficeMCPServer(BatchTools, TableTools, CommentTools, ImageTools,
         The dispatch execute_tool has always done, split out so batch_live
         can make the same call without going round the transport again.
         """
+        started = time.monotonic()
         if tool_name not in self.tools:
-            return {"success": False,
-                    "error": f"Unknown tool: {tool_name}",
-                    "available_tools": list(self.tools.keys())}
+            return self._timed({"success": False, "code": "NOT_FOUND",
+                                "error": f"Unknown tool: {tool_name}",
+                                "available_tools": list(self.tools.keys())},
+                               started)
         try:
-            return self.tools[tool_name]["handler"](**(parameters or {}))
+            outcome = self.tools[tool_name]["handler"](**(parameters or {}))
         except TypeError as e:
             logger.error(f"Tool '{tool_name}' was called wrongly: {e}")
-            return {"success": False, "error": str(e), "tool": tool_name,
-                    "parameters": parameters}
+            outcome = {"success": False, "code": "INVALID_PARAMETER",
+                       "error": str(e), "tool": tool_name,
+                       "parameters": parameters}
         except Exception as e:
             logger.error(f"Error executing tool '{tool_name}': {e}")
-            return {"success": False, "error": str(e), "tool": tool_name,
-                    "parameters": parameters}
+            outcome = {"success": False, "code": "FAILED", "error": str(e),
+                       "tool": tool_name, "parameters": parameters}
+        return self._timed(outcome, started)
+
+    @staticmethod
+    def _timed(outcome: Dict[str, Any], started: float) -> Dict[str, Any]:
+        """Stamp a result with what it cost, and a refusal with a code.
+
+        elapsed_ms is here rather than in each tool because every call goes
+        through this one place — and because a slow tool was a thing only a
+        human with a stopwatch could see: find_text took ten seconds for
+        twenty hits for weeks, and nothing in its answer said so. A refusal
+        that named no code gets FAILED, so a caller can always branch on one
+        rather than on English.
+        """
+        if not isinstance(outcome, dict):
+            return outcome
+        outcome["elapsed_ms"] = int((time.monotonic() - started) * 1000)
+        if outcome.get("success") is False and "code" not in outcome:
+            outcome["code"] = "FAILED"
+        return outcome
 
     def get_tool_list(self) -> List[Dict[str, Any]]:
         """Get list of available tools with their descriptions"""
@@ -137,9 +162,9 @@ class LibreOfficeMCPServer(BatchTools, TableTools, CommentTools, ImageTools,
         doc = self.uno_bridge.document_for(document)
         if doc is None:
             if document:
-                return None, {"success": False,
+                return None, {"success": False, "code": "NOT_FOUND",
                               "error": f"No open document with URL {document}"}
-            return None, {"success": False, "error": "No document available"}
+            return None, {"success": False, "code": "NO_DOCUMENT", "error": "No document available"}
         return doc, None
     
     

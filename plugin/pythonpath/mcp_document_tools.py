@@ -156,7 +156,7 @@ class DocumentTools:
                 "document_info": doc_info
             }
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "code": "FAILED", "error": str(e)}
 
     def get_document_info_live(self) -> Dict[str, Any]:
         """Get information about the currently active document"""
@@ -218,4 +218,4 @@ class DocumentTools:
             }
 
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            return {"success": False, "code": "FAILED", "error": str(e)}

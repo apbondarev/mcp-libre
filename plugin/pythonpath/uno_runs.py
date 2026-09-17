@@ -10,7 +10,7 @@ from typing import Any, Optional, Dict, List
 import logging
 from uno_values import (AddressError, _colour_name, _comment_key, 
     _describe_comment, _distinct_comments, _distinct_images, _get_property, 
-    _is_italic, _locale, _locale_name, _same_paragraph, _text_payload)
+    _is_italic, _locale, _locale_name, _same_paragraph, _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,11 @@ class RunsMixin:
             located, paragraph_cursor, _ = self._locate_range(
                 doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         index = located["paragraph"]
         if index is None and not located.get("cell"):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_ADDRESS",
                     "error": "That address is outside the body text and in no "
                              "table cell, so its runs cannot be read"}
 
@@ -51,7 +51,7 @@ class RunsMixin:
             runs = self._runs_in(doc, located, paragraph_cursor)
         except Exception as e:
             logger.error(f"Could not read the runs: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
@@ -342,22 +342,22 @@ class RunsMixin:
             return error
 
         if not isinstance(runs, (list, tuple)) or not runs:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "runs must be a list with at least one run"}
 
         prepared = []
         for position, run in enumerate(runs):
             if not isinstance(run, dict) or not isinstance(run.get("text"), str):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"run {position} needs a text string"}
             try:
                 formatting = self._formatting_of(run)
                 language = _locale(run["language"]) if run.get("language") else None
             except AddressError as e:
-                return {"success": False, "error": f"run {position}: {e}"}
+                return {"success": False, "code": "INVALID_PARAMETER", "error": f"run {position}: {e}"}
             comments = run.get("comments") or []
             if not isinstance(comments, (list, tuple)):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"run {position}: comments must be a list"}
             prepared.append((run["text"], formatting, language, list(comments)))
 
@@ -366,10 +366,10 @@ class RunsMixin:
             located, located_cursor, _ = self._locate_range(
                 doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         if located["paragraph"] is None and not located.get("cell"):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_ADDRESS",
                     "error": "That address is outside the body text and in no "
                              "table cell, so runs cannot be written into it"}
 
@@ -419,6 +419,7 @@ class RunsMixin:
                               for image in plan["images_at_risk"])
             return {
                 "success": False,
+                "code": "WOULD_LOSE_FORMATTING",
                 "error": f"This range holds {len(plan['images_at_risk'])} "
                          f"inline picture"
                          f"{'s' if len(plan['images_at_risk']) > 1 else ''} "
@@ -434,6 +435,7 @@ class RunsMixin:
         if at_risk and not carried:
             return {
                 "success": False,
+                "code": "WOULD_LOSE_FORMATTING",
                 "error": f"This range carries {len(at_risk)} comment"
                          f"{'s' if len(at_risk) > 1 else ''} on text you are "
                          f"changing, and none of the runs you passed carries "

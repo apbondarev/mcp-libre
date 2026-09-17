@@ -6,7 +6,7 @@ is no text selection at all — both are reported rather than left as silence.
 
 from typing import Any, Optional, Dict
 import logging
-from uno_values import (_text_payload, AddressError)
+from uno_values import (_text_payload, AddressError, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -28,20 +28,20 @@ class ViewMixin:
 
         controller = doc.getCurrentController()
         if not controller:
-            return {"success": False,
+            return {"success": False, "code": "UNSUPPORTED",
                     "error": "The document has no view, so nothing can be "
                              "selected in it"}
 
         try:
             target = self._resolve_address(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         try:
             controller.select(target)
         except Exception as e:
             logger.error(f"Could not select: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         payload = _text_payload(target.getString())
         spans = self._range_spans(doc, target)
@@ -84,6 +84,7 @@ class ViewMixin:
             if not view_cursor:
                 return {
                     "success": False,
+                    "code": "UNSUPPORTED",
                     "error": "Document has no view cursor (is LibreOffice running headless?)"
                 }
 
@@ -130,7 +131,7 @@ class ViewMixin:
 
         except Exception as e:
             logger.error(f"Failed to get cursor info: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def _get_page(self, view_cursor: Any) -> Optional[int]:
         """Page the caret is on, None if the view cannot report one"""

@@ -15,7 +15,7 @@ from uno_values import (AddressError, CALC_SERVICE, DRAW_SERVICE,
     EXPORT_ONLY_FORMATS, IMPRESS_SERVICE, WRITER_SAVE_FILTERS, 
     WRITER_SERVICE, _document_path, _file_url, _get_document_url, 
     _get_property, _get_property_call, _is_document, _is_readonly, 
-    _supports)
+    _supports, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -137,11 +137,12 @@ class DocumentsMixin:
             doc = self.get_active_document()
 
         if not doc:
-            return None, {"success": False, "error": "No document available"}
+            return None, {"success": False, "code": "NO_DOCUMENT", "error": "No document available"}
 
         if not _supports(doc, WRITER_SERVICE):
             return None, {
                 "success": False,
+                "code": "WRONG_DOCUMENT_TYPE",
                 "error": f"{action} is only available for Writer documents, "
                          f"got {self._get_document_type(doc)}"
             }
@@ -263,9 +264,9 @@ class DocumentsMixin:
         if doc is None:
             doc = self.get_active_document()
         if not doc:
-            return {"success": False, "error": "No document to save"}
+            return {"success": False, "code": "NO_DOCUMENT", "error": "No document to save"}
         if _is_readonly(doc):
-            return {"success": False,
+            return {"success": False, "code": "READ_ONLY",
                     "error": "The document is read-only, so it cannot be saved"}
 
         try:
@@ -280,7 +281,7 @@ class DocumentsMixin:
                         "lives_here_now": True}
 
             if not doc.hasLocation():
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": "This document has never been saved, so "
                                  "there is nowhere to save it; give a "
                                  "file_path and it will be saved there"}
@@ -289,10 +290,10 @@ class DocumentsMixin:
             return {"success": True, "saved_as": _document_path(doc),
                     "url": _get_document_url(doc), "lives_here_now": True}
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"Failed to save document: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def close_document(self, doc: Any = None, unsaved: Optional[str] = None,
                        ) -> Dict[str, Any]:
@@ -307,7 +308,7 @@ class DocumentsMixin:
         if doc is None:
             doc = self.get_active_document()
         if not doc:
-            return {"success": False, "error": "No document to close"}
+            return {"success": False, "code": "NO_DOCUMENT", "error": "No document to close"}
 
         title = _get_property(doc, "Title", "") or ""
         url = _get_document_url(doc)
@@ -315,14 +316,14 @@ class DocumentsMixin:
         modified = bool(_get_property_call(doc, "isModified", False))
 
         if unsaved is not None and unsaved not in ("save", "discard"):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f'unsaved must be "save" or "discard", got '
                              f'{unsaved!r}'}
 
         saved = False
         if modified:
             if unsaved is None:
-                return {"success": False, "modified": True, "title": title,
+                return {"success": False, "code": "INVALID_PARAMETER", "modified": True, "title": title,
                         "url": url or None,
                         "error": "This document has changes that are not "
                                  "saved. Closing it would lose them, so say "
@@ -330,7 +331,7 @@ class DocumentsMixin:
                                  'first, or unsaved="discard" to let them go.'}
             if unsaved == "save":
                 if not doc.hasLocation():
-                    return {"success": False, "modified": True,
+                    return {"success": False, "code": "INVALID_PARAMETER", "modified": True,
                             "error": "This document has never been saved, so "
                                      "its changes cannot be saved on the way "
                                      "out; save_document with a file_path "
@@ -341,7 +342,7 @@ class DocumentsMixin:
                     saved = True
                 except Exception as e:
                     logger.error(f"Could not save before closing: {e}")
-                    return {"success": False,
+                    return {"success": False, "code": "FAILED",
                             "error": f"could not save it, so it was left open: "
                                      f"{e}"}
             else:
@@ -359,7 +360,7 @@ class DocumentsMixin:
             doc.close(True)
         except Exception as e:
             logger.error(f"Could not close the document: {e}")
-            return {"success": False,
+            return {"success": False, "code": "FAILED",
                     "error": f"LibreOffice would not close it: {e}"}
 
         remaining = []
@@ -392,17 +393,17 @@ class DocumentsMixin:
         if doc is None:
             doc = self.get_active_document()
         if not doc:
-            return {"success": False, "error": "No document to rename"}
+            return {"success": False, "code": "NO_DOCUMENT", "error": "No document to rename"}
         if not isinstance(new_name, str) or not new_name.strip():
-            return {"success": False, "error": "new_name must be a name"}
+            return {"success": False, "code": "INVALID_PARAMETER", "error": "new_name must be a name"}
         if _is_readonly(doc):
-            return {"success": False,
+            return {"success": False, "code": "READ_ONLY",
                     "error": "The document is read-only, so it cannot be "
                              "written under another name"}
 
         original = _document_path(doc)
         if not original:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "This document has never been saved, so it has "
                              "no name to change; save_document with a "
                              "file_path gives it one"}
@@ -415,17 +416,17 @@ class DocumentsMixin:
         wanted = os.path.abspath(wanted)
 
         if wanted == original:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"the document is already called "
                              f"{os.path.basename(original)}"}
 
         try:
             written = self._store_as(doc, wanted, None, overwrite)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"Could not write {wanted}: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         removed = False
         if delete_original:
@@ -478,7 +479,7 @@ class DocumentsMixin:
                 doc = self.get_active_document()
             
             if not doc:
-                return {"success": False, "error": "No document to export"}
+                return {"success": False, "code": "NO_DOCUMENT", "error": "No document to export"}
             
             # Filter map for different formats
             filter_map = {
@@ -493,7 +494,7 @@ class DocumentsMixin:
             
             filter_name = filter_map.get(export_format.lower())
             if not filter_name:
-                return {"success": False, "error": f"Unsupported export format: {export_format}"}
+                return {"success": False, "code": "INVALID_PARAMETER", "error": f"Unsupported export format: {export_format}"}
             
             # Prepare export properties
             properties = (
@@ -510,4 +511,4 @@ class DocumentsMixin:
             
         except Exception as e:
             logger.error(f"Failed to export document: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)

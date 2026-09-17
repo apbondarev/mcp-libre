@@ -13,7 +13,7 @@ from typing import Any, Optional, Dict, List
 import logging
 from uno_values import (AddressError, CELL_SERVICE, TABLE_SERVICE, _cell_position, 
     _colour, _colour_name, _column_letters, _column_shares, _get_property, 
-    _supports, _table_size, _text_payload, _millimetres)
+    _supports, _table_size, _text_payload, _millimetres, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -260,31 +260,31 @@ class TablesMixin:
         for label, value in (("rows", rows), ("columns", columns)):
             if not isinstance(value, int) or isinstance(value, bool) \
                     or value < 1:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{label} must be a whole number from 1, got "
                                  f"{value!r}"}
         if rows > MAX_TABLE_ROWS or columns > MAX_TABLE_COLUMNS:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"a table here is at most {MAX_TABLE_ROWS} rows "
                              f"by {MAX_TABLE_COLUMNS} columns"}
 
         content = []
         if cells is not None:
             if not isinstance(cells, (list, tuple)):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": 'cells must be a list of rows, as in '
                                  '[["Operation", "Response"], ["{...}", "..."]]'}
             if len(cells) > rows:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{len(cells)} rows of text were given for a "
                                  f"table of {rows}"}
             for position, row in enumerate(cells):
                 if not isinstance(row, (list, tuple)):
-                    return {"success": False,
+                    return {"success": False, "code": "INVALID_PARAMETER",
                             "error": f"row {position + 1} of cells must be a "
                                      f"list of strings"}
                 if len(row) > columns:
-                    return {"success": False,
+                    return {"success": False, "code": "INVALID_PARAMETER",
                             "error": f"row {position + 1} has {len(row)} cells "
                                      f"for a table of {columns} columns"}
                 content.append([("" if value is None else str(value))
@@ -292,17 +292,17 @@ class TablesMixin:
 
         if name is not None:
             if not isinstance(name, str) or not name.strip():
-                return {"success": False, "error": "name must be a name"}
+                return {"success": False, "code": "INVALID_PARAMETER", "error": "name must be a name"}
             name = name.strip()
             if self._table_by_name(doc, name) is not None:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"this document already has a table called "
                                  f"{name!r}"}
         if header_rows is not None and (not isinstance(header_rows, int)
                                         or isinstance(header_rows, bool)
                                         or header_rows < 0
                                         or header_rows > rows):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"header_rows must be between 0 and {rows}, got "
                              f"{header_rows!r}"}
 
@@ -313,9 +313,9 @@ class TablesMixin:
             located, paragraph_cursor, _ = self._locate_range(
                 doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         if located.get("paragraph") is None:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_ADDRESS",
                     "error": "A table goes into the body text, and that "
                              "address is not in it — give a paragraph"}
 
@@ -331,7 +331,7 @@ class TablesMixin:
                 logger.info(f"Could not count what replacing would cost: {e}")
             inside = self._tables_in(doc, target)
             if inside:
-                return {"success": False,
+                return {"success": False, "code": "WOULD_LOSE_FORMATTING",
                         "error": f"those paragraphs run through "
                                  f"{len(inside)} table"
                                  f"{'s' if len(inside) > 1 else ''}, which a "
@@ -346,7 +346,7 @@ class TablesMixin:
                     if losing.get(key):
                         details.append(f"{losing[key]} {word}"
                                        f"{'s' if losing[key] > 1 else ''}")
-                return {"success": False,
+                return {"success": False, "code": "WOULD_LOSE_FORMATTING",
                         "error": f"the paragraphs this table would replace "
                                  f"hold {', '.join(details)}, which would go "
                                  f"with them; read them first, or pass "
@@ -418,7 +418,7 @@ class TablesMixin:
             if caret is None:
                 listed = [_get_property(table, "Name", "") or "?"
                           for table in self._tables(doc)]
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"The caret is not in a table and none was "
                                  f"named. This document holds: "
                                  f"{', '.join(listed) or 'no tables'}."}
@@ -428,7 +428,7 @@ class TablesMixin:
         if table is None:
             listed = [_get_property(other, "Name", "") or "?"
                       for other in self._tables(doc)]
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No table called {name!r} in this document. It "
                              f"holds: {', '.join(listed) or 'no tables'}."}
 
@@ -497,7 +497,7 @@ class TablesMixin:
             if caret is None:
                 listed = [_get_property(table, "Name", "") or "?"
                           for table in self._tables(doc)]
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"The caret is not in a table and none was "
                                  f"named. This document holds: "
                                  f"{', '.join(listed) or 'no tables'}."}
@@ -507,7 +507,7 @@ class TablesMixin:
         if table is None:
             listed = [_get_property(other, "Name", "") or "?"
                       for other in self._tables(doc)]
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No table called {name!r} in this document. It "
                              f"holds: {', '.join(listed) or 'no tables'}."}
 
@@ -537,7 +537,7 @@ class TablesMixin:
             names = list(table.getCellNames())
         except Exception as e:
             logger.error(f"Could not read the cells of {name}: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         for cell_name in names:
             cell = table.getCellByName(cell_name)
@@ -588,7 +588,7 @@ class TablesMixin:
                 listed = [described["name"] for described
                           in (self._describe_table(doc, table)
                               for table in self._tables(doc))]
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"The caret is not in a table and none was "
                                  f"named. This document holds: "
                                  f"{', '.join(listed) or 'no tables'}."}
@@ -598,7 +598,7 @@ class TablesMixin:
         if table is None:
             listed = [_get_property(other, "Name", "") or "?"
                       for other in self._tables(doc)]
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No table called {name!r} in this document. It "
                              f"holds: {', '.join(listed) or 'no tables'}."}
 
@@ -607,11 +607,11 @@ class TablesMixin:
             names = list(table.getCellNames())
         except Exception as e:
             logger.error(f"Could not read the cells of {name}: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         if cell:
             if cell not in names:
-                return {"success": False,
+                return {"success": False, "code": "NOT_FOUND",
                         "error": f"Table {name} has no cell {cell!r}; its "
                                  f"cells are {', '.join(names)}"}
             text = _text_payload(table.getCellByName(cell).getString())
@@ -798,7 +798,7 @@ class TablesMixin:
             if caret is None:
                 listed = [_get_property(table, "Name", "") or "?"
                           for table in self._tables(doc)]
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"The caret is not in a table and none was "
                                  f"named. This document holds: "
                                  f"{', '.join(listed) or 'no tables'}."}
@@ -808,7 +808,7 @@ class TablesMixin:
         if table is None:
             listed = [_get_property(other, "Name", "") or "?"
                       for other in self._tables(doc)]
-            return {"success": False,
+            return {"success": False, "code": "NOT_FOUND",
                     "error": f"No table called {name!r} in this document. It "
                              f"holds: {', '.join(listed) or 'no tables'}."}
 
@@ -830,7 +830,7 @@ class TablesMixin:
                 raise AddressError(f"header_rows must be a whole number from "
                                    f"0, got {header_rows!r}")
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         character = {}
         for key, value in (("bold", bold), ("italic", italic),
@@ -841,14 +841,14 @@ class TablesMixin:
             try:
                 character["color"] = _colour_name(_colour(color))
             except AddressError as e:
-                return {"success": False, "error": str(e)}
+                return refusal("INVALID_ADDRESS", e)
 
         asked_for_anything = any(value is not None for value in (
             border, padding_mm, background_color, header_rows, repeat_heading,
             header_background_color, header_bold, paragraph_style,
             column_widths_percent)) or bool(character)
         if not asked_for_anything:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "Nothing to change: ask for a border, a "
                              "background, a padding, header rows, a paragraph "
                              "style, character formatting or column widths"}

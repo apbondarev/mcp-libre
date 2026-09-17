@@ -97,4 +97,10 @@ otherwise be one per hit. `format_ranges` colours many pieces at once, and
 It refuses because it can see what the write would destroy, and the message
 names the way round: read the runs, pass `flatten: true` knowingly, or
 address the place by anchor. Read the refusal rather than retrying the call.
+
+Every refusal carries a `code` beside the English, so a caller can branch on
+it: `NO_DOCUMENT`, `WRONG_DOCUMENT_TYPE`, `READ_ONLY`, `INVALID_ADDRESS`,
+`NOT_FOUND`, `INVALID_PARAMETER`, `WOULD_LOSE_FORMATTING`, `UNSUPPORTED`, or
+`FAILED` when nothing better is known. Every result, refusal or not, also
+carries `elapsed_ms` — what the call cost on the server.
 """

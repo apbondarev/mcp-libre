@@ -15,7 +15,7 @@ import os
 import uuid
 import logging
 from uno_values import (AddressError, MAX_INLINE_IMAGE_BYTES, 
-    MAX_RENDER_DPI, MAX_RENDER_PIXELS, MIN_RENDER_DPI, _file_url)
+    MAX_RENDER_DPI, MAX_RENDER_PIXELS, MIN_RENDER_DPI, _file_url, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +178,7 @@ class RenderingMixin:
 
         if not isinstance(dpi, int) or isinstance(dpi, bool) \
                 or not MIN_RENDER_DPI <= dpi <= MAX_RENDER_DPI:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"dpi must be a whole number between "
                              f"{MIN_RENDER_DPI} and {MAX_RENDER_DPI}, got "
                              f"{dpi!r}"}
@@ -202,13 +202,13 @@ class RenderingMixin:
                 # Nothing asked for: the page the reader is looking at.
                 wanted = doc.getCurrentController().getViewCursor().getPage()
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"Could not work out which page to render: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
         if total and wanted > total:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"This document has {total} pages, so there is "
                              f"no page {wanted}"}
 
@@ -216,7 +216,7 @@ class RenderingMixin:
             target = os.path.abspath(os.path.expanduser(path))
             directory = os.path.dirname(target)
             if not os.path.isdir(directory):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"There is no directory {directory} to write "
                                  f"into"}
         else:
@@ -227,7 +227,7 @@ class RenderingMixin:
             try:
                 os.unlink(target)
             except OSError as e:
-                return {"success": False,
+                return {"success": False, "code": "FAILED",
                         "error": f"Could not replace {target}: {e}"}
 
         width, height = self._page_pixels(doc, wanted, dpi)
@@ -236,7 +236,7 @@ class RenderingMixin:
             how = "PDF through a hidden Draw document"
             if self._render_through_draw(doc, wanted, target, width,
                                          height) is None:
-                return {"success": False,
+                return {"success": False, "code": "UNSUPPORTED",
                         "error": f"LibreOffice would render neither page "
                                  f"{wanted} through writer_png_Export nor "
                                  f"through its PDF filter — see "

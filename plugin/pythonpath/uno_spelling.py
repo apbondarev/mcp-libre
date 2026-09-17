@@ -10,7 +10,7 @@ misspelled even when it is correct.
 from typing import Any, Dict, List
 import logging
 from uno_values import (AddressError, DEFAULT_SPELLING_RESULTS, 
-    MAX_SPELLING_RESULTS, WORD, _locale_name)
+    MAX_SPELLING_RESULTS, WORD, _locale_name, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -41,13 +41,13 @@ class SpellingMixin:
             speller = self._spell_checker()
         except Exception as e:
             logger.error(f"No spell checker available: {e}")
-            return {"success": False, "error": f"No spell checker available: {e}"}
+            return {"success": False, "code": "UNSUPPORTED", "error": f"No spell checker available: {e}"}
 
         if address is not None:
             try:
                 index = self._paragraph_index_of(doc, address)
             except AddressError as e:
-                return {"success": False, "error": str(e)}
+                return refusal("INVALID_ADDRESS", e)
         else:
             index = None
 

@@ -57,11 +57,11 @@ class BatchTools:
     def _check_steps(self, steps: Any, document: Optional[str]) -> Any:
         """The steps as they will be run, or a refusal naming the bad one."""
         if not isinstance(steps, list) or not steps:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "steps must be a list holding at least one "
                              "{\"tool\": …, \"parameters\": …}"}
         if len(steps) > MAX_BATCH_STEPS:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"a batch takes at most {MAX_BATCH_STEPS} steps, "
                              f"{len(steps)} were given"}
 
@@ -69,28 +69,28 @@ class BatchTools:
         for position, step in enumerate(steps):
             where = f"step {position}"
             if not isinstance(step, dict):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{where} must be an object with a tool and "
                                  f"its parameters"}
             name = step.get("tool")
             if name == "batch_live":
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{where} is a batch of its own; a batch does "
                                  f"not hold batches"}
             if name not in self.tools:
-                return {"success": False,
+                return {"success": False, "code": "NOT_FOUND",
                         "error": f"{where} names no tool of this server: "
                                  f"{name!r}"}
             parameters = step.get("parameters", {})
             if parameters is None:
                 parameters = {}
             if not isinstance(parameters, dict):
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{where} must give its parameters as an "
                                  f"object, got {type(parameters).__name__}"}
             named = parameters.get("document")
             if named and document and named != document:
-                return {"success": False,
+                return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"{where} acts on {named}, while the batch is "
                                  f"an undo step of {document} — make a batch "
                                  f"for each document"}
@@ -102,7 +102,7 @@ class BatchTools:
                    document: Optional[str] = None) -> Dict[str, Any]:
         """Run several tools in order, as one undo step"""
         if on_error not in WHEN_A_STEP_FAILS:
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"on_error is one of "
                              f"{', '.join(WHEN_A_STEP_FAILS)}, got "
                              f"{on_error!r}"}
@@ -153,6 +153,9 @@ class BatchTools:
                    "results": results}
         if failed:
             first = next(one for one in results if not one["success"])
+            # The batch's own code is the failing step's, so a caller branches
+            # on what actually went wrong rather than on "a step failed".
+            outcome["code"] = (first["result"] or {}).get("code", "FAILED")
             outcome["error"] = (
                 f"step {first['step']} ({first['tool']}) failed: "
                 f"{(first['result'] or {}).get('error', 'no reason given')}")

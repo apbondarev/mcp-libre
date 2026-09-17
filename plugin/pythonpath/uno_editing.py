@@ -9,7 +9,7 @@ a picture or a table is refused before anything is written.
 from typing import Any, Optional, Dict
 import logging
 from uno_values import (AddressError, WRITER_SERVICE, _get_property, 
-    _is_readonly, _locale, _locale_name, _supports)
+    _is_readonly, _locale, _locale_name, _supports, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class EditingMixin:
                 doc = self.get_active_document()
             
             if not doc:
-                return {"success": False, "error": "No active document"}
+                return {"success": False, "code": "NO_DOCUMENT", "error": "No active document"}
             
             # Handle Writer documents
             if _supports(doc, WRITER_SERVICE):
@@ -55,11 +55,11 @@ class EditingMixin:
             
             # Handle other document types
             else:
-                return {"success": False, "error": f"Text insertion not supported for {self._get_document_type(doc)}"}
+                return {"success": False, "code": "WRONG_DOCUMENT_TYPE", "error": f"Text insertion not supported for {self._get_document_type(doc)}"}
                 
         except Exception as e:
             logger.error(f"Failed to insert text: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
 
     def replace_selection(self, text: str, track_changes: Optional[bool] = None,
                           language: Optional[str] = None,
@@ -135,22 +135,22 @@ class EditingMixin:
             return error
 
         if not isinstance(text, str):
-            return {"success": False,
+            return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"text must be a string, got {type(text).__name__}"}
 
         if _is_readonly(doc):
-            return {"success": False,
+            return {"success": False, "code": "READ_ONLY",
                     "error": "The document is read-only, so it cannot be edited"}
 
         try:
             locale = _locale(language) if language else None
             target = self._resolve_address(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         replaced = target.getString()
         if empty_error and not replaced:
-            return {"success": False, "error": empty_error}
+            return {"success": False, "code": "INVALID_ADDRESS", "error": empty_error}
 
         loss = None
         try:
@@ -177,6 +177,7 @@ class EditingMixin:
                               f"{table['columns']})" for table in tables)
             return {
                 "success": False,
+                "code": "WOULD_LOSE_FORMATTING",
                 "error": f"This range runs through {len(tables)} table"
                          f"{'s' if len(tables) > 1 else ''} ({named}), and "
                          f"replacing it with a string destroys them — the "
@@ -202,6 +203,7 @@ class EditingMixin:
                          "flattened." if loss.get("inline_images") else "")
             return {
                 "success": False,
+                "code": "WOULD_LOSE_FORMATTING",
                 "error": f"This range holds {', '.join(details)}. Replacing it "
                          f"with one string would flatten them: inline code, "
                          f"italics and hyperlinks would be lost.{destroyed} "
@@ -227,7 +229,7 @@ class EditingMixin:
                 target.CharLocale = locale
         except Exception as e:
             logger.error(f"Failed to replace text: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
         finally:
             # Put the document's own setting back: this edit was recorded or
             # not as asked, but the owner's preference is not changed for them.
@@ -265,7 +267,7 @@ class EditingMixin:
         what edit() returns alongside whether the change was recorded.
         """
         if _is_readonly(doc):
-            return {"success": False,
+            return {"success": False, "code": "READ_ONLY",
                     "error": "The document is read-only, so it cannot be edited"}
 
         recording = bool(_get_property(doc, "RecordChanges", False))
@@ -280,10 +282,10 @@ class EditingMixin:
                 doc.RecordChanges = wanted
             outcome = edit()
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"{undo_title} failed: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
         finally:
             if override:
                 try:
@@ -368,14 +370,14 @@ class EditingMixin:
             return error
 
         if _is_readonly(doc):
-            return {"success": False,
+            return {"success": False, "code": "READ_ONLY",
                     "error": "The document is read-only, so it cannot be edited"}
 
         try:
             locale = _locale(language)
             target = self._resolve_address(doc, address)
         except AddressError as e:
-            return {"success": False, "error": str(e)}
+            return refusal("INVALID_ADDRESS", e)
 
         undo = _get_property(doc, "UndoManager", None)
         if undo:
@@ -384,7 +386,7 @@ class EditingMixin:
             target.CharLocale = locale
         except Exception as e:
             logger.error(f"Failed to set the language: {e}")
-            return {"success": False, "error": str(e)}
+            return refusal("FAILED", e)
         finally:
             if undo:
                 undo.leaveUndoContext()
