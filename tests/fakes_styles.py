@@ -175,7 +175,11 @@ class FakeStyleFamilies:
                                 "Heading 1", "Heading 2", "Heading 3",
                                 "Preformatted Text", "Quotations", "Comment",
                                 "List", "Caption", "Table Contents",
-                                "Table Heading"],
+                                "Table Heading",
+                                # The caption styles a fresh Writer document
+                                # carries, one per standard sequence.
+                                "Figure", "Illustration", "Table", "Text",
+                                "Drawing"],
             "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
         }
 

@@ -37,6 +37,15 @@ text itself. Make anchors with `anchor`, or ask `find_text` and
 `read_paragraphs` for them with `anchors: true`, and a plan survives its own
 edits. `select` puts an address under the reader's eyes.
 
+A caption numbers itself: `insert_caption` writes "Figure 3: …" beside a
+picture, a table or a paragraph, and a caption put in front of another
+renumbers what follows. `insert_cross_reference` points at a heading, a
+caption, a bookmark or a reference mark, and the field follows its target, so
+"see Figure 3" stays right afterwards. Ask `list_reference_targets` what can
+be pointed at — every target carries the `reference` object to hand straight
+back — and `list_references` which references a document has and which of
+them are broken, since a broken one shows only an error sentence in the text.
+
 An anchor lives as long as this session. A **bookmark** is the same handle kept
 by the document itself: it is saved in the file, comes back when the document is
 reopened, shows in the Navigator, and survives a rewrite of the very text it

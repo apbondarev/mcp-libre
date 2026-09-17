@@ -260,8 +260,95 @@ def _insert_text_content(self, text_range, content, absorb):
 class FakeText:
     """Models com.sun.star.text.Text: cursor factory, enumeration, comparison."""
 
+    def insertControlCharacter(self, text_range, character, absorb):
+        """A paragraph break splits the paragraph where the range starts.
+
+        Measured on a real Writer and kept here: a break at the **end** of a
+        paragraph leaves an empty paragraph directly after it, and one at the
+        **start** leaves an empty one directly before, which is how a caption
+        paragraph is made. A heading split this way does not go on being a
+        heading, since Writer follows it with its FollowStyle.
+        """
+        index, offset = text_range.start
+        line = self.paragraphs[index]
+        head, tail = line[:offset], line[offset:]
+        self.paragraphs[index] = head
+        self.paragraphs.insert(index + 1, tail)
+        heading = self.outline_levels[index] > 0
+        self.styles.insert(index + 1,
+                           "Standard" if heading else self.styles[index])
+        self.outline_levels.insert(index + 1, 0 if heading
+                                   else self.outline_levels[index])
+        declared = self.portions.pop(index, None)
+        self.portions = {(key + 1 if key > index else key): value
+                         for key, value in self.portions.items()}
+        if declared is not None:
+            before, after = self._split_portions(declared, offset)
+            self.portions[index] = before
+            self.portions[index + 1] = after
+        self.enumeration_items = [
+            item if not isinstance(item, int) else
+            (item + 1 if item > index else item)
+            for item in self.enumeration_items]
+        self.enumeration_items.append(index + 1)
+        self.enumeration_items.sort(
+            key=lambda item: item if isinstance(item, int) else 10 ** 9)
+        # The cursor that made the break is left in the new paragraph, as a
+        # real one is.
+        if hasattr(text_range, "mark"):
+            text_range.mark = text_range.pos = (index + 1, 0)
+        else:
+            text_range.start = text_range.end = (index + 1, 0)
+
+    def _split_portions(self, declared, offset):
+        """The portions of a paragraph, cut in two at a character offset"""
+        before, after, seen = [], [], 0
+        for piece in declared:
+            piece = dict(piece) if isinstance(piece, dict) else \
+                {"text": piece[0], "locale": piece[1]}
+            text = piece.get("text", "")
+            if seen >= offset:
+                after.append(piece)
+            elif seen + len(text) <= offset:
+                before.append(piece)
+            else:
+                cut = offset - seen
+                before.append(dict(piece, text=text[:cut]))
+                after.append(dict(piece, text=text[cut:]))
+            seen += len(text)
+        return before, after
+
+    def insert_field(self, where, field, shown):
+        """A field goes in carrying the characters it shows.
+
+        The mirror of a comment, measured on a real Writer: the portion is of
+        type TextField and its string is part of the paragraph, so every
+        offset after it moves.
+        """
+        position = where if isinstance(where, tuple) else where.start
+        index, offset = position
+        line = self.paragraphs[index]
+        declared = self.portions.get(index)
+        if declared is None:
+            declared = [{"text": line}] if line else []
+        before, after = self._split_portions(declared, offset)
+        self.portions[index] = before + [{"text": shown, "kind": "TextField",
+                                          "field": field}] + after
+        self.paragraphs[index] = line[:offset] + shown + line[offset:]
+        field._model = self
+        field._paragraph = index
+        field._offset = offset
+        if hasattr(where, "mark"):
+            where.mark = where.pos = (index, offset + len(shown))
+
     def insertTextContent(self, text_range, content, absorb):
         """A bookmark goes on the range and changes no text."""
+        if hasattr(content, "getPresentation") \
+                and not hasattr(content, "Author"):
+            # A caption's number or a cross-reference: a field, not a note.
+            self.insert_field(text_range, content,
+                              content.getPresentation(False))
+            return
         if hasattr(content, "getName") and hasattr(content, "setName") \
                 and not hasattr(content, "getCellNames"):
             content._anchor = FakeRange(self, text_range.start, text_range.end)
@@ -407,6 +494,12 @@ class FakeText:
         """
         start, end = sorted([text_range.start, text_range.end])
         self.replace_range(start, end if absorb else start, value)
+        # A cursor is left *after* what it wrote, which is how a document is
+        # built one insertString at a time; a fake that left it where it was
+        # wrote the pieces of a caption in the wrong order.
+        if hasattr(text_range, "mark") and "\n" not in value:
+            text_range.mark = text_range.pos = (start[0],
+                                                start[1] + len(value))
 
     def insert_comment(self, start, end, note):
         """What insertTextContent(range, annotation, True) does to the runs.

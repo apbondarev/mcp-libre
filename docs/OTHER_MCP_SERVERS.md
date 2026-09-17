@@ -11,7 +11,8 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.15** table shape,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references,
+**3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
 rather than a feature, and **3.3** the concurrency claim nobody has measured here.
@@ -375,11 +376,21 @@ it rather than letting a caller point at a bookmark that is not the one it asked
 A real document's 20 bookmarks were 6.4s to list before they were placed in one
 sweep, and 0.69s after.
 
-#### 3.9.3 Cross-references and captions
+#### 3.9.3 Cross-references and captions — **done**
 
-A reference to a heading, a figure or a table, and the caption that gives a figure
-its number. This is the pair that makes a picture "Figure 3" and keeps the sentence
-that mentions it right when a figure is inserted before it.
+`insert_caption`, `insert_cross_reference`, `list_reference_targets`, `list_references`.
+
+A caption is the category, a number that counts itself and the text; a reference is a
+field bound to a caption by its `SequenceValue` — an identity, not a number — so the
+sentence that says "Figure 3" stays right when a figure is inserted before it.
+Measured on the way: where a caption paragraph lands around a table (and that a table
+opening the document has nowhere above it), that a category the document never had is
+made by creating a sequence master, and that a bookmark named `__RefHeading__…`
+*becomes* Writer's own heading mark — invisible to `getBookmarks()` and impossible to
+make twice — which is why a reference to a heading leaves an ordinary bookmark named
+after it instead. A reference whose target is gone says so only as "Error: Reference
+source not found" in the text, in the office's language, so the target is checked
+before the field is written and `list_references` reports `broken` itself.
 
 #### 3.9.4 Tables of contents and indexes
 

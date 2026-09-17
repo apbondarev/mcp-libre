@@ -16,6 +16,17 @@ from pathlib import Path
 PLUGIN_PYTHONPATH = Path(__file__).resolve().parent.parent / "plugin" / "pythonpath"
 
 # Interfaces the plugin modules import by name, per module.
+# Constant groups the bridge imports by name. The values are the real ones,
+# read from a running LibreOffice — a stub that made them up would let a
+# wrong constant pass here and fail in an office.
+_CONSTANTS = {
+    "com.sun.star.text.ControlCharacter": {
+        "PARAGRAPH_BREAK": 0, "LINE_BREAK": 1, "HARD_HYPHEN": 2,
+        "SOFT_HYPHEN": 3, "HARD_SPACE": 4, "APPEND_PARAGRAPH": 5},
+    "com.sun.star.text.SetVariableType": {
+        "VAR": 0, "SEQUENCE": 1, "FORMULA": 2, "STRING": 3},
+}
+
 _INTERFACES = {
     "com.sun.star.beans": ["PropertyValue"],
     "com.sun.star.text": ["XTextDocument"],
@@ -161,6 +172,14 @@ def install_uno_stubs():
     for package in ("com", "com.sun", "com.sun.star"):
         if package not in sys.modules:
             sys.modules[package] = types.ModuleType(package)
+
+    for module_name, values in _CONSTANTS.items():
+        if module_name in sys.modules:
+            continue
+        module = types.ModuleType(module_name)
+        for name, value in values.items():
+            setattr(module, name, value)
+        sys.modules[module_name] = module
 
     for module_name, interfaces in _INTERFACES.items():
         if module_name in sys.modules:

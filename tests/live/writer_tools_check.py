@@ -2232,6 +2232,159 @@ try:
           bridge.list_fields({"paragraph": page}, doc=doc)["count"], 0)
     body.removeTextContent(bridge._paragraph_at(body, page))
 
+    print("\n--- captions, and the references that follow them ---")
+    # On a document of its own: captions add paragraphs between the ones the
+    # sections above count, and a reference numbers itself against what is
+    # already in the document.
+    numbered = desktop.loadComponentFromURL("private:factory/swriter",
+                                            "_blank", 0, ())
+    pages = numbered.getText()
+    writing = pages.createTextCursor()
+    for style, line in (("Heading 1", "Scalar types"),
+                        ("Default Paragraph Style", "A picture sits here"),
+                        ("Default Paragraph Style", "Body text"),
+                        ("Default Paragraph Style", "See also")):
+        writing.ParaStyleName = style
+        pages.insertString(writing, line, False)
+        pages.insertControlCharacter(writing, PARAGRAPH_BREAK, False)
+    grid = numbered.createInstance("com.sun.star.text.TextTable")
+    grid.initialize(2, 2)
+    grid.setName("Сетка")
+    pages.insertTextContent(bridge._resolve_address(
+        numbered, {"paragraph": 3}).getStart(), grid, False)
+
+    first = bridge.insert_caption("The first picture", address={"paragraph": 1},
+                                  doc=numbered)
+    print("   ", {key: first.get(key) for key in
+                  ("success", "category", "number", "address", "text")})
+    check("a caption goes below its paragraph",
+          (first.get("success"), first.get("number"), first.get("address")),
+          (True, "1", {"paragraph": 2}))
+    check("wearing the style named after its category",
+          first.get("paragraph_style"), "Figure")
+    check("and reading as one line", first.get("text"),
+          "Figure 1: The first picture")
+
+    below = bridge.insert_caption("The grid", table="Сетка", category="Table",
+                                  doc=numbered)
+    check("a table takes one below it",
+          (below.get("number"), below.get("address")), ("1", {"paragraph": 4}))
+    above = bridge.insert_caption("Above the grid", table="Сетка",
+                                  category="Table", position="above",
+                                  doc=numbered)
+    check("or above it, which lands before the table rather than after",
+          above.get("address"), {"paragraph": 4})
+    check("and the one below is renumbered, since the number counts itself",
+          [one["number"] for one in bridge._captions(numbered)
+           if one["category"] == "Table"], ["1", "2"])
+
+    own = bridge.insert_caption("Схема запроса", address={"paragraph": 0},
+                                category="Листинг", doc=numbered)
+    check("a category the document never had is made",
+          (own.get("success"), own.get("category"), own.get("number")),
+          (True, "Листинг", "1"))
+    check("and falls back to the Caption style", own.get("paragraph_style"),
+          "Caption")
+    check("numbering can be roman",
+          bridge.insert_caption("Roman", address={"paragraph": 0},
+                                category="Drawing", numbering="roman_upper",
+                                doc=numbered).get("number"), "I")
+    check("a table nobody has",
+          bridge.insert_caption("nowhere", table="Нетакой",
+                                doc=numbered).get("code"), "INVALID_ADDRESS")
+    check("naming two things to caption at once",
+          bridge.insert_caption("two", address={"paragraph": 0}, table="Сетка",
+                                doc=numbered).get("code"),
+          "INVALID_PARAMETER")
+
+    print("\n   what a reference can point at:")
+    targets = bridge.list_reference_targets(doc=numbered)
+    check("the heading is a target",
+          [one["text"] for one in targets["targets"]
+           if one["kind"] == "heading"], ["Scalar types"])
+    check("and every caption",
+          sorted(one["reference"]["caption"] for one in targets["targets"]
+                 if one["kind"] == "caption"),
+          sorted(["Drawing I", "Figure 1", "Table 1", "Table 2",
+                  "Листинг 1"]))
+    check("a kind nobody knows",
+          bridge.list_reference_targets(kinds=["nonsense"],
+                                        doc=numbered).get("code"),
+          "INVALID_PARAMETER")
+
+    print("\n   writing the references:")
+    tail_paragraph = bridge.find_text("See also", doc=numbered)["hits"][0]
+    spot = {"paragraph": tail_paragraph["address"]["paragraph"],
+            "offset": 0, "length": 0}
+    to_caption = bridge.insert_cross_reference(spot, {"caption": "Figure 1"},
+                                               doc=numbered)
+    print("   ", {key: to_caption.get(key) for key in
+                  ("success", "shows", "part")})
+    check("a reference to a caption shows its number",
+          (to_caption.get("success"), to_caption.get("shows")),
+          (True, "Figure 1"))
+    check("or its words",
+          bridge.insert_cross_reference(spot, {"caption": "Figure 1"},
+                                        part="caption_text",
+                                        doc=numbered).get("shows"),
+          "The first picture")
+    heading = bridge.insert_cross_reference(spot, {"heading": 0},
+                                            doc=numbered)
+    check("a reference to a heading shows the heading",
+          (heading.get("success"), heading.get("shows")),
+          (True, "Scalar types"))
+    # Writer's own heading marks are named __RefHeading__…, and a bookmark
+    # given that name becomes one: it disappears from getBookmarks() and a
+    # second on the same heading throws. So an ordinary bookmark is left.
+    check("leaving an ordinary bookmark named after it",
+          heading["target"]["name"], "Scalar types")
+    check("which a second reference reuses",
+          bridge.insert_cross_reference(spot, {"heading": 0},
+                                        doc=numbered)["target"]["name"],
+          "Scalar types")
+    check("ordinary text is not a heading",
+          bridge.insert_cross_reference(spot, {"heading": 2},
+                                        doc=numbered).get("code"),
+          "INVALID_PARAMETER")
+    check("a caption that is not there",
+          bridge.insert_cross_reference(spot, {"caption": "Figure 9"},
+                                        doc=numbered).get("code"),
+          "NOT_FOUND")
+
+    body_paragraph = bridge.find_text("Body text",
+                                      doc=numbered)["hits"][0]["address"]
+    bridge.add_bookmark({"paragraph": body_paragraph["paragraph"],
+                         "offset": 0, "length": 4}, "Место", doc=numbered)
+    check("a reference to a bookmark shows what it covers",
+          bridge.insert_cross_reference(spot, {"bookmark": "Место"},
+                                        doc=numbered).get("shows"), "Body")
+
+    listed = bridge.list_references(doc=numbered)
+    check("every reference is listed", (listed["count"], listed["broken"]),
+          (5, 0))
+    check("each saying what it points at",
+          sorted({one["target"]["kind"] for one in listed["references"]}),
+          ["bookmark", "caption"])
+
+    bridge.delete_bookmark("Место", doc=numbered)
+    after_delete = bridge.list_references(doc=numbered)
+    check("a reference whose target went is reported broken",
+          after_delete["broken"], 1)
+    check("by name", [one["target"]["name"] for one in
+                      after_delete["references"] if one["broken"]], ["Место"])
+
+    print("\n   a caption put in front renumbers what follows:")
+    was = [one["shows"] for one in bridge.list_references(doc=numbered)
+           ["references"] if one["part"] == "category_and_number"]
+    bridge.insert_caption("Inserted first", address={"paragraph": 0},
+                          position="above", doc=numbered)
+    now = [one["shows"] for one in bridge.list_references(doc=numbered)
+           ["references"] if one["part"] == "category_and_number"]
+    check("and the reference follows it", (was, now),
+          (["Figure 1"], ["Figure 2"]))
+    numbered.setModified(False)
+    numbered.close(True)
+
     print("\n--- changing a table's shape, and the order of its rows ---")
     shaped = doc.createInstance("com.sun.star.text.TextTable")
     shaped.initialize(4, 3)

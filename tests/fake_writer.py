@@ -39,6 +39,8 @@ from tests.fakes_values import (CALC_SERVICES, FakeBorderLine, FakeComponents,
 from tests.fakes_styles import (FAKE_STYLE_DEFAULTS, FAKE_STYLE_OWN,
                                 FAKE_STYLE_PARENTS, FakeStyle, FakeStyleFamilies,
                                 FakeStyleFamily)
+from tests.fakes_references import (FakeFieldMaster, FakeReferenceField,
+                                   FakeSequenceField)
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
                                      FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
@@ -349,6 +351,32 @@ class FakeRedlines:
         return self.entries[index]
 
 
+class FakeMasters:
+    """The field masters, reachable by the long service-style name.
+
+    `getElementNames` spells them `fieldmaster` in lower case while
+    `getByName` takes the `FieldMaster` spelling — measured on a real
+    document, and the reason nothing here compares the two.
+    """
+
+    def __init__(self, by_name):
+        self.by_name = by_name
+
+    @staticmethod
+    def _category(name):
+        return name.rsplit(".", 1)[-1]
+
+    def getElementNames(self):
+        return tuple("com.sun.star.text.fieldmaster.SetExpression." + name
+                     for name in self.by_name)
+
+    def hasByName(self, name):
+        return self._category(name) in self.by_name
+
+    def getByName(self, name):
+        return self.by_name[self._category(name)]
+
+
 class FakeDoc:
     """Common shape of a UNO document proxy."""
 
@@ -382,6 +410,34 @@ class FakeDoc:
             self._text.bookmarks = self._bookmarks.items
         return self._bookmarks
 
+    _sequence_ids = iter(range(0, 100000))
+
+    def getTextFieldMasters(self):
+        """The sequences a caption's number can count in.
+
+        A fresh Writer document already carries five of them, and the element
+        names come back spelled `fieldmaster` in lower case while getByName
+        takes the `FieldMaster` spelling — measured, and modelled here.
+        """
+        if not hasattr(self, "_masters"):
+            self._masters = {
+                name: FakeFieldMaster(name)
+                for name in ("Illustration", "Table", "Text", "Drawing",
+                             "Figure")}
+        return FakeMasters(self._masters)
+
+    def getReferenceMarks(self):
+        if not hasattr(self, "_reference_marks"):
+            self._reference_marks = FakeNameAccess([])
+        return self._reference_marks
+
+    def _sequence_fields(self):
+        """Every caption number in the document, in the order they stand in"""
+        fields = self.getTextFields()
+        return [fields.getByIndex(index)
+                for index in range(fields.getCount())
+                if hasattr(fields.getByIndex(index), "attachTextFieldMaster")]
+
     def getRedlines(self):
         held = getattr(self, "redlines", None)
         if held is not None:
@@ -389,6 +445,13 @@ class FakeDoc:
         return FakeRedlines(getattr(self, "redline_count", 0))
 
     def createInstance(self, service):
+        if service == "com.sun.star.text.TextField.SetExpression":
+            field = FakeSequenceField(self, next(self._sequence_ids))
+            return field
+        if service == "com.sun.star.text.TextField.GetReference":
+            return FakeReferenceField(self)
+        if service == "com.sun.star.text.FieldMaster.SetExpression":
+            return FakeFieldMaster()
         if service == "com.sun.star.text.TextTable":
             return FakeTextTable(f"Table{len(getattr(self, 'tables', [])) + 1}")
         if service == "com.sun.star.text.Bookmark":

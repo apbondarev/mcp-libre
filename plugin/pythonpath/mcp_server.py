@@ -38,6 +38,7 @@ from mcp_image_tools import ImageTools
 from mcp_comment_tools import CommentTools
 from mcp_field_tools import FieldTools
 from mcp_bookmark_tools import BookmarkTools
+from mcp_reference_tools import ReferenceTools
 from mcp_review_tools import ReviewTools
 from mcp_table_tools import TableTools
 from mcp_table_shape_tools import TableShapeTools
@@ -48,7 +49,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
+class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, ReferenceTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
                            AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
@@ -71,6 +72,7 @@ class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, T
         self._register_comment()
         self._register_field()
         self._register_bookmark()
+        self._register_reference()
         self._register_review()
         self._register_table()
         self._register_table_shape()

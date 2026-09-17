@@ -216,3 +216,14 @@ class FakeComponents:
 
     def createEnumeration(self):
         return FakeEnumeration(self._documents)
+
+    def getCount(self):
+        return len(self._documents)
+
+    def getByIndex(self, index):
+        return self._documents[index]
+
+    def refresh(self):
+        """F9. Nothing to do here: these fields work out what they show when
+        they are asked, where a real one holds the text until it is told."""
+        return True
