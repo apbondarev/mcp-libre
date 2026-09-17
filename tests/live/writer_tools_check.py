@@ -2103,6 +2103,114 @@ try:
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
+    print("\n--- reading the recorded changes, and settling them ---")
+    marker = body.createTextCursorByRange(body.getEnd())
+    for line in ("REVIEW-ONE stays as it is", "REVIEW-TWO loses a word"):
+        body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+        body.insertString(marker, line, False)
+    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    first, second = total - 2, total - 1
+
+    was_recording = doc.RecordChanges
+    doc.RecordChanges = True
+    bridge.replace_range({"paragraph": first, "offset": 0, "length": 10},
+                         "REVIEW-ONE ", track_changes=True, doc=doc)
+    bridge.replace_range({"paragraph": second, "offset": 0, "length": 10},
+                         "", track_changes=True, doc=doc)
+    doc.RecordChanges = False
+
+    listed = bridge.list_tracked_changes({"paragraph": first, "through": second},
+                                         doc=doc)
+    print("   ", [(one["kind"], one["text"][:20], one["address"])
+                  for one in listed["changes"]])
+    check("both changes are reported", listed["count"] >= 2, True)
+    check("with the kinds Writer recorded",
+          {one["kind"] for one in listed["changes"]} <= {"insert", "delete",
+                                                         "format"}, True)
+    check("each one addressed",
+          all(one["address"] is not None for one in listed["changes"]), True)
+    check("each one carrying the text it covers",
+          all(one["text"] for one in listed["changes"]), True)
+    check("and a date", all(one["date"] for one in listed["changes"]), True)
+    check("recording is reported as it stands now",
+          listed["recording"], False)
+
+    check("settling without saying which is refused",
+          bridge.accept_tracked_changes(doc=doc).get("code"),
+          "INVALID_PARAMETER")
+    check("and naming two ways at once",
+          bridge.accept_tracked_changes(all=True, author="anyone",
+                                        doc=doc).get("code"),
+          "INVALID_PARAMETER")
+    check("a change that is not there",
+          bridge.reject_tracked_changes(change_id="nosuch",
+                                        doc=doc).get("code"), "NOT_FOUND")
+
+    one = listed["changes"][0]
+    accepted = bridge.accept_tracked_changes(change_id=one["id"], doc=doc)
+    print("   ", {key: accepted.get(key) for key in
+                  ("success", "settled", "decision", "left")})
+    check("one change accepted", (accepted.get("success"),
+                                  accepted.get("settled")), (True, 1))
+    check("and it is gone from the list",
+          one["id"] not in [other["id"] for other in
+                            bridge.list_tracked_changes(doc=doc)["changes"]],
+          True)
+
+    rest = bridge.reject_tracked_changes(
+        address={"paragraph": first, "through": second}, doc=doc)
+    print("   ", {key: rest.get(key) for key in ("success", "settled", "left")})
+    check("the rest rejected by place", rest.get("success"), True)
+    check("nothing recorded is left in those paragraphs",
+          bridge.list_tracked_changes({"paragraph": first, "through": second},
+                                      doc=doc)["count"], 0)
+    check("the accepted insertion stayed in the text",
+          "REVIEW-ONE " in bridge.read_paragraphs(
+              start=first, count=1, doc=doc)["paragraphs"][0]["text"], True)
+    check("and the rejected deletion came back",
+          bridge.read_paragraphs(start=second, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "REVIEW-TWO loses a word")
+
+    print("\n   a rewrite over text a recorded change marks:")
+    doc.RecordChanges = True
+    bridge.replace_range({"paragraph": second, "offset": 0, "length": 6},
+                         "REVIEWED", track_changes=True, doc=doc)
+    doc.RecordChanges = False
+    marked = bridge.read_runs({"paragraph": second}, doc=doc)
+    check("the runs say which of them a change covers",
+          any(run.get("changes") for run in marked["runs"]), True)
+    carried = sorted({one["kind"] for run in marked["runs"]
+                      for one in run.get("changes") or []})
+    check("naming the kinds Writer recorded",
+          set(carried) <= {"insert", "delete", "format"} and bool(carried),
+          True)
+    refused = bridge.replace_runs(
+        {"paragraph": second},
+        [dict(run, text=run["text"].upper()) for run in marked["runs"]],
+        doc=doc)
+    print("   ", refused.get("error"))
+    check("a rewrite over them is refused, not written",
+          (refused.get("success"), refused.get("code")),
+          (False, "WOULD_LOSE_FORMATTING"))
+    check("and it names the way through",
+          "accept_tracked_changes" in (refused.get("error") or ""), True)
+    seen = len({one["id"] for run in marked["runs"]
+                for one in run.get("changes") or []})
+    flat = bridge.replace_range({"paragraph": second}, "ПЕРЕПИСАНО ПОВЕРХ",
+                                flatten=True, doc=doc)
+    check("flatten writes over them and says how many went",
+          (flat.get("success"), flat.get("changes_dropped")), (True, seen))
+    check("and they are gone from the list",
+          bridge.list_tracked_changes({"paragraph": second}, doc=doc)["count"],
+          0)
+
+    doc.RecordChanges = was_recording
+    for _ in range(2):
+        last = bridge._paragraph_at(body, bridge.read_paragraphs(
+            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+        body.removeTextContent(last)
+
     print("\n--- a review conversation: a comment and the replies on it ---")
     marker = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)

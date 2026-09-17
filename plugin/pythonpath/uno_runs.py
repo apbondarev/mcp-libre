@@ -8,7 +8,8 @@ pictures, styles — is counted before anything is written.
 
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (AddressError, _colour_name, _comment_key, 
+from uno_values import (REDLINE_KINDS, AddressError, _colour_name,
+    _comment_key, _distinct_changes, 
     _describe_comment, _distinct_comments, _distinct_images, _get_property, 
     _is_italic, _locale, _locale_name, _same_paragraph, _text_payload, refusal)
 
@@ -103,7 +104,11 @@ class RunsMixin:
         while portions.hasMoreElements():
             portion = portions.nextElement()
             kind = _get_property(portion, "TextPortionType", "Text")
-            if kind in ("Annotation", "AnnotationEnd"):
+            if kind in ("Annotation", "AnnotationEnd", "Redline"):
+                # A recorded change marks its text exactly as a comment does:
+                # empty portions of type "Redline" around it, carrying
+                # RedlineType, RedlineAuthor and RedlineIdentifier, with
+                # IsStart saying which end this is. Measured.
                 collected.append((kind, offset, portion, ""))
                 continue
             try:
@@ -126,6 +131,26 @@ class RunsMixin:
         for note, at in pending:            # never closed: a point anchor
             spans.append((_describe_comment(note), at, at))
 
+        changes = []
+        open_changes = {}
+        for kind, at, portion, _body in collected:
+            if kind != "Redline":
+                continue
+            described = {
+                "id": _get_property(portion, "RedlineIdentifier", "") or "",
+                "kind": REDLINE_KINDS.get(
+                    _get_property(portion, "RedlineType", "") or "",
+                    (_get_property(portion, "RedlineType", "") or "").lower()),
+                "author": _get_property(portion, "RedlineAuthor", "") or "",
+            }
+            if _get_property(portion, "IsStart", False):
+                open_changes[described["id"]] = (described, at)
+                continue
+            opened = open_changes.pop(described["id"], None)
+            changes.append((described, opened[1] if opened else at, at))
+        for described, at in open_changes.values():
+            changes.append((described, at, at))
+
         pictures = self._images_in(doc, index, span_start, span_end,
                                    paragraph_cursor)
 
@@ -146,6 +171,12 @@ class RunsMixin:
                 located, clipped_start + shift, clipped_end - clipped_start)
             described_run["comments"] = [
                 note for note, opened, closed in spans
+                if (opened < end_at and closed > start_at)
+                or (opened == closed and start_at <= opened < end_at)]
+            # A recorded change covers text the way a comment does, and a
+            # caller cannot see it any other way: its runs look ordinary.
+            described_run["changes"] = [
+                change for change, opened, closed in changes
                 if (opened < end_at and closed > start_at)
                 or (opened == closed and start_at <= opened < end_at)]
             # A picture is an empty portion of type "Frame" at its anchor
@@ -209,12 +240,15 @@ class RunsMixin:
 
         links = [run for run in runs if run.get("link")]
         comments = _distinct_comments(runs)
+        recorded = _distinct_changes(runs)
         pictures = _distinct_images(runs)
         inline = [image for image in pictures if image.get("inline")]
-        if len(runs) <= 1 and not links and not comments and not inline:
+        if len(runs) <= 1 and not links and not comments and not inline \
+                and not recorded:
             return None
         return {"runs": len(runs), "links": len(links),
                 "comments": len(comments),
+                "changes": len(recorded),
                 "images": len(pictures), "inline_images": len(inline),
                 "styles": len([r for r in runs if r.get("character_style")])}
 
@@ -328,6 +362,7 @@ class RunsMixin:
 
     def replace_runs(self, address: Any, runs: Any,
                      track_changes: Optional[bool] = None,
+                     flatten: bool = False,
                      doc: Any = None) -> Dict[str, Any]:
         """
         Replace a range with a sequence of runs, each formatted explicitly
@@ -413,6 +448,25 @@ class RunsMixin:
                                        "start": offset, "end": run_end})
                 offset = run_end
             return placed
+
+        # A recorded change cannot travel on the runs the way a comment can:
+        # it is Writer's own bookkeeping, and rewriting the text it marks
+        # takes it away — which would quietly turn a reviewer's struck-out
+        # deletion back into live text. Measured: two changes in, none out,
+        # and the deleted word alive again in the paragraph.
+        recorded = _distinct_changes(existing_runs)
+        if recorded and not flatten:
+            kinds = ", ".join(sorted({one["kind"] for one in recorded}))
+            return refusal(
+                "WOULD_LOSE_FORMATTING",
+                f"This range carries {len(recorded)} recorded change"
+                f"{'s' if len(recorded) > 1 else ''} ({kinds}), which a "
+                f"rewrite would take away — a deletion waiting to be accepted "
+                f"would come back as ordinary text. Settle them first with "
+                f"accept_tracked_changes or reject_tracked_changes, or pass "
+                f"flatten=true to write over them knowingly",
+                changes=[{"id": one["id"], "kind": one["kind"],
+                          "author": one["author"]} for one in recorded])
 
         if plan["images_at_risk"]:
             names = ", ".join(image.get("name") or "?"

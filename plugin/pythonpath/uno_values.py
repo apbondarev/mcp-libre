@@ -153,6 +153,37 @@ def _distinct_images(runs: Any) -> list:
     return found
 
 
+# What Writer calls a recorded change, in words a caller can read.
+REDLINE_KINDS = {
+    "Insert": "insert",
+    "Delete": "delete",
+    "Format": "format",
+    "ParagraphFormat": "paragraph format",
+    "TableInsert": "table inserted",
+    "TableDelete": "table deleted",
+    "TableCellInsert": "cell inserted",
+    "TableCellDelete": "cell deleted",
+}
+
+
+def _distinct_changes(runs: Any) -> list:
+    """The recorded changes covering a stretch of runs, each counted once.
+
+    A change marks its text the way a comment does — empty marker portions
+    around it — so one change over three runs is reported on each of them.
+    """
+    found = []
+    seen = set()
+    for run in runs:
+        for change in run.get("changes", []) or []:
+            marker = change.get("id") or id(change)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            found.append(change)
+    return found
+
+
 def _distinct_comments(runs: Any) -> list:
     """
     The comments covering a stretch of runs, each counted once
@@ -389,6 +420,19 @@ def _comment_date(note: Any) -> Optional[str]:
                 f"T{stamp.Hours:02d}:{stamp.Minutes:02d}:{stamp.Seconds:02d}")
     except Exception as e:
         logger.info(f"Could not read a comment's date: {e}")
+        return None
+
+
+def _stamp_of(carrier: Any, name: str) -> Optional[str]:
+    """A UNO DateTime property as ISO 8601, or None when it is zeroed."""
+    stamp = _get_property(carrier, name, None)
+    if stamp is None or not getattr(stamp, "Year", 0):
+        return None
+    try:
+        return (f"{stamp.Year:04d}-{stamp.Month:02d}-{stamp.Day:02d}"
+                f"T{stamp.Hours:02d}:{stamp.Minutes:02d}:{stamp.Seconds:02d}")
+    except Exception as e:
+        logger.info(f"Could not read {name}: {e}")
         return None
 
 

@@ -194,6 +194,9 @@ class EditingMixin:
             if loss["comments"]:
                 details.append(f"{loss['comments']} comment"
                                f"{'s' if loss['comments'] > 1 else ''}")
+            if loss.get("changes"):
+                details.append(f"{loss['changes']} recorded change"
+                               f"{'s' if loss['changes'] > 1 else ''}")
             if loss.get("inline_images"):
                 details.append(f"{loss['inline_images']} inline picture"
                                f"{'s' if loss['inline_images'] > 1 else ''}")
@@ -201,6 +204,16 @@ class EditingMixin:
                 details.append(f"{loss['styles']} with character styles")
             destroyed = (" An inline picture is destroyed outright, not just "
                          "flattened." if loss.get("inline_images") else "")
+            if loss.get("changes"):
+                # A recorded change cannot be handed back the way a comment
+                # can: it belongs to Writer's own recording. Settling it is
+                # the way through, and there are tools for that now.
+                destroyed += (f" The {loss['changes']} recorded change"
+                              f"{'s' if loss['changes'] > 1 else ''} would go "
+                              f"with it, struck-through text and all — accept "
+                              f"or reject them first with "
+                              f"accept_tracked_changes or "
+                              f"reject_tracked_changes.")
             return {
                 "success": False,
                 "code": "WOULD_LOSE_FORMATTING",
@@ -253,6 +266,7 @@ class EditingMixin:
             "runs_flattened": loss["runs"] if loss else None,
             "links_dropped": loss["links"] if loss else None,
             "comments_dropped": loss["comments"] if loss else None,
+            "changes_dropped": loss.get("changes") if loss else None,
             "images_dropped": loss.get("inline_images") if loss else None,
             "tables_dropped": len(tables) or None
         }

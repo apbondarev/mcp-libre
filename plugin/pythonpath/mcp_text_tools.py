@@ -233,6 +233,11 @@ class TextTools:
                         "type": "boolean",
                         "description": "Omit to follow the document's own setting; true records this change, false refuses to record it"
                     },
+                    "flatten": {
+                        "type": "boolean",
+                        "description": "Write over the recorded changes this range carries. Without it such a rewrite is refused, because a deletion still waiting to be accepted would come back as ordinary text; settling them first with accept_tracked_changes_live or reject_tracked_changes_live is the way that keeps the record",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -284,13 +289,15 @@ class TextTools:
 
     def replace_runs_live(self, address: Any, runs: Any,
                           track_changes: Optional[bool] = None,
+                          flatten: bool = False,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address with a sequence of formatted runs"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.replace_runs(address, runs,
-                                            track_changes=track_changes, doc=doc)
+                                            track_changes=track_changes,
+                                            flatten=flatten, doc=doc)
 
     def set_language_live(self, address: Any, language: str,
                           document: Optional[str] = None) -> Dict[str, Any]:

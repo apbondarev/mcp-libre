@@ -55,13 +55,50 @@ class FakeGraphicProvider:
         self.written.append((path, settings.get("MimeType")))
 
 
+class FakeDispatchHelper:
+    """com.sun.star.frame.DispatchHelper, as the review tools use it.
+
+    There is no accept or reject on the document model — measured — so a
+    change is settled by selecting it and sending a command. What that does
+    to the *text* is LibreOffice's business and is checked in
+    tests/live/writer_tools_check.py; what it does to the bookkeeping is
+    modelled here: the change under the selection stops being a change.
+    """
+
+    def __init__(self):
+        self.sent = []
+
+    def executeDispatch(self, frame, command, target, flags, arguments):
+        self.sent.append(command)
+        document = getattr(frame, "document", None)
+        redlines = getattr(document, "redlines", None)
+        if redlines is None:
+            return
+        if command.endswith("AllTrackedChanges"):
+            redlines.entries = []
+            return
+        selection = document.getCurrentController().getSelection()
+        try:
+            chosen = selection.getByIndex(0)
+            span = (chosen.start, chosen.end)
+        except Exception:
+            return
+        redlines.entries = [
+            one for one in redlines.entries
+            if not (one.RedlineStart.start == span[0]
+                    and one.RedlineEnd.start == span[1])]
+
+
 class FakeServiceManager:
     def __init__(self):
         self.graphic_provider = FakeGraphicProvider()
+        self.dispatcher = FakeDispatchHelper()
 
     def createInstanceWithContext(self, name, ctx):
         if name == "com.sun.star.graphic.GraphicProvider":
             return self.graphic_provider
+        if name == "com.sun.star.frame.DispatchHelper":
+            return self.dispatcher
         return object()
 
 

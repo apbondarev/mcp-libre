@@ -492,7 +492,19 @@ class FakeText:
         for run in declared:
             if isinstance(run, dict):
                 properties = {k: v for k, v in run.items()
-                              if k not in ("text", "locale", "kind", "field")}
+                              if k not in ("text", "locale", "kind", "field",
+                                           "redline", "is_start")}
+                # A recorded change marks its text with empty portions of type
+                # "Redline", carrying the change's type, author and identifier,
+                # with IsStart saying which end this is — measured, and the
+                # same shape as a comment's markers.
+                recorded = run.get("redline")
+                if recorded:
+                    properties.update({
+                        "RedlineType": recorded.get("type", "Insert"),
+                        "RedlineAuthor": recorded.get("author", ""),
+                        "RedlineIdentifier": recorded.get("id", ""),
+                        "IsStart": bool(run.get("is_start", False))})
                 normalised.append((run.get("text", ""),
                                    run.get("locale",
                                            FakeLocale(*self.default_locale)),

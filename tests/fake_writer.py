@@ -215,10 +215,21 @@ class FakeViewCursor(FakeRange):
         return True
 
 
+class FakeFrame:
+    """What a dispatch is sent to; it knows the document behind the view."""
+
+    def __init__(self, document=None):
+        self.document = document
+
+
 class FakeController:
     def __init__(self, view_cursor, selection):
         self._view_cursor = view_cursor
         self._selection = selection
+        self.frame = FakeFrame()
+
+    def getFrame(self):
+        return self.frame
 
     def select(self, text_range):
         """Selecting is what a reader does with the mouse: the view moves."""
@@ -296,14 +307,45 @@ class FakeUndoManager:
         self._restore(state)
 
 
+class FakeRedline:
+    """One recorded change, as UNO hands it over: a property set and a range.
+
+    Its own getString() **throws** on a real Writer
+    (`unoredline.cxx:531`), so the text of a change is only readable by
+    walking a cursor from RedlineStart to RedlineEnd — and this fake refuses
+    it the same way, or nothing would ever exercise that walk.
+    """
+
+    _serial = itertools.count(1)
+
+    def __init__(self, model, paragraph, start, end, kind="Insert",
+                 author="Reviewer", description=None, comment=""):
+        self.RedlineType = kind
+        self.RedlineAuthor = author
+        self.RedlineComment = comment
+        self.RedlineDescription = (description
+                                   or f"{kind} “{model.paragraphs[paragraph][start:end]}”")
+        self.RedlineIdentifier = str(next(FakeRedline._serial) * 1000)
+        self.RedlineDateTime = FakeDateTime()
+        self.RedlineStart = FakeRange(model, (paragraph, start))
+        self.RedlineEnd = FakeRange(model, (paragraph, end))
+
+    def getString(self):
+        raise RuntimeError("at ./sw/source/core/unocore/unoredline.cxx:531")
+
+
 class FakeRedlines:
     """doc.getRedlines(): the recorded changes awaiting acceptance."""
 
-    def __init__(self, count=0):
-        self.count = count
+    def __init__(self, count=0, entries=None):
+        self.entries = list(entries) if entries is not None else []
+        self.count = count if entries is None else len(self.entries)
 
     def getCount(self):
-        return self.count
+        return len(self.entries) if self.entries else self.count
+
+    def getByIndex(self, index):
+        return self.entries[index]
 
 
 class FakeDoc:
@@ -333,6 +375,9 @@ class FakeDoc:
         return self.readonly
 
     def getRedlines(self):
+        held = getattr(self, "redlines", None)
+        if held is not None:
+            return held
         return FakeRedlines(getattr(self, "redline_count", 0))
 
     def createInstance(self, service):
@@ -578,7 +623,7 @@ def writer_doc_with_caret_in_cell(paragraphs, cell_paragraph, caret_offset, page
 
 def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
                pages=1, selected_image=None, tables=(), caret_in_cell=None,
-               **text_kwargs):
+               redlines=(), **text_kwargs):
     """Build a Writer document whose caret sits at `caret` = (paragraph, offset).
 
     `images` describes the pictures in it, each a dict of the arguments
@@ -592,7 +637,15 @@ def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
     view_cursor = FakeViewCursor(text, caret, selection_end, page=page,
                                  pages=pages)
     selection = FakeSelection(text, selection_spans or [(caret, caret)])
-    doc = FakeWriterDoc(text, FakeController(view_cursor, selection))
+    controller = FakeController(view_cursor, selection)
+    doc = FakeWriterDoc(text, controller)
+    controller.frame.document = doc
+    if redlines:
+        # Each entry is (paragraph, start, end, kind, author) — the shape of
+        # a change Writer recorded and is holding for a reviewer. Left unset
+        # otherwise, so a test that only wants a count still gets one.
+        doc.redlines = FakeRedlines(entries=[
+            FakeRedline(text, *described) for described in redlines])
     doc.images = [FakeImage(model=text, **described) for described in images]
     doc.pages = pages
     doc.tables = list(tables)

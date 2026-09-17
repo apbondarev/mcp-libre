@@ -10,8 +10,8 @@ The point of the survey is not the tool counts. It is the three or four interfac
 decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
-**3.7** batching into one undo step, **3.8** comment threads, **3.10** error codes
-and `elapsed_ms`. Still open and worth doing next: **3.2** the `Origin` check, which
+**3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
+comment threads, **3.10** error codes and `elapsed_ms`. Still open and worth doing next: **3.2** the `Origin` check, which
 is a defect rather than a feature, and **3.3** the concurrency claim nobody has
 measured here.
 
@@ -123,12 +123,12 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 45 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 48 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
 | comments | list/add/update/delete, language, ids, **threads** | list/add/update/delete/resolve | + threads | + threads | list/add |
-| track changes | record-or-not, three states | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
+| track changes | record-or-not (three states) **+ list/accept/reject** | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
 | tables | read/describe/format/create/delete | + rows/cols/merge/sort/convert | + rows | + cells | — |
 | page image | **render_page** | — | — | — | — |
 | undo | one step per call, **`batch_live`** for a whole plan | + explicit contexts, undo/redo | — | — | — |
@@ -223,14 +223,42 @@ machine the name `libreoffice-writer` was already taken by a skill about driving
 LibreOffice from the command line — which is why the skill here is called
 `libreoffice-mcp`. Installing it is one `cp -r`, recorded in CLAUDE.md.
 
-### 3.5 Review tools for tracked changes
+### 3.5 Review tools for tracked changes — **done**
 
-We honour the three-state recording contract, and then leave the user in front of a
-document full of redlines with no way to read or resolve them through the server:
-`list_tracked_changes` (author, date, kind, text, address), `accept`/`reject` one,
-`accept_all`/`reject_all`, optionally filtered by author as docx-mcp does. The
-redlines are already reachable — `uno_documents.py:166` counts them with
-`doc.getRedlines()`.
+We honoured the three-state recording contract and then left the user in front of a
+document full of redlines with no way through the server to read or settle them.
+`list_tracked_changes` reports what is waiting — kind, author, date, the text the
+change covers and its address — scoped like the comments and narrowed by `author`;
+`accept_tracked_changes` and `reject_tracked_changes` settle them, picking in
+exactly one way (`change_id`, `author`, `address`, `all`) and refusing to guess.
+
+The measurements that shaped it:
+
+- A redline is a property set with `RedlineStart`/`RedlineEnd` as ranges, and its own
+  `getString()` **throws** — the text of a change is read by walking a cursor between
+  its ends.
+- There is **no accept or reject on the model**. It goes through
+  `com.sun.star.frame.DispatchHelper`: select the change, send
+  `.uno:AcceptTrackedChange` or `.uno:RejectTrackedChange`; `…AllTrackedChanges` for
+  the lot. Verified headless — three redlines to none, the text left as the decision
+  says, the accepted insertion kept and the rejected deletion put back.
+- The author is the office's user name, not a document property, so filtering by
+  author is the only way to take one reviewer's work at a time.
+
+Settling walks from the last change to the first and finds each again by its
+identifier, because settling one moves the text after it; the reader's own selection
+is put back afterwards, and the whole call is one undo step. What a dispatch does to
+the text is LibreOffice's business, so the fakes model the bookkeeping only and the
+text effect is proved live.
+
+Having the tools made a hole in the old ones visible. The flatten guard counted runs,
+links, comments, pictures and tables — not recorded changes — so a rewrite over a
+paragraph carrying them destroyed them without a word, and the struck-out deletion
+came back as live text: a translation would have resurrected what a reviewer cut.
+A change turns out to mark its text exactly as a comment does, with empty `Redline`
+portions around it, so the runs now carry it, `replace_range` names it in the refusal
+and reports `changes_dropped` under `flatten`, and `replace_runs` refuses outright —
+pointing at the accept/reject tools, which are the route that keeps the record.
 
 ### 3.6 A change log for the session
 
@@ -353,7 +381,7 @@ for clients that do not speak HTTP to a local port at all.
 
 ### 3.12 If the tool count grows: profiles and discovery
 
-Forty-five tools with long, honest descriptions already cost a noticeable slice of
+Forty-eight tools with long, honest descriptions already cost a noticeable slice of
 the model's context. Before adding thirty more, take the fork's idea: `list_tools`,
 `get_tool_schema`, and **profiles** keyed to the active document's type, so a Writer
 session never carries Calc schemas. The Ubuntu server's `action`-dispatch

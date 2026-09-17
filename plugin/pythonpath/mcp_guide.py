@@ -88,6 +88,46 @@ read an earlier step's result, so batch a plan already worked out.
 `track_changes` has three states: omitted follows the document's own setting,
 `true` records this edit anyway, `false` refuses to record it.
 
+## Recorded changes, and how to work in a document that keeps them
+
+**Look before editing.** `get_document_info` says in two numbers whether the
+document is recording and how many changes are waiting; `list_tracked_changes`
+says whose they are and what each one did — insert, delete or format, with the
+text it covers and its address, scoped like the comments and narrowed by
+`author`. A document in the middle of someone's review is different work from
+a clean one.
+
+**Then decide whether your own edit is recorded.** `track_changes` has three
+states, and the default — leaving it out — follows the document, which is the
+owner's decision and usually the right one. `true` records this edit anyway:
+that is how to *propose* rather than change, which is what a translation of
+someone else's document usually is. `false` refuses to record it even in a
+recording document, for mechanical work nobody needs to approve; it overrides
+the owner's setting for that one call and the setting is put back. The result
+says what happened in `tracked` — **tell the reader**, because with recording
+on the original stays in place struck through, and people read that as the
+edit having failed.
+
+**Do not rewrite text a change already marks.** It is refused, and rightly: a
+deletion still waiting to be accepted would come back as ordinary text.
+Settle that stretch first, then edit.
+
+**Settling is the reader's decision, not yours.** Ask before accepting or
+rejecting, and especially before `all: true`. `accept_tracked_changes` takes
+the changes into the text, `reject_tracked_changes` puts the text back as it
+was; each picks in exactly one way — `change_id`, `author`, `address` or
+`all` — and refuses to guess. One call is one undo step, and the reader's own
+selection is put back afterwards. Several edits and the settling of them can
+go in one `batch_live`, which makes the whole piece of work one Ctrl+Z.
+
+**Show what a reviewer would see**: `render_page` draws the markup — the
+insertion underlined, the deletion struck through, the change bar in the
+margin.
+
+One thing to say plainly when it matters: a change is recorded under the
+**office's user name**, not yours, so nothing in the document distinguishes
+your edits from the reader's own.
+
 ## Seeing the result
 
 `render_page` gives the page as it prints — through LibreOffice alone, no
