@@ -185,7 +185,8 @@ class TextTools:
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
-                }
+                },
+                "required": ["address"]
             },
             "handler": self.read_runs_live
         }

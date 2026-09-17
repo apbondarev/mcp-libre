@@ -36,7 +36,7 @@ class CommentTools:
         }
 
         self.tools["add_comment_live"] = {
-            "description": "Anchor a new comment to the text at an address, the way a reviewer's margin note is anchored. Use it to answer a question or flag a passage without changing the text itself",
+            "description": "Anchor a new comment to the text at an address, the way a reviewer's margin note is anchored — or reply to a comment already there with reply_to, which needs no address. Use it to answer a question or flag a passage without changing the text itself",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -63,12 +63,16 @@ class CommentTools:
                         "type": "string",
                         "description": "Language of the comment's own text, as a tag like \"ru-RU\". Writer spell checks the note in the margin against it, so a Russian comment left at the document's language is underlined word by word"
                     },
+                    "reply_to": {
+                        "type": "string",
+                        "description": "Make this a reply to that comment, named by the id list_comments_live reports. A reply goes on its parent's own anchor, so it takes no address of its own, and the thread then sits over one stretch of text as Writer's own replies do"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
                     }
                 },
-                "required": ["address", "text"]
+                "required": ["text"]
             },
             "handler": self.add_comment_live
         }
