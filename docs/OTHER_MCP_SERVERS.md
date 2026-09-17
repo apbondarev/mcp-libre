@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -405,11 +405,17 @@ inserted with UNO's own defaults lists nothing at all; a table of contents here 
 built from the headings. A translated tutorial now updates its own contents, which was
 the complaint this section opened with.
 
-#### 3.9.5 Footnotes and endnotes
+#### 3.9.5 Footnotes and endnotes — **done**
 
-Add, list, read, delete; the note's own text is a text of its own, like a comment's.
-The docx servers validate their cross-references before delivery, which is the
-second half of this.
+`list_notes`, `add_note`, `update_note`, `delete_note`.
+
+A note's mark turned out to be a **character of the paragraph** rather than an empty
+marker, which made it the same shape as a field: every address after a mark was one
+character to the right until `_position_in` was taught to count it, and a rewrite
+destroys the note and leaves the number behind. So the runs now report which one is a
+mark, the flatten guard counts them, and `replace_runs` keeps the mark's run while
+rewriting the text around it — a translated sentence keeps its footnote. Notes have no
+ids in UNO, only positions, so one is named by where its mark sits.
 
 #### 3.9.6 Sections
 

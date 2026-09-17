@@ -2385,6 +2385,127 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- footnotes and endnotes ---")
+    noted = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                         0, ())
+    page = noted.getText()
+    nib = page.createTextCursor()
+    for line in ("A query is the entry point", "Second paragraph here",
+                 "Third one"):
+        page.insertString(nib, line, False)
+        page.insertControlCharacter(nib, PARAGRAPH_BREAK, False)
+
+    footnote = bridge.add_note({"paragraph": 0, "offset": 2, "length": 5},
+                               "The entry point of a schema.", doc=noted)
+    print("   ", {key: footnote.get(key) for key in
+                  ("success", "kind", "mark", "address")})
+    # The mark is a *character* of the paragraph, not an empty marker like a
+    # comment's: "A query1 is the entry point".
+    check("a footnote goes in after the words it is about",
+          (footnote.get("success"), footnote.get("mark"),
+           footnote.get("address")),
+          (True, "1", {"paragraph": 0, "offset": 7, "length": 1}))
+    check("and the paragraph gains only that one character",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=noted)["paragraphs"][0]["text"],
+          "A query1 is the entry point")
+    endnote = bridge.add_note({"paragraph": 1, "offset": 0, "length": 6},
+                              "An endnote's text.", kind="endnote", label="*",
+                              doc=noted)
+    check("an endnote can wear a mark of its own",
+          (endnote.get("kind"), endnote.get("mark")), ("endnote", "*"))
+
+    listed = bridge.list_notes(doc=noted)
+    print("   ", [(one["kind"], one["mark"], one["text"]) for one in
+                  listed["notes"]])
+    check("both are listed, in the order they sit in",
+          [one["kind"] for one in listed["notes"]], ["footnote", "endnote"])
+    check("counted by kind", (listed["footnotes"], listed["endnotes"]), (1, 1))
+    check("with what each one says",
+          listed["notes"][0]["text"], "The entry point of a schema.")
+    check("scoped to a paragraph",
+          bridge.list_notes({"paragraph": 1}, doc=noted)["count"], 1)
+    check("a kind nobody knows",
+          bridge.list_notes(kind="marginalia", doc=noted).get("code"),
+          "INVALID_PARAMETER")
+
+    runs = bridge.read_runs({"paragraph": 0}, doc=noted)
+    marked = [run for run in runs["runs"] if run.get("note")]
+    check("read_runs says which run is a mark, and what it carries",
+          (len(marked), marked[0]["note"]["kind"] if marked else None),
+          (1, "footnote"))
+    refused = bridge.replace_range({"paragraph": 0}, "ПЕРЕПИСАНО", doc=noted)
+    print("   ", refused.get("error"))
+    check("a flat rewrite is refused rather than silently destructive",
+          (refused.get("success"), refused.get("code")),
+          (False, "WOULD_LOSE_FORMATTING"))
+    check("and names what would go",
+          "footnote or endnote mark" in (refused.get("error") or ""), True)
+    over_the_mark = [{"text": "X" if run.get("note") else run["text"]}
+                     for run in runs["runs"]]
+    check("replace_runs refuses to rewrite the run the mark sits in",
+          bridge.replace_runs({"paragraph": 0}, over_the_mark,
+                              doc=noted).get("code"),
+          "WOULD_LOSE_FORMATTING")
+
+    around = []
+    for run in runs["runs"]:
+        if run.get("note"):
+            around.append({"text": run["text"]})
+        elif run["text"] == "A query":
+            around.append({"text": "Запрос"})
+        else:
+            around.append({"text": " — точка входа"})
+    written = bridge.replace_runs({"paragraph": 0}, around, doc=noted)
+    check("but the text around it can be translated",
+          (written.get("success"), written.get("runs_kept")), (True, 1))
+    check("the note is still there", bridge.list_notes(doc=noted)["footnotes"],
+          1)
+    # An address after a mark has to count the mark's character, or a rewrite
+    # around it leaves a stray letter behind — measured, and fixed here.
+    check("with the paragraph reading as it should",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=noted)["paragraphs"][0]["text"],
+          "Запрос1 — точка входа")
+
+    where = bridge.list_notes(kind="footnote", doc=noted)["notes"][0]["address"]
+    changed = bridge.update_note(where, text="Точка входа схемы.", doc=noted)
+    check("what a note says can be changed",
+          (changed.get("success"), changed.get("text")),
+          (True, "Точка входа схемы."))
+    check("leaving the sentence alone",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=noted)["paragraphs"][0]["text"],
+          "Запрос1 — точка входа")
+    check("saying nothing to change",
+          bridge.update_note(where, doc=noted).get("code"),
+          "INVALID_PARAMETER")
+    check("an address with no note in it",
+          bridge.update_note({"paragraph": 2}, text="x",
+                             doc=noted).get("code"), "NOT_FOUND")
+    removed = bridge.delete_note(where, doc=noted)
+    check("removing it takes the mark out and hands back what it said",
+          (removed.get("success"), removed.get("was_saying")),
+          (True, "Точка входа схемы."))
+    check("leaving the words",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=noted)["paragraphs"][0]["text"],
+          "Запрос — точка входа")
+
+    cells = noted.createInstance("com.sun.star.text.TextTable")
+    cells.initialize(2, 2)
+    cells.setName("Сетка")
+    page.insertTextContent(bridge._resolve_address(
+        noted, {"paragraph": 2}).getStart(), cells, False)
+    cells.getCellByName("A1").setString("cell text")
+    in_cell = bridge.add_note({"table": "Сетка", "cell": "A1", "offset": 0,
+                               "length": 4}, "From a cell.", doc=noted)
+    check("a footnote works inside a table cell, addressed to it",
+          (in_cell.get("success"), (in_cell.get("address") or {}).get("cell")),
+          (True, "A1"))
+    noted.setModified(False)
+    noted.close(True)
+
     print("\n--- the tables a document writes about itself ---")
     # On a document of its own again: an index's entries are body paragraphs,
     # so it moves every address in the document it is put into.

@@ -52,6 +52,12 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+A **footnote's mark is a character of the text**, not an invisible marker:
+rewriting the run it sits in destroys the note. `read_runs` says which run is
+a mark, `replace_runs` refuses to rewrite it and keeps it while the runs
+around it change, and `list_notes`, `add_note`, `update_note` and
+`delete_note` work on the notes themselves.
+
 A table of contents writes itself: `insert_index` puts one in and
 `update_indexes` writes them again from what the document says now — a
 heading that has been translated shows in the old words until then. **An

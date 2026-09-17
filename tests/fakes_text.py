@@ -384,7 +384,25 @@ class FakeText:
             seen += len(text)
         return before, after
 
-    def insert_field(self, where, field, shown):
+    def _note_mark(self, note):
+        """What the mark reads: the label, or Writer's own numbering."""
+        if note.Label:
+            return note.Label
+        same = [one for one in self.notes_in_order() if one.kind == note.kind]
+        return str(len(same) + 1)
+
+    def notes_in_order(self):
+        """Every footnote and endnote in the text, in the order they sit in"""
+        found = []
+        for index in range(len(self.paragraphs)):
+            for piece in self.portions.get(index, []):
+                if isinstance(piece, dict) and piece.get("kind") == "Footnote" \
+                        and piece.get("Footnote") is not None:
+                    found.append(piece["Footnote"])
+        return found
+
+    def insert_field(self, where, field, shown, kind="TextField",
+                     key="field"):
         """A field goes in carrying the characters it shows.
 
         The mirror of a comment, measured on a real Writer: the portion is of
@@ -398,8 +416,8 @@ class FakeText:
         if declared is None:
             declared = [{"text": line}] if line else []
         before, after = self._split_portions(declared, offset)
-        self.portions[index] = before + [{"text": shown, "kind": "TextField",
-                                          "field": field}] + after
+        self.portions[index] = before + [{"text": shown, "kind": kind,
+                                          key: field}] + after
         self.paragraphs[index] = line[:offset] + shown + line[offset:]
         field._model = self
         field._paragraph = index
@@ -418,6 +436,14 @@ class FakeText:
             if not hasattr(self, "index_marks"):
                 self.index_marks = []
             self.index_marks.append(content)
+            return
+        if hasattr(content, "getText") and hasattr(content, "Label") \
+                and hasattr(content, "kind"):
+            # A note's mark is one character of the paragraph, and the
+            # portion carrying it is of type Footnote — the same shape as a
+            # field, which is why it goes in the same way.
+            self.insert_field(text_range, content, self._note_mark(content),
+                              kind="Footnote", key="Footnote")
             return
         if hasattr(content, "getPresentation") \
                 and not hasattr(content, "Author"):
@@ -463,6 +489,25 @@ class FakeText:
         if hasattr(content, "update") and hasattr(content, "IsProtected"):
             self.remove_index(content)
             return
+        if hasattr(content, "Label") and hasattr(content, "kind"):
+            # The mark goes, and the character it was.
+            for index, portions in list(self.portions.items()):
+                kept, offset, cut = [], 0, None
+                for portion in portions:
+                    text = portion.get("text", "") if isinstance(portion, dict) \
+                        else ""
+                    if isinstance(portion, dict) \
+                            and portion.get("Footnote") is content:
+                        cut = (offset, offset + len(text))
+                        continue
+                    kept.append(portion)
+                    offset += len(text)
+                if cut is not None:
+                    self.portions[index] = kept
+                    line = self.paragraphs[index]
+                    self.paragraphs[index] = line[:cut[0]] + line[cut[1]:]
+                    return
+            raise RuntimeError("that note is not in this text")
         if hasattr(content, "PrimaryKey"):
             if content in getattr(self, "index_marks", []):
                 self.index_marks.remove(content)
@@ -688,6 +733,14 @@ class FakeText:
             rebuilt, position = [], 0
             for text, existing, properties, kind, field in \
                     self.portions_of(paragraph):
+                if kind in ("TextField", "Footnote"):
+                    # These carry their characters, so they keep them — and
+                    # the thing they carry, under its own name.
+                    carrier = "Footnote" if kind == "Footnote" else "field"
+                    rebuilt.append({"kind": kind, "text": text,
+                                    carrier: field})
+                    position += len(text)
+                    continue
                 if kind != "Text":
                     # A comment marker is not text: marking a language must
                     # not sweep it away, or a fake would hide a rewrite that
@@ -746,7 +799,10 @@ class FakeText:
                                            FakeLocale(*self.default_locale)),
                                    properties,
                                    run.get("kind", "Text"),
-                                   run.get("field")))
+                                   # A footnote's mark carries the note under
+                                   # its own name, the way a field carries
+                                   # the field.
+                                   run.get("field", run.get("Footnote"))))
             else:
                 text, locale = run
                 normalised.append((text, locale, {}, "Text", None))
@@ -859,6 +915,18 @@ class FakeText:
                 return None
             kind = portion.get("kind", "Text")
             text = portion.get("text", "")
+            if kind in ("TextField", "Footnote"):
+                # A field and a footnote's mark carry the characters they
+                # show, so they take part in this arithmetic rather than
+                # sitting between characters — and one dies when the
+                # characters it is made of are replaced. Measured: a rewrite
+                # over a footnote's mark takes the note with it, while one
+                # that stops at the mark leaves it.
+                if not (start_offset < offset + len(text)
+                        and end_offset > offset):
+                    rebuilt.append(portion)
+                offset += len(text)
+                continue
             if kind != "Text":
                 # Measured on a live LibreOffice, and it is the arithmetic of
                 # a half-open deleted range. An opening Annotation dies when

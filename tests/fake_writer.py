@@ -43,6 +43,7 @@ from tests.fakes_references import (FakeFieldMaster, FakeReferenceField,
                                    FakeSequenceField)
 from tests.fakes_indexes import (FakeDocumentIndex, FakeIndexMark,
                                  SERVICE_OF_KIND)
+from tests.fakes_notes import FakeNote
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
                                      FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
@@ -362,6 +363,23 @@ _INDEX_SERVICES = {
 }
 
 
+class FakeIndexed:
+    """com.sun.star.container.XIndexAccess: what getFootnotes() hands back.
+
+    Notes have no names in UNO, only positions — which is why a note here is
+    named by where its mark sits.
+    """
+
+    def __init__(self, items):
+        self.items = list(items)
+
+    def getCount(self):
+        return len(self.items)
+
+    def getByIndex(self, index):
+        return self.items[index]
+
+
 class FakeMasters:
     """The field masters, reachable by the long service-style name.
 
@@ -449,6 +467,15 @@ class FakeDoc:
                 for index in range(fields.getCount())
                 if hasattr(fields.getByIndex(index), "attachTextFieldMaster")]
 
+    def getFootnotes(self):
+        """The footnotes, by index — UNO offers no names for them."""
+        return FakeIndexed([one for one in self._text.notes_in_order()
+                            if one.kind == "footnote"])
+
+    def getEndnotes(self):
+        return FakeIndexed([one for one in self._text.notes_in_order()
+                            if one.kind == "endnote"])
+
     def getDocumentIndexes(self):
         """The indexes the document holds, by the names they gave themselves"""
         if not hasattr(self, "_document_indexes"):
@@ -478,6 +505,10 @@ class FakeDoc:
                 self, _INDEX_SERVICES[service[len("com.sun.star.text."):]])
         if service == "com.sun.star.text.DocumentIndexMark":
             return FakeIndexMark()
+        if service == "com.sun.star.text.Footnote":
+            return FakeNote("footnote")
+        if service == "com.sun.star.text.Endnote":
+            return FakeNote("endnote")
         if service == "com.sun.star.text.TextField.SetExpression":
             field = FakeSequenceField(self, next(self._sequence_ids))
             return field

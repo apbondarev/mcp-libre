@@ -179,6 +179,10 @@ class RunsMixin:
             # other — and rewriting it destroys the field and leaves the
             # text. Measured: three fields in, none out.
             described_run["field"] = self._field_on(portion)
+            # A footnote's mark is a character of the paragraph, and its run
+            # looks like any other — rewriting it destroys the note and
+            # leaves the number behind. Measured: one footnote in, none out.
+            described_run["note"] = self._note_on(portion)
             described_run["changes"] = [
                 change for change, opened, closed in changes
                 if (opened < end_at and closed > start_at)
@@ -204,6 +208,27 @@ class RunsMixin:
             return None
         return {"command": self._field_presentation(field, True),
                 "text": self._field_presentation(field, False)}
+
+    def _note_on(self, portion: Any) -> Optional[Dict[str, Any]]:
+        """What footnote or endnote a run is the mark of, when it is one."""
+        if _get_property(portion, "TextPortionType", "Text") != "Footnote":
+            return None
+        note = _get_property(portion, "Footnote", None)
+        if note is None:
+            return None
+        endnote = False
+        try:
+            endnote = bool(note.supportsService("com.sun.star.text.Endnote"))
+        except Exception as e:
+            logger.info(f"A note would not say which kind it is: {e}")
+        text = ""
+        try:
+            text = note.getText().getString()
+        except Exception as e:
+            logger.info(f"A note would not say what it holds: {e}")
+        return {"kind": "endnote" if endnote else "footnote",
+                "label": _get_property(note, "Label", "") or "",
+                "text": _text_payload(text)["text"]}
 
     def _describe_run(self, portion: Any, body: str, paragraph: int,
                       offset: int) -> Dict[str, Any]:
@@ -254,17 +279,19 @@ class RunsMixin:
 
         links = [run for run in runs if run.get("link")]
         fields = [run for run in runs if run.get("field")]
+        notes = [run for run in runs if run.get("note")]
         comments = _distinct_comments(runs)
         recorded = _distinct_changes(runs)
         pictures = _distinct_images(runs)
         inline = [image for image in pictures if image.get("inline")]
         if len(runs) <= 1 and not links and not comments and not inline \
-                and not recorded and not fields:
+                and not recorded and not fields and not notes:
             return None
         return {"runs": len(runs), "links": len(links),
                 "comments": len(comments),
                 "changes": len(recorded),
                 "fields": len(fields),
+                "notes": len(notes),
                 "images": len(pictures), "inline_images": len(inline),
                 "styles": len([r for r in runs if r.get("character_style")])}
 
@@ -307,18 +334,27 @@ class RunsMixin:
             if covered:
                 pictures.append((image, covered))
 
+        # A footnote's mark is one character of one run, and rewriting that
+        # run destroys the note — measured, as with an inline picture. The
+        # only way to keep it is to leave that run alone.
+        marks = [(run["note"], {position})
+                 for position, run in enumerate(existing_runs)
+                 if run.get("note")]
+
         if not existing_runs or len(existing_runs) != len(prepared):
             return {"keep": set(), "kept": [],
                     "at_risk": [note for note, _ in notes],
                     "images_kept": [],
                     "images_at_risk": [image for image, _ in pictures],
+                    "notes_kept": [],
+                    "notes_at_risk": [mark for mark, _ in marks],
                     "segments": [{"first": 0, "last": len(prepared) - 1,
                                   "skip_first": False}]}
 
         unchanged = {position for position, (old, new)
                      in enumerate(zip(existing_runs, prepared))
                      if old["text"] == new[0]}
-        attachments = notes + pictures
+        attachments = notes + pictures + marks
         candidates = [(thing, covered) for thing, covered in attachments
                       if covered <= unchanged]
 
@@ -372,6 +408,10 @@ class RunsMixin:
                                         if covered and covered <= keep],
                         "images_at_risk": [image for image, covered in pictures
                                            if covered - keep],
+                        "notes_kept": [mark for mark, covered in marks
+                                       if covered and covered <= keep],
+                        "notes_at_risk": [mark for mark, covered in marks
+                                          if covered - keep],
                         "segments": segments}
             candidates = [(thing, covered) for thing, covered in candidates
                           if thing is not giving_up]
@@ -499,6 +539,20 @@ class RunsMixin:
                          f"holding it back with its text unchanged and rewrite "
                          f"the runs around it; read_runs says which run that is."
             }
+
+        if plan["notes_at_risk"] and not flatten:
+            kinds = ", ".join(sorted({one["kind"]
+                                      for one in plan["notes_at_risk"]}))
+            return refusal(
+                "WOULD_LOSE_FORMATTING",
+                f"This range holds the mark of {len(plan['notes_at_risk'])} "
+                f"{kinds} in text you are changing, and rewriting that text "
+                f"destroys the note — what it says would be gone, leaving "
+                f"the number behind as ordinary text. Pass the run holding "
+                f"the mark back unchanged and rewrite the runs around it; "
+                f"read_runs says which run that is",
+                notes=[{"kind": one["kind"], "text": one["text"]}
+                       for one in plan["notes_at_risk"]])
 
         carried = sum(len(prepared[position][3]) for position in range(len(prepared))
                       if position not in keep)

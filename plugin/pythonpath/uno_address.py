@@ -392,17 +392,22 @@ class AddressMixin:
             while portions.hasMoreElements():
                 portion = portions.nextElement()
                 kind = _get_property(portion, "TextPortionType", "Text")
-                if kind == "TextField":
+                if kind in ("TextField", "Footnote"):
                     # A field is the other way round from a comment: it costs
                     # one position for cursor movement while *carrying* the
                     # characters it shows, so the string is longer than the
                     # walk. Skipping it the way a marker is skipped put every
                     # address after a date seven characters to the right —
-                    # measured, on "составлено 9/17/26".
+                    # measured, on "составлено 9/17/26". A footnote's mark is
+                    # the same shape: the superscript number is a character of
+                    # the paragraph ("A query1 is the entry point") and costs
+                    # one position, so skipping it put every address after a
+                    # footnote one character to the right — which is how a
+                    # rewrite around a mark left a stray letter behind.
                     shown = portion.getString()
                     if seen + len(shown) > offset:
-                        # No cursor can stand inside a field, so it stands
-                        # where the field begins.
+                        # No cursor can stand inside a field or a mark, so it
+                        # stands where that portion begins.
                         return text.createTextCursorByRange(portion.getStart())
                     seen += len(shown)
                     continue

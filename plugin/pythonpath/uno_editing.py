@@ -200,6 +200,9 @@ class EditingMixin:
             if loss.get("fields"):
                 details.append(f"{loss['fields']} field"
                                f"{'s' if loss['fields'] > 1 else ''}")
+            if loss.get("notes"):
+                details.append(f"{loss['notes']} footnote or endnote mark"
+                               f"{'s' if loss['notes'] > 1 else ''}")
             if loss.get("inline_images"):
                 details.append(f"{loss['inline_images']} inline picture"
                                f"{'s' if loss['inline_images'] > 1 else ''}")
@@ -213,6 +216,12 @@ class EditingMixin:
                 # field, which is how a date stops being a date.
                 destroyed += (f" A field is destroyed outright by a rewrite, "
                               f"leaving behind whatever it happened to show.")
+            if loss.get("notes"):
+                # A footnote's mark is a character of the paragraph: rewrite
+                # it and the note at the bottom of the page goes with it.
+                destroyed += (f" A footnote or endnote is destroyed outright "
+                              f"by a rewrite of its mark, and what it said "
+                              f"goes with it — read it with list_notes first.")
             if loss.get("changes"):
                 # A recorded change cannot be handed back the way a comment
                 # can: it belongs to Writer's own recording. Settling it is
@@ -277,6 +286,7 @@ class EditingMixin:
             "comments_dropped": loss["comments"] if loss else None,
             "changes_dropped": loss.get("changes") if loss else None,
             "fields_dropped": loss.get("fields") if loss else None,
+            "notes_dropped": loss.get("notes") if loss else None,
             "images_dropped": loss.get("inline_images") if loss else None,
             "tables_dropped": len(tables) or None
         }
