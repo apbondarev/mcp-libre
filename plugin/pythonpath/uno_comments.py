@@ -323,66 +323,92 @@ class CommentsMixin:
                 pending.append(_get_property(note, "Name", "") or "")
         return found
 
-    def delete_comment(self, comment_id: str, with_replies: bool = False,
+    def delete_comment(self, comment_id: Optional[str] = None,
+                       author: Optional[str] = None, address: Any = None,
+                       all: bool = False, with_replies: bool = False,
                        doc: Any = None) -> Dict[str, Any]:
         """
-        Remove a comment, leaving the text it was anchored to
+        Remove comments, leaving the text they were anchored to
 
-        Returns what was deleted, so an assistant can say what it removed —
-        and so the text can be commented again if that was a mistake.
+        One by id, or everything an author left, or a part of the document,
+        or the lot — one way only, as the review tools pick their changes.
+        Returns what was deleted, so an assistant can say what it removed and
+        the text can be commented again if that was a mistake.
 
-        A comment with replies is refused unless `with_replies` says to take
-        the thread: deleting the parent alone leaves its replies in the
-        margin pointing at nothing.
+        A parent whose replies would be left behind is refused unless
+        `with_replies` says to take the thread: deleting it alone leaves them
+        in the margin pointing at nothing. When the replies are in the set
+        already — "all", say — there is nothing to refuse.
         """
-        doc, error = self._writer_document(doc, "Deleting a comment")
+        doc, error = self._writer_document(doc, "Deleting comments")
         if error:
             return error
 
-        try:
-            note = self._find_comment(doc, comment_id)
-        except AddressError as e:
-            return refusal("INVALID_ADDRESS", e)
-        if note is None:
-            return {"success": False, "code": "NOT_FOUND",
-                    "error": f"No comment with id {comment_id} in this "
-                             f"document. Take an id from list_comments."}
+        picked, refused = self._comments_picked(doc, comment_id, author,
+                                                address, all)
+        if refused:
+            return refused
+        if not picked:
+            return {"success": True, "deleted": 0,
+                    "note": "nothing matched, so nothing was deleted"}
 
-        hanging = self._replies_to(doc, comment_id)
-        if hanging and not with_replies:
+        going = {(_get_property(note, "Name", "") or "") for note in picked}
+        orphans = []
+        for note in picked:
+            for reply in self._replies_to(doc,
+                                          _get_property(note, "Name", "") or ""):
+                if (_get_property(reply, "Name", "") or "") not in going:
+                    orphans.append(reply)
+        if orphans and not with_replies:
             return refusal(
                 "INVALID_PARAMETER",
-                f"this comment carries {len(hanging)} repl"
-                f"{'ies' if len(hanging) > 1 else 'y'}, which deleting it "
-                f"alone would leave in the margin pointing at nothing; pass "
-                f"with_replies=true to remove the whole thread",
-                replies=[_describe_comment(one)["id"] for one in hanging])
+                f"that would leave {len(orphans)} repl"
+                f"{'ies' if len(orphans) > 1 else 'y'} in the margin pointing "
+                f"at a comment that has gone; pass with_replies=true to "
+                f"remove the whole thread",
+                replies=[_get_property(one, "Name", "") or ""
+                         for one in orphans])
 
-        described = _describe_comment(note)
-        anchor_text = None
-        try:
-            anchor_text = _text_payload(note.getAnchor().getString())["text"]
-        except Exception as e:
-            logger.info(f"Could not read a comment's anchor: {e}")
+        described = [_describe_comment(note) for note in picked]
+        anchors = []
+        for note in picked:
+            try:
+                anchors.append(
+                    _text_payload(note.getAnchor().getString())["text"])
+            except Exception as e:
+                logger.info(f"Could not read a comment's anchor: {e}")
+                anchors.append(None)
+
+        # Named before anything goes: an annotation that has been removed no
+        # longer answers with its own Name.
+        going_out = [(note, _get_property(note, "Name", "") or "")
+                     for note in orphans + picked]
 
         def edit():
             removed = []
-            # Replies first: a thread is taken from the leaves inward, so
-            # nothing is left naming a parent that has gone.
-            for one in reversed(hanging):
+            # Replies first, and a thread from the leaves inward, so nothing
+            # is left naming a parent that has gone.
+            for one, marked in reversed(going_out):
                 try:
                     one.getAnchor().getText().removeTextContent(one)
-                    removed.append(_get_property(one, "Name", "") or "")
+                    removed.append(marked)
                 except Exception as e:
-                    logger.info(f"Could not remove a reply: {e}")
-            anchor = note.getAnchor()
-            anchor.getText().removeTextContent(note)
-            return {"id": described["id"], "author": described["author"],
-                    "content": described["content"],
-                    "anchor_text": anchor_text,
-                    "replies_deleted": removed}
+                    logger.info(f"Could not remove a comment: {e}")
+            gone = [dict(one, anchor_text=where)
+                    for one, where in zip(described, anchors)]
+            answer = {"deleted": len(removed), "comments": gone,
+                      "replies_deleted": [one for one in removed
+                                          if one not in
+                                          {c["id"] for c in described}]}
+            if len(gone) == 1:
+                # What a caller that named one comment used to get back.
+                answer.update({"id": gone[0]["id"],
+                               "author": gone[0]["author"],
+                               "content": gone[0]["content"],
+                               "anchor_text": gone[0]["anchor_text"]})
+            return answer
 
-        return self._guarded_edit(doc, "MCP: delete comment", None, edit)
+        return self._guarded_edit(doc, "MCP: delete comments", None, edit)
 
     def _comment_style(self, doc: Any) -> Any:
         """The "Comment" paragraph style, which notes take their language from"""
@@ -491,6 +517,8 @@ class CommentsMixin:
         return found
 
     def list_comments(self, address: Any = None,
+                      author: Optional[str] = None,
+                      resolved: Optional[bool] = None,
                       doc: Any = None) -> Dict[str, Any]:
         """
         The comments of a document, a section, a paragraph, a range or the
@@ -546,6 +574,10 @@ class CommentsMixin:
                 described["anchor_text"] = None
             if not covers(described["address"]):
                 continue
+            if author is not None and described["author"] != author:
+                continue
+            if resolved is not None and bool(described["resolved"]) != bool(resolved):
+                continue
             comments.append(described)
 
         # A comment in a table cell has no body paragraph, so it sorts after
@@ -573,6 +605,10 @@ class CommentsMixin:
         return {"success": True, "comments": comments, "count": len(comments),
                 "threads": sum(1 for one in comments if not one.get("reply_to")),
                 "replies": sum(1 for one in comments if one.get("reply_to")),
+                "unresolved": sum(1 for one in comments
+                                  if not one.get("resolved")),
+                "authors": sorted({one["author"] for one in comments
+                                   if one["author"]}),
                 "scope": scope}
 
     def add_comment(self, address: Any = None, text: str = "",
@@ -651,3 +687,84 @@ class CommentsMixin:
             return result
 
         return self._guarded_edit(doc, "MCP: add comment", None, edit)
+
+    # -- several comments at once ------------------------------------------
+
+    def _comments_picked(self, doc: Any, comment_id: Optional[str],
+                         author: Optional[str], address: Any,
+                         everything: bool) -> tuple:
+        """(annotations, refusal) for the one way a caller named them."""
+        named = [one for one in (comment_id, author, address)
+                 if one is not None]
+        if len(named) + (1 if everything else 0) != 1:
+            return None, refusal(
+                "INVALID_PARAMETER",
+                "say which comments, and only one way: comment_id for one of "
+                "them, author for everyone's by that name, address for a part "
+                "of the document, or all=true for every comment in it")
+
+        if comment_id is not None:
+            try:
+                note = self._find_comment(doc, comment_id)
+            except AddressError as e:
+                return None, refusal("INVALID_PARAMETER", e)
+            if note is None:
+                return None, refusal(
+                    "NOT_FOUND",
+                    f"No comment with id {comment_id} in this document. Take "
+                    f"an id from list_comments.")
+            return [note], None
+
+        listed = self.list_comments(address=address, author=author, doc=doc)
+        if not listed.get("success"):
+            return None, listed
+        wanted = {one["id"] for one in listed["comments"]}
+        return [note for note in self._annotations(doc)
+                if (_get_property(note, "Name", "") or "") in wanted], None
+
+    def resolve_comments(self, comment_id: Optional[str] = None,
+                         author: Optional[str] = None, address: Any = None,
+                         all: bool = False, resolved: bool = True,
+                         doc: Any = None) -> Dict[str, Any]:
+        """
+        Mark comments resolved, or reopen them
+
+        Measured: `Resolved` belongs to each annotation on its own — marking
+        a parent leaves its replies unresolved, so Writer shows half a
+        settled thread. The replies of anything picked here follow it, and
+        the result says how many did.
+        """
+        doc, error = self._writer_document(doc, "Resolving comments")
+        if error:
+            return error
+
+        picked, refused = self._comments_picked(doc, comment_id, author,
+                                                address, all)
+        if refused:
+            return refused
+        if not picked:
+            return {"success": True, "marked": 0, "resolved": bool(resolved),
+                    "note": "nothing matched, so nothing was marked"}
+
+        chosen = {(_get_property(note, "Name", "") or "") for note in picked}
+        followers = []
+        for note in picked:
+            for reply in self._replies_to(doc,
+                                          _get_property(note, "Name", "") or ""):
+                if (_get_property(reply, "Name", "") or "") not in chosen:
+                    followers.append(reply)
+                    chosen.add(_get_property(reply, "Name", "") or "")
+
+        def edit():
+            marked = []
+            for note in picked + followers:
+                try:
+                    note.Resolved = bool(resolved)
+                    marked.append(_get_property(note, "Name", "") or "")
+                except Exception as e:
+                    logger.info(f"Could not mark a comment: {e}")
+            return {"marked": len(marked), "comments": marked,
+                    "replies_followed": len(followers),
+                    "resolved": bool(resolved)}
+
+        return self._guarded_edit(doc, "MCP: resolve comments", None, edit)

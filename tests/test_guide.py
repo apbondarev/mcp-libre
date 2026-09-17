@@ -28,7 +28,8 @@ NOT_TOOLS = {
     "paragraphs_before", "paragraphs_after", "replace", "true", "false",
     "undo", "anchor_text", "instructions", "code", "elapsed_ms",
     "reply_to", "replies", "threads", "with_replies", "author", "change_id",
-    "all", "address", "tracked", "document",
+    "all", "address", "tracked", "document", "comment_id", "resolved",
+    "unresolved", "authors",
 }
 
 

@@ -66,10 +66,16 @@ says so, naming the table and the cell.
 
 A reply is a comment joined to its parent, sitting on the parent's own
 anchor: `add_comment` with `reply_to` and no address makes one, and
-`list_comments` reports `reply_to` and `replies` on each, with `threads` and
-`replies` counted. Deleting a comment that carries replies is refused —
-`with_replies: true` takes the whole thread — because the parent alone would
-leave them in the margin pointing at nothing.
+`list_comments` reports `reply_to` and `replies` on each, with `threads`,
+`replies`, `unresolved` and the `authors` counted. It also narrows by
+`author` and by `resolved`, which is how to ask what is still open.
+
+`resolve_comments` marks them resolved or reopens them, and
+`delete_comment` removes them; both pick in exactly one way — `comment_id`,
+`author`, `address` or `all: true` — as the review tools do. Resolved
+belongs to each note on its own, so the replies of whatever is picked follow
+it, or Writer shows half a settled thread. Deleting anything whose replies
+would be left behind is refused, and `with_replies: true` takes the thread.
 
 ## Language
 

@@ -176,3 +176,86 @@ def test_a_thread_survives_a_rewrite_of_the_text_it_sits_on(bridge, doc):
     reply = [one for one in listed["comments"] if one["reply_to"]][0]
     assert reply["reply_to"] == top["id"], "the reply lost its parent"
     assert top["content"] == "Is this the right term?"
+
+
+def test_comments_can_be_asked_for_by_author_and_by_state(bridge, doc):
+    parent = only_comment(bridge, doc)
+    bridge.add_comment(text="Yes.", author="Claude", reply_to=parent["id"],
+                       doc=doc)
+    bridge.update_comment(parent["id"], resolved=True, doc=doc)
+
+    assert bridge.list_comments(author="Claude", doc=doc)["count"] == 1
+    open_ones = bridge.list_comments(resolved=False, doc=doc)
+    assert [one["author"] for one in open_ones["comments"]] == ["Claude"]
+    assert bridge.list_comments(doc=doc)["unresolved"] == 1
+    assert bridge.list_comments(doc=doc)["authors"] == ["Claude", "Reviewer"]
+
+
+def test_resolving_a_thread_takes_its_replies_with_it(bridge, doc):
+    # Measured: Resolved belongs to each note on its own, so marking the
+    # parent alone leaves Writer showing half a settled thread.
+    parent = only_comment(bridge, doc)
+    reply = bridge.add_comment(text="Yes.", reply_to=parent["id"], doc=doc)
+
+    marked = bridge.resolve_comments(comment_id=parent["id"], doc=doc)
+
+    assert (marked["marked"], marked["replies_followed"]) == (2, 1)
+    listed = {one["id"]: one for one in bridge.list_comments(doc=doc)["comments"]}
+    assert listed[parent["id"]]["resolved"] is True
+    assert listed[reply["id"]]["resolved"] is True
+
+
+def test_reopening_by_author(bridge, doc):
+    parent = only_comment(bridge, doc)
+    bridge.resolve_comments(all=True, doc=doc)
+
+    bridge.resolve_comments(author="Reviewer", resolved=False, doc=doc)
+
+    assert bridge.list_comments(doc=doc)["unresolved"] == 1
+    assert bridge.list_comments(doc=doc)["comments"][0]["id"] == parent["id"]
+
+
+def test_resolving_refuses_to_guess(bridge, doc):
+    for refused in (bridge.resolve_comments(doc=doc),
+                    bridge.resolve_comments(all=True, author="Reviewer",
+                                            doc=doc)):
+        assert refused["success"] is False
+        assert refused["code"] == "INVALID_PARAMETER"
+
+
+def test_deleting_everything_an_author_left(bridge, doc):
+    parent = only_comment(bridge, doc)
+    bridge.add_comment(text="Yes.", author="Claude", reply_to=parent["id"],
+                       doc=doc)
+
+    # The reply hangs off the parent, so taking the parent alone would orphan
+    # it — the same refusal a single id gets.
+    refused = bridge.delete_comment(author="Reviewer", doc=doc)
+    assert refused["code"] == "INVALID_PARAMETER"
+
+    removed = bridge.delete_comment(author="Reviewer", with_replies=True,
+                                    doc=doc)
+    assert removed["deleted"] == 2
+    assert bridge.list_comments(doc=doc)["count"] == 0
+
+
+def test_deleting_all_of_them_needs_no_permission_to_orphan(bridge, doc):
+    parent = only_comment(bridge, doc)
+    bridge.add_comment(text="Yes.", reply_to=parent["id"], doc=doc)
+
+    # Nothing is left behind to point at nothing, so there is nothing to
+    # refuse.
+    removed = bridge.delete_comment(all=True, doc=doc)
+
+    assert removed["deleted"] == 2
+    assert bridge.list_comments(doc=doc)["count"] == 0
+
+
+def test_deleting_one_still_answers_the_way_it_did(bridge, doc):
+    parent = only_comment(bridge, doc)
+
+    removed = bridge.delete_comment(comment_id=parent["id"], doc=doc)
+
+    assert removed["id"] == parent["id"]
+    assert removed["content"] == "Is this the right term?"
+    assert removed["anchor_text"] == "query"

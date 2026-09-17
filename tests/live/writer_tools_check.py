@@ -2355,9 +2355,30 @@ try:
     check("so the thread survived the new id",
           (joined["threads"], joined["replies"]), (1, 3))
 
+    print("\n   many at once:")
+    root_id = [one for one in joined["comments"] if not one["reply_to"]][0]["id"]
+    marked = bridge.resolve_comments(comment_id=root_id, doc=doc)
+    print("   ", {key: marked.get(key) for key in
+                  ("success", "marked", "replies_followed")})
+    check("resolving a thread takes its replies with it",
+          marked.get("replies_followed") >= 1, True)
+    check("and the whole thread reads as resolved",
+          bridge.list_comments({"paragraph": talk}, doc=doc)["unresolved"], 0)
+    check("reopening by author",
+          bridge.resolve_comments(author="Reviewer", resolved=False,
+                                  doc=doc).get("success"), True)
+    check("some are open again",
+          bridge.list_comments({"paragraph": talk}, doc=doc)["unresolved"] > 0,
+          True)
+    check("listing by author",
+          {one["author"] for one in bridge.list_comments(
+              {"paragraph": talk}, author="Claude", doc=doc)["comments"]},
+          {"Claude"})
+    check("and settling without saying which is refused",
+          bridge.resolve_comments(doc=doc).get("code"), "INVALID_PARAMETER")
+
     whole = bridge.delete_comment(
-        [one for one in joined["comments"] if not one["reply_to"]][0]["id"],
-        with_replies=True, doc=doc)
+        comment_id=root_id, with_replies=True, doc=doc)
     check("and the whole thread can be taken at once",
           (whole.get("success"), len(whole.get("replies_deleted") or [])),
           (True, 3))

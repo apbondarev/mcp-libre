@@ -123,11 +123,11 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 55 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 56 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
-| comments | list/add/update/delete, language, ids, **threads** | list/add/update/delete/resolve | + threads | + threads | list/add |
+| comments | list/add/update/delete, language, ids, threads, **filters + bulk resolve/delete** | list/add/update/delete/resolve | + threads | + threads | list/add |
 | track changes | record-or-not (three states) **+ list/accept/reject** | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
 | tables | read/describe/format/create/delete **+ rows/cols/merge/split/sort** | + rows/cols/merge/sort/convert | + rows | + cells | — |
 | page image | **render_page** | — | — | — | — |
