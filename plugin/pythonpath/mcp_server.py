@@ -12,6 +12,7 @@ their subject, one module per part:
     mcp_document_tools.py    documents: making, saving, closing, renaming
     mcp_image_tools.py       pictures, and a picture of a page
     mcp_comment_tools.py     the notes in the margin
+    mcp_field_tools.py       the bits that write themselves
     mcp_review_tools.py      the changes a document is keeping
     mcp_table_tools.py       tables
     mcp_table_shape_tools.py rows, columns, merged cells, sorting
@@ -34,6 +35,7 @@ from mcp_formatting_tools import FormattingTools
 from mcp_document_tools import DocumentTools
 from mcp_image_tools import ImageTools
 from mcp_comment_tools import CommentTools
+from mcp_field_tools import FieldTools
 from mcp_review_tools import ReviewTools
 from mcp_table_tools import TableTools
 from mcp_table_shape_tools import TableShapeTools
@@ -44,7 +46,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class LibreOfficeMCPServer(BatchTools, ReviewTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
+class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
                            AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
@@ -65,6 +67,7 @@ class LibreOfficeMCPServer(BatchTools, ReviewTools, TableShapeTools, TableTools,
         self._register_document()
         self._register_image()
         self._register_comment()
+        self._register_field()
         self._register_review()
         self._register_table()
         self._register_table_shape()

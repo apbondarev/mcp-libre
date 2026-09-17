@@ -197,6 +197,9 @@ class EditingMixin:
             if loss.get("changes"):
                 details.append(f"{loss['changes']} recorded change"
                                f"{'s' if loss['changes'] > 1 else ''}")
+            if loss.get("fields"):
+                details.append(f"{loss['fields']} field"
+                               f"{'s' if loss['fields'] > 1 else ''}")
             if loss.get("inline_images"):
                 details.append(f"{loss['inline_images']} inline picture"
                                f"{'s' if loss['inline_images'] > 1 else ''}")
@@ -204,6 +207,12 @@ class EditingMixin:
                 details.append(f"{loss['styles']} with character styles")
             destroyed = (" An inline picture is destroyed outright, not just "
                          "flattened." if loss.get("inline_images") else "")
+            if loss.get("fields"):
+                # A field writes its own text, and the run it makes looks
+                # like any other — rewriting it leaves the text and takes the
+                # field, which is how a date stops being a date.
+                destroyed += (f" A field is destroyed outright by a rewrite, "
+                              f"leaving behind whatever it happened to show.")
             if loss.get("changes"):
                 # A recorded change cannot be handed back the way a comment
                 # can: it belongs to Writer's own recording. Settling it is
@@ -267,6 +276,7 @@ class EditingMixin:
             "links_dropped": loss["links"] if loss else None,
             "comments_dropped": loss["comments"] if loss else None,
             "changes_dropped": loss.get("changes") if loss else None,
+            "fields_dropped": loss.get("fields") if loss else None,
             "images_dropped": loss.get("inline_images") if loss else None,
             "tables_dropped": len(tables) or None
         }

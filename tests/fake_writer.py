@@ -39,7 +39,8 @@ from tests.fakes_values import (CALC_SERVICES, FakeBorderLine, FakeComponents,
 from tests.fakes_styles import (FAKE_STYLE_DEFAULTS, FAKE_STYLE_OWN,
                                 FAKE_STYLE_PARENTS, FakeStyle, FakeStyleFamilies,
                                 FakeStyleFamily)
-from tests.fakes_annotations import (FakeAnnotation, FakeGraphic, FakeImage,
+from tests.fakes_annotations import (FakeAnnotation, FakeField, FakeGraphic,
+                                     FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
                                      FakeNoteText)
 
@@ -404,6 +405,13 @@ class FakeDoc:
                                               (index, offset))
                     found.append(field)
                 else:
+                    if kind == "TextField" and field is not None:
+                        # A field is a text field like a comment, and carries
+                        # the characters it shows.
+                        field._model = self._text
+                        field._paragraph = index
+                        field._offset = offset
+                        found.append(field)
                     offset += len(text)
             for field, start in opened:
                 field._anchor = FakeRange(self._text, (index, start),

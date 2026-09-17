@@ -391,7 +391,22 @@ class AddressMixin:
             portions = paragraph.createEnumeration()
             while portions.hasMoreElements():
                 portion = portions.nextElement()
-                if _get_property(portion, "TextPortionType", "Text") != "Text":
+                kind = _get_property(portion, "TextPortionType", "Text")
+                if kind == "TextField":
+                    # A field is the other way round from a comment: it costs
+                    # one position for cursor movement while *carrying* the
+                    # characters it shows, so the string is longer than the
+                    # walk. Skipping it the way a marker is skipped put every
+                    # address after a date seven characters to the right —
+                    # measured, on "составлено 9/17/26".
+                    shown = portion.getString()
+                    if seen + len(shown) > offset:
+                        # No cursor can stand inside a field, so it stands
+                        # where the field begins.
+                        return text.createTextCursorByRange(portion.getStart())
+                    seen += len(shown)
+                    continue
+                if kind != "Text":
                     continue
                 body = portion.getString()
                 if not body:

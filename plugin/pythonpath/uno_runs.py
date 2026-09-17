@@ -175,6 +175,10 @@ class RunsMixin:
                 or (opened == closed and start_at <= opened < end_at)]
             # A recorded change covers text the way a comment does, and a
             # caller cannot see it any other way: its runs look ordinary.
+            # A field carries the text it shows, so its run looks like any
+            # other — and rewriting it destroys the field and leaves the
+            # text. Measured: three fields in, none out.
+            described_run["field"] = self._field_on(portion)
             described_run["changes"] = [
                 change for change, opened, closed in changes
                 if (opened < end_at and closed > start_at)
@@ -190,6 +194,16 @@ class RunsMixin:
                                   == clipped_end)]
             runs.append(described_run)
         return runs
+
+    def _field_on(self, portion: Any) -> Optional[Dict[str, Any]]:
+        """What field a run *is*, when the run is one."""
+        if _get_property(portion, "TextPortionType", "Text") != "TextField":
+            return None
+        field = _get_property(portion, "TextField", None)
+        if field is None:
+            return None
+        return {"command": self._field_presentation(field, True),
+                "text": self._field_presentation(field, False)}
 
     def _describe_run(self, portion: Any, body: str, paragraph: int,
                       offset: int) -> Dict[str, Any]:
@@ -239,16 +253,18 @@ class RunsMixin:
             return None
 
         links = [run for run in runs if run.get("link")]
+        fields = [run for run in runs if run.get("field")]
         comments = _distinct_comments(runs)
         recorded = _distinct_changes(runs)
         pictures = _distinct_images(runs)
         inline = [image for image in pictures if image.get("inline")]
         if len(runs) <= 1 and not links and not comments and not inline \
-                and not recorded:
+                and not recorded and not fields:
             return None
         return {"runs": len(runs), "links": len(links),
                 "comments": len(comments),
                 "changes": len(recorded),
+                "fields": len(fields),
                 "images": len(pictures), "inline_images": len(inline),
                 "styles": len([r for r in runs if r.get("character_style")])}
 

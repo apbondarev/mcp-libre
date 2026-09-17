@@ -2103,6 +2103,84 @@ try:
             start=0, count=1, doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
+    print("\n--- fields: the bits that write themselves ---")
+    marker = body.createTextCursorByRange(body.getEnd())
+    body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
+    body.insertString(marker, "Страница X из Y, составлено Z", False)
+    page = bridge.read_paragraphs(start=0, count=1,
+                                  doc=doc)["total_paragraphs"] - 1
+
+    put = bridge.insert_field({"paragraph": page, "offset": 9, "length": 1},
+                              "page_number", doc=doc)
+    print("   ", {key: put.get(key) for key in
+                  ("success", "kind", "shows", "command")})
+    check("a page number went in", put.get("success"), True)
+    check("showing a page number", (put.get("shows") or "").isdigit(), True)
+    line = bridge.read_paragraphs(start=page, count=1,
+                                  doc=doc)["paragraphs"][0]["text"]
+    check("in place of the text it replaced", "из Y" in line, True)
+
+    bridge.insert_field({"paragraph": page, "offset": len(line) - 5,
+                         "length": 1}, "page_count", doc=doc)
+    bridge.insert_field({"paragraph": page,
+                         "offset": len(bridge.read_paragraphs(
+                             start=page, count=1,
+                             doc=doc)["paragraphs"][0]["text"]) - 1,
+                         "length": 1}, "date", doc=doc)
+    refreshed_first = bridge.update_fields(doc=doc)
+    check("fields can be made to redraw", refreshed_first.get("success"), True)
+    listed = bridge.list_fields({"paragraph": page}, doc=doc)
+    print("   ", [(one["kind"], one["text"], one["address"]["offset"])
+                  for one in listed["fields"]])
+    check("all three are listed", listed["count"], 3)
+    check("each knowing what it is",
+          sorted(one["kind"] for one in listed["fields"]),
+          ["date", "page_count", "page_number"])
+    check("and what Writer calls it",
+          all(one["command"] for one in listed["fields"]), True)
+    check("the comments are not listed as fields",
+          all(one["kind"] is not None for one in listed["fields"]), True)
+
+    print("\n   a field is not ordinary text:")
+    runs = bridge.read_runs({"paragraph": page}, doc=doc)
+    carrying = [run for run in runs["runs"] if run.get("field")]
+    check("read_runs says which run is a field", len(carrying), 3)
+    check("naming what it shows",
+          carrying[0]["field"]["text"], carrying[0]["text"])
+    refused = bridge.replace_range({"paragraph": page}, "переписано", doc=doc)
+    print("   ", refused.get("error"))
+    check("a rewrite over them is refused",
+          (refused.get("success"), refused.get("code")),
+          (False, "WOULD_LOSE_FORMATTING"))
+    check("and says how many fields would go",
+          "3 fields" in (refused.get("error") or ""), True)
+
+    print("\n   taking one away:")
+    date_at = [one for one in listed["fields"] if one["kind"] == "date"][0]
+    gone = bridge.delete_field(date_at["address"], doc=doc)
+    print("   ", {key: gone.get(key) for key in ("success", "deleted",
+                                                 "was_showing")})
+    check("the date is gone", gone.get("deleted"), "date")
+    check("two fields left", bridge.list_fields({"paragraph": page},
+                                                doc=doc)["count"], 2)
+    check("an address with no field in it is refused",
+          bridge.delete_field({"paragraph": page, "offset": 0, "length": 1},
+                              doc=doc).get("code"), "NOT_FOUND")
+    check("and one covering several",
+          bridge.delete_field({"paragraph": page}, doc=doc).get("code"),
+          "INVALID_PARAMETER")
+    check("a kind nobody has heard of",
+          bridge.insert_field({"paragraph": page}, "weather",
+                              doc=doc).get("code"), "INVALID_PARAMETER")
+
+    flat = bridge.replace_range({"paragraph": page}, "переписано",
+                                flatten=True, doc=doc)
+    check("flatten writes over them and says how many went",
+          (flat.get("success"), flat.get("fields_dropped")), (True, 2))
+    check("and they are gone",
+          bridge.list_fields({"paragraph": page}, doc=doc)["count"], 0)
+    body.removeTextContent(bridge._paragraph_at(body, page))
+
     print("\n--- changing a table's shape, and the order of its rows ---")
     shaped = doc.createInstance("com.sun.star.text.TextTable")
     shaped.initialize(4, 3)

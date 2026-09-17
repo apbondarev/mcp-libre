@@ -140,9 +140,16 @@ class ReadingMixin:
 
     def _match_in(self, body: Any, paragraph: Any, index: int, match: Any,
                   start: Any) -> Dict[str, Any]:
-        """One match, addressed inside the paragraph that holds it"""
-        cursor = body.createTextCursorByRange(paragraph.getStart())
-        cursor.gotoRange(start, True)
+        """One match, addressed inside the paragraph that holds it
+
+        The offset is measured backwards, from the match's start to the start
+        of its paragraph, the way _locate_range measures it. Walking forwards
+        instead — a cursor at the paragraph start told to reach the match —
+        overshoots a field: a date came back at the offset of the field after
+        it, and deleting it was refused as running past the paragraph.
+        """
+        cursor = body.createTextCursorByRange(start)
+        cursor.gotoStartOfParagraph(True)
         payload = _text_payload(paragraph.getString())
         return {"address": {"paragraph": index,
                             "offset": len(cursor.getString()),

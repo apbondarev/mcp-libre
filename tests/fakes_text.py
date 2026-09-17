@@ -308,6 +308,28 @@ class FakeText:
                 (item - 1 if item > index else item)
                 for item in self.enumeration_items if item != index]
             return
+        if hasattr(content, "getPresentation"):
+            # A field carries the characters it shows, so taking it away
+            # takes them out of the paragraph too.
+            for index, portions in list(self.portions.items()):
+                kept, offset, cut = [], 0, None
+                for portion in portions:
+                    text = portion.get("text", "") if isinstance(portion, dict) \
+                        else ""
+                    if isinstance(portion, dict) \
+                            and portion.get("field") is content \
+                            and portion.get("kind") == "TextField":
+                        cut = (offset, offset + len(text))
+                        continue
+                    kept.append(portion)
+                    offset += len(text)
+                if cut is not None:
+                    self.portions[index] = kept
+                    line = self.paragraphs[index]
+                    self.paragraphs[index] = line[:cut[0]] + line[cut[1]:]
+                    return
+            raise RuntimeError("that text content is not in this text")
+
         removed = False
         for index, portions in list(self.portions.items()):
             kept = []

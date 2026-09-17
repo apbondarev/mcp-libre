@@ -48,6 +48,16 @@ it would cost. The route that keeps the look is `read_runs`, edit or
 translate each run's text, then `replace_runs`, which leaves untouched every
 run whose text did not change, and with it that run's comments and pictures.
 
+## Fields
+
+A date, a page number, the document's title: `list_fields` reports them with
+what each shows and where it sits, `insert_field` puts one in,
+`update_fields` makes them redraw (Writer's F9), `delete_field` takes one
+away by its address. A field is the mirror of a comment — it **carries the
+text it shows**, so its run looks like ordinary text and a rewrite destroys
+the field and leaves the text. `read_runs` says which run is a field, and
+`replace_range` refuses a range holding one unless `flatten` accepts it.
+
 ## What is not text
 
 A comment and a picture occupy no characters at all, so neither ever shows in

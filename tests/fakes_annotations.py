@@ -56,6 +56,39 @@ class FakeImage:
                         "com.sun.star.text.BaseFrame")
 
 
+class FakeField:
+    """com.sun.star.text.TextField, as the bridge touches it.
+
+    Unlike a comment's marker a field *carries* the text it shows, so the
+    paragraph's string is longer than a walk over its Text portions — which
+    is what put every address after a date seven characters to the right.
+    """
+
+    def __init__(self, shows, command="Date", service="DocInfo.Title",
+                 model=None, paragraph=0, offset=0, fixed=False):
+        self._shows = shows
+        self._command = command
+        self.IsFixed = fixed
+        self.IsDate = command == "Date"
+        self._service = f"com.sun.star.text.TextField.{service}"
+        self._model = model
+        self._paragraph = paragraph
+        self._offset = offset
+
+    def getPresentation(self, command):
+        return self._command if command else self._shows
+
+    def getSupportedServiceNames(self):
+        return (self._service, "com.sun.star.text.TextField")
+
+    def supportsService(self, name):
+        return name in self.getSupportedServiceNames()
+
+    def getAnchor(self):
+        return FakeRange(self._model, (self._paragraph, self._offset),
+                         (self._paragraph, self._offset + len(self._shows)))
+
+
 _annotation_serial = itertools.count(1)
 
 

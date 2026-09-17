@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.15** table shape,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
 rather than a feature, and **3.3** the concurrency claim nobody has measured here.
@@ -126,7 +126,7 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 56 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 60 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
 | refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
@@ -344,14 +344,20 @@ Ordered by what the work in this repository has actually run into: 3.9.1, 3.9.4 
 3.9.7 come up in a translated tutorial the moment anyone prints it; 3.9.9 and 3.9.11
 come up in every rewrite.
 
-#### 3.9.1 Fields
+#### 3.9.1 Fields — **done**
 
-Date, page number, page count, document properties, and the `update_fields` that
-makes them redraw. A translated document with a date field is mostly untouchable
-today: the text tools see the field's *result* and rewriting it destroys the field.
-Measuring round: what a field portion looks like in `read_runs` (it will be an empty
-marker like a comment), which of `TextField` services Writer offers, and whether a
-field survives `replace_runs`.
+`list_fields`, `insert_field` (date, time, page number, page count, title, subject,
+author, file name), `update_fields`, `delete_field`.
+
+The guess in this section was wrong in the way that mattered: a field is *not* an
+empty marker like a comment. It **carries the text it shows** while costing one
+position for the cursor — the mirror image — and that had been quietly breaking
+addresses all along. `_position_in` skipped it as it skips a comment's marker, so
+every address after a date was seven characters to the right; and a zero-width
+cursor standing at a field's position hands back the field's text, so the offsets
+`list_fields` reports come from a walk of the portions rather than from measuring a
+range. A rewrite destroys a field and leaves its text, so the flatten guard counts
+them like comments and pictures.
 
 #### 3.9.2 Bookmarks
 
