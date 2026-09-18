@@ -46,6 +46,12 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+The running title and the page number live in a **header or footer of a page
+style**, not in the text: translating a document leaves them in the old
+language until `set_header` / `set_footer` are used, where `{page}`,
+`{pages}`, `{title}` and `{date}` become the fields a reader expects.
+`remove_header_footer` throws the text away — Writer keeps nothing.
+
 A **protected section is not protected from you**: Writer stops the reader's
 keyboard and lets the API write straight through, so `replace_range`,
 `replace_selection` and `replace_runs` refuse one themselves with READ_ONLY

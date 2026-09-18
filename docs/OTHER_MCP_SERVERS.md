@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -430,10 +430,16 @@ it. Beside that: a section leaves the paragraph numbering exactly as it was, a h
 section is still numbered and still readable, sections nest, and `list_sections`
 answers by overlap, so asking about a paragraph names every section covering it.
 
-#### 3.9.7 Headers and footers
+#### 3.9.7 Headers and footers — **done**
 
-Read and write them per page style. The page number a reader sees lives here, and so
-does the running title a translated document still shows in English.
+`list_headers_footers`, `set_header`, `set_footer`, `remove_header_footer`.
+
+The running title this section complained about now has a tool, and the page number
+with it: `{page}`, `{pages}`, `{title}`, `{date}`, `{author}` and `{file}` in the text
+become real fields, so "Страница {page} из {pages}" is one call. Measured on the way:
+nothing on a header answers until `HeaderIsOn` is true — the other properties read
+None, not a value — switching a header off **throws its text away**, and asking for
+the left or the right page is what makes the two sides differ at all.
 
 #### 3.9.8 Page layout
 

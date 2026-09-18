@@ -2385,6 +2385,89 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- headers and footers, which belong to a page style ---")
+    paged = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                         0, ())
+    paged_text = paged.getText()
+    stylus = paged_text.createTextCursor()
+    for line in ("Title of the document", "Body text here"):
+        paged_text.insertString(stylus, line, False)
+        paged_text.insertControlCharacter(stylus, PARAGRAPH_BREAK, False)
+
+    empty = bridge.list_headers_footers(doc=paged)
+    check("only the page style in use is listed while nothing is on",
+          [one["page_style"] for one in empty["page_styles"]], ["Standard"])
+    check("with nothing on it",
+          (empty["page_styles"][0]["header"]["on"],
+           empty["page_styles"][0]["footer"]["on"]), (False, False))
+    # Measured: while a header is off, HeaderIsShared and its neighbours
+    # answer None rather than a value, so nothing about them is reported.
+    check("and nothing else claimed about it",
+          "same_on_both_pages" in empty["page_styles"][0]["header"], False)
+
+    title = bridge.set_header_footer("header", "GraphQL: руководство",
+                                     doc=paged)
+    print("   ", {key: title.get(key) for key in
+                  ("success", "page_style", "which", "text")})
+    check("a running title goes on the style the caret is on",
+          (title.get("success"), title.get("page_style"), title.get("text")),
+          (True, "Standard", "GraphQL: руководство"))
+    numbered = bridge.set_header_footer("footer", "Страница {page} из {pages}",
+                                        doc=paged)
+    print("   ", {key: numbered.get(key) for key in ("text", "fields")})
+    check("and the placeholders in a footer become real fields",
+          numbered.get("fields"), ["page", "pages"])
+    check("showing a number", numbered.get("text"), "Страница 1 из 1")
+
+    side = bridge.set_header_footer("header", "Чётные", which="left",
+                                    doc=paged)
+    bridge.set_header_footer("header", "Нечётные", which="right", doc=paged)
+    check("asking for one side is what makes the sides differ",
+          side.get("same_on_both_pages"), False)
+    first = bridge.set_header_footer("header", "Титул", which="first",
+                                     doc=paged)
+    check("and a first page can have one of its own",
+          first.get("same_on_the_first_page"), False)
+    header = [one for one in bridge.list_headers_footers(doc=paged)
+              ["page_styles"] if one["page_style"] == "Standard"][0]["header"]
+    print("   ", header)
+    check("all three are reported, each with its own words",
+          (header["text"].get("left"), header["text"].get("right"),
+           header["text"].get("first")),
+          ("Чётные", "Нечётные", "Титул"))
+
+    other = bridge.set_header_footer("header", "Первая страница",
+                                     page_style="First Page", doc=paged)
+    check("a page style can be named outright",
+          (other.get("success"), other.get("page_style")),
+          (True, "First Page"))
+    check("a page style nobody has",
+          bridge.set_header_footer("header", "x", page_style="Нетакой",
+                                   doc=paged).get("code"), "NOT_FOUND")
+    check("a part nobody has",
+          bridge.set_header_footer("marginalia", "x", doc=paged).get("code"),
+          "INVALID_PARAMETER")
+
+    # Measured: Writer keeps nothing of a header it is told to switch off —
+    # off and on again leaves it empty on both sides.
+    dropped = bridge.remove_header_footer("header", doc=paged)
+    print("   ", dropped)
+    check("removing one hands back what it was saying",
+          (dropped.get("success"), dropped["was_saying"].get("right")),
+          (True, "Нечётные"))
+    standard = [one for one in bridge.list_headers_footers(doc=paged)
+                ["page_styles"] if one["page_style"] == "Standard"][0]
+    check("the header is off and the footer beside it untouched",
+          (standard["header"]["on"], standard["footer"]["on"]), (False, True))
+    check("and writing it again starts from nothing",
+          bridge.set_header_footer("header", "Заново",
+                                   doc=paged).get("text"), "Заново")
+    check("removing what is not there",
+          bridge.remove_header_footer("header", page_style="Index",
+                                      doc=paged).get("code"), "NOT_FOUND")
+    paged.setModified(False)
+    paged.close(True)
+
     print("\n--- sections, and the protection UNO does not enforce ---")
     regioned = desktop.loadComponentFromURL("private:factory/swriter",
                                             "_blank", 0, ())

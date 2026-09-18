@@ -199,6 +199,9 @@ class FakeViewCursor(FakeRange):
         self.page = page
         self.pages = pages
         self.jumps = []
+        # A real view cursor names the page style it stands on, which is how
+        # a header tool knows which style a caller means.
+        self.PageStyleName = "Standard"
 
     def getPage(self):
         return self.page
@@ -521,6 +524,18 @@ class FakeDoc:
             return FakeNote("footnote")
         if service == "com.sun.star.text.Endnote":
             return FakeNote("endnote")
+        if service.startswith("com.sun.star.text.TextField.") \
+                and service != "com.sun.star.text.TextField.SetExpression" \
+                and service != "com.sun.star.text.TextField.GetReference":
+            # A field shows something even in a fake, since a header written
+            # with {page} in it has to come back with a number in its place.
+            kind = service[len("com.sun.star.text.TextField."):]
+            shows = {"PageNumber": "1", "PageCount": "1",
+                     "DocInfo.Title": "Заголовок",
+                     "DocInfo.Subject": "Тема", "Author": "Автор",
+                     "FileName": "file.odt",
+                     "DateTime": "18.09.2026"}.get(kind, "")
+            return FakeField(shows, command=kind, service=kind)
         if service == "com.sun.star.text.TextField.SetExpression":
             field = FakeSequenceField(self, next(self._sequence_ids))
             return field

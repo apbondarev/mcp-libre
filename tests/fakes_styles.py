@@ -6,6 +6,7 @@ one flat dictionary of properties could not show the difference the whole
 describe_style tool rests on.
 """
 
+from tests.fakes_pagestyles import PAGE_STYLES, FakePageStyle
 from tests.fakes_values import (FakeBorderLine, FakeEnum, FakeLineSpacing,
                                 FakeLocale, FakeProperties)
 
@@ -165,6 +166,25 @@ class FakeStyleFamily:
         return self.styles.setdefault(name, FakeStyle(name, styles=self))
 
 
+class FakePageStyleFamily:
+    """The page styles, which carry the headers and footers."""
+
+    def __init__(self, names):
+        self.names = list(names)
+        self.styles = {}
+
+    def hasByName(self, name):
+        return name in self.names
+
+    def getElementNames(self):
+        return tuple(self.names)
+
+    def getByName(self, name):
+        if name not in self.names:
+            raise RuntimeError(f"no page style {name}")
+        return self.styles.setdefault(name, FakePageStyle(name))
+
+
 class FakeStyleFamilies:
     """doc.StyleFamilies, with the families a Writer document has."""
 
@@ -181,6 +201,7 @@ class FakeStyleFamilies:
                                 "Figure", "Illustration", "Table", "Text",
                                 "Drawing"],
             "CharacterStyles": ["Default Style", "Emphasis", "Source Text"],
+            "PageStyles": list(PAGE_STYLES),
         }
 
     def getElementNames(self):
@@ -193,5 +214,7 @@ class FakeStyleFamilies:
         if name not in self.families:
             raise RuntimeError(f"no style family {name}")
         if name not in self._built:
-            self._built[name] = FakeStyleFamily(self.families[name])
+            self._built[name] = (FakePageStyleFamily(self.families[name])
+                                 if name == "PageStyles"
+                                 else FakeStyleFamily(self.families[name]))
         return self._built[name]
