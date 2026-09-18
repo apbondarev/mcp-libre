@@ -1215,6 +1215,10 @@ class FakeText:
                     moved.append((paragraph, offset))
             cursor.mark, cursor.pos = moved
 
+    # What a selection across a paragraph break reads as: Writer answers
+    # "\r\n" on Windows, measured, and "\n" elsewhere.
+    break_string = "\n"
+
     def slice_text(self, start, end):
         (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
         if start_para == end_para:
@@ -1222,7 +1226,7 @@ class FakeText:
         parts = [self.paragraphs[start_para][start_offset:]]
         parts.extend(self.paragraphs[p] for p in range(start_para + 1, end_para))
         parts.append(self.paragraphs[end_para][:end_offset])
-        return "\n".join(parts)
+        return self.break_string.join(parts)
 
     def getString(self):
         return "\n".join(self.paragraphs)

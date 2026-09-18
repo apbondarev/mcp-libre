@@ -152,7 +152,7 @@ class SurgeryMixin:
                 cursor = body.createTextCursorByRange(paragraph.getEnd())
                 if not cursor.goRight(1, True):
                     continue
-                if cursor.getString() != "\n":
+                if cursor.getString() not in ("\n", "\r\n"):    # Windows says CRLF
                     # Something other than a paragraph break stands there —
                     # a table, most likely — and deleting it is not a join.
                     continue

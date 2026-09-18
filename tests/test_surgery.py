@@ -131,3 +131,16 @@ def test_surgery_respects_a_protected_section(bridge, doc):
                                            doc=doc),
                     bridge.merge_paragraphs({"paragraph": 1}, doc=doc)):
         assert (refused["success"], refused["code"]) == (False, "READ_ONLY")
+
+
+def test_a_join_works_where_the_break_reads_as_crlf(bridge, doc):
+    # Measured on Writer for Windows: a selection holding one paragraph break
+    # answers "\r\n", not "\n", and a join that compared with "\n" took out
+    # nothing while reporting success.
+    doc.getText().break_string = "\r\n"
+
+    merged = bridge.merge_paragraphs({"paragraph": 2, "through": 3}, doc=doc)
+
+    assert merged["success"] is True
+    assert merged["joins"] == 1
+    assert lines(doc)[2] == "Второй абзацТретий абзац"

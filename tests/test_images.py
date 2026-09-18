@@ -208,7 +208,7 @@ def test_a_directory_that_is_not_there_is_refused(bridge, doc):
                                   doc=doc)
 
     assert refused["success"] is False
-    assert "/nowhere/at/all" in refused["error"]
+    assert os.path.abspath("/nowhere/at/all") in refused["error"]
 
 
 def test_the_default_path_is_named_after_the_picture(bridge, doc):

@@ -707,19 +707,23 @@ class FakeDoc:
             raise RuntimeError("the disk said no")
         self.stored_in_place = getattr(self, "stored_in_place", 0) + 1
         self.modified = False
-        with open(self.url[len("file://"):], "wb") as handle:
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
+        with open(url2pathname(urlparse(self.url).path), "wb") as handle:
             handle.write(b"PK\x03\x04 fake odf")
 
     def storeAsURL(self, url, arguments):
         settings = {argument.Name: argument.Value for argument in arguments}
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
-        path = unquote(urlparse(url).path)
+        path = url2pathname(urlparse(url).path)
         self.stored_as = getattr(self, "stored_as", [])
         self.stored_as.append((path, settings.get("FilterName")))
         with open(path, "wb") as handle:
             handle.write(b"PK\x03\x04 fake odf")
-        self.url = f"file://{path}"       # the document lives there now
+        from pathlib import Path
+        self.url = Path(path).as_uri()       # the document lives there now
         self.modified = False
 
     def close(self, deliver_ownership):
@@ -776,13 +780,14 @@ class FakeWriterDoc(FakeDoc):
 
     def storeToURL(self, url, arguments):
         """Write what the filter would write, so a test can find the file."""
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
         settings = {argument.Name: argument.Value for argument in arguments}
         filter_name = settings.get("FilterName", "")
         if filter_name in self.render_failures:
             raise RuntimeError(f"{filter_name} refused")
-        path = unquote(urlparse(url).path)
+        path = url2pathname(urlparse(url).path)
         self.stored = getattr(self, "stored", [])
         self.stored.append((filter_name, path, settings))
         with open(path, "wb") as handle:
@@ -852,10 +857,11 @@ class FakeDrawDoc:
         self.stored = []
 
     def storeToURL(self, url, arguments):
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
         settings = {argument.Name: argument.Value for argument in arguments}
-        path = unquote(urlparse(url).path)
+        path = url2pathname(urlparse(url).path)
         self.stored.append((settings.get("FilterName", ""), path, settings))
         with open(path, "wb") as handle:
             handle.write(FakeGraphicProviderPNG)

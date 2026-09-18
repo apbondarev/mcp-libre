@@ -199,3 +199,78 @@ def test_a_batch_is_taken_back_even_when_the_undo_stack_is_full(server):
     # count did not move: what says the batch wrote is the top of the stack.
     assert result["undone"] is True
     assert server.document.getText().paragraphs[1] == "Operation"
+
+
+def splitting(paragraph, offset):
+    return {"tool": "split_paragraph_live",
+            "parameters": {"address": {"paragraph": paragraph,
+                                       "offset": offset}}}
+
+
+def merging(first, last):
+    return {"tool": "merge_paragraphs_live",
+            "parameters": {"address": {"paragraph": first, "through": last}}}
+
+
+def test_a_step_by_number_follows_its_paragraph_when_an_earlier_step_moves_it(server):
+    # "Response" is paragraph 3 when the plan is made, and 4 once the first
+    # step has split "Operation" in two above it: the plan names what it saw.
+    result = server.batch_live([splitting(1, 3), replacing(3, "Ответ")])
+
+    paragraphs = server.document.getText().paragraphs
+    assert result["success"] is True
+    assert paragraphs == ["Введение", "Ope", "ration", "{ hero }", "Ответ",
+                          "Конец"]
+    assert result["results"][1]["paragraphs_moved"] == {"3": 4}
+    assert "paragraphs_moved" not in result["results"][0]
+
+
+def test_a_batch_says_how_many_paragraphs_it_held(server):
+    result = server.batch_live([replacing(1, "a"), replacing(1, "b"),
+                                replacing(3, "c")])
+
+    assert result["paragraphs_pinned"] == 2         # 1 and 3, each once
+
+
+def test_a_step_whose_paragraph_was_merged_away_is_refused_not_run_on_the_next(server):
+    result = server.batch_live([merging(2, 3), replacing(3, "НЕ ДОЛЖНО"),
+                                replacing(4, "Финал")],
+                               on_error="continue")
+
+    paragraphs = server.document.getText().paragraphs
+    steps = result["results"]
+    assert paragraphs == ["Введение", "Operation", "{ hero }Response", "Финал"]
+    assert steps[1]["success"] is False
+    assert steps[1]["result"]["code"] == "INVALID_ADDRESS"
+    assert "the step was not run" in steps[1]["result"]["error"]
+    assert steps[2]["success"] is True
+    assert steps[2]["paragraphs_moved"] == {"4": 3}
+
+
+def test_a_number_past_the_end_is_left_for_a_step_to_make(server):
+    result = server.batch_live([replacing(9, "нет такого")], on_error="continue")
+
+    assert result["paragraphs_not_pinned"] == [9]
+    assert result["results"][0]["success"] is False
+
+
+def test_the_pins_are_let_go_when_the_batch_is_done(server):
+    server.batch_live([replacing(1, "a"), replacing(3, "b")])
+
+    assert server.uno_bridge._anchor_store() == {} or all(
+        entry["kind"] != "paragraph"
+        for entry in server.uno_bridge._anchor_store().values())
+
+
+def test_steps_act_on_the_document_the_batch_names_not_the_active_one(server):
+    other = writer_doc(["один", "два"], caret=(0, 0))
+    other.Title = "other.odt"
+    server.uno_bridge.desktop = FakeDesktop([server.document, other])
+    server.uno_bridge.get_active_document = lambda: other      # the reader's
+
+    result = server.batch_live([replacing(1, "Запрос")],
+                               document="file:///tmp/batch.odt")
+
+    assert result["success"] is True
+    assert server.document.getText().paragraphs[1] == "Запрос"
+    assert other.getText().paragraphs == ["один", "два"]

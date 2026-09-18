@@ -8,7 +8,9 @@ documents, so nothing here imports from the rest of the bridge.
 
 import uno
 from typing import Any, Dict, List, Optional
-from urllib.parse import quote, unquote
+from pathlib import Path
+from urllib.parse import quote, unquote, urlparse
+from urllib.request import url2pathname
 import os
 import datetime
 import logging
@@ -331,7 +333,9 @@ def _document_path(doc: Any) -> Optional[str]:
     url = _get_document_url(doc)
     if not url.startswith("file://"):
         return None
-    return unquote(url[len("file://"):])
+    # url2pathname gives 'C:\Users\x' for 'file:///C:/Users/x' on Windows and
+    # the plain unquoted path elsewhere.
+    return url2pathname(urlparse(url).path)
 
 
 def _get_property_call(source: Any, method: str, default: Any = None) -> Any:
@@ -345,7 +349,9 @@ def _get_property_call(source: Any, method: str, default: Any = None) -> Any:
 
 def _file_url(path: str) -> str:
     """A file:// URL UNO accepts, with the odd character in a name escaped"""
-    return "file://" + quote(os.path.abspath(path))
+    # as_uri is 'file:///C:/Users/x' on Windows, where 'file://' + a path
+    # would give 'file://C%3A%5C…' — and 'file:///home/x' elsewhere.
+    return Path(os.path.abspath(path)).as_uri()
 
 
 def _anchor_kind(anchor_type: Any) -> Optional[str]:

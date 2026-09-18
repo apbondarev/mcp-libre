@@ -65,11 +65,12 @@ class FakeGraphicProvider:
         self.written = []
 
     def storeGraphic(self, graphic, properties):
-        from urllib.parse import unquote, urlparse
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
 
         settings = {prop.Name: prop.Value for prop in properties}
         target = urlparse(settings.get("URL", ""))
-        path = unquote(target.path)
+        path = url2pathname(target.path)
         with open(path, "wb") as handle:
             handle.write(self.PNG)
         self.written.append((path, settings.get("MimeType")))

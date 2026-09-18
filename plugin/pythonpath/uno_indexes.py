@@ -86,7 +86,7 @@ class IndexesMixin:
                         address: Any = None) -> Dict[str, Any]:
         lines = []
         try:
-            lines = index.getAnchor().getString().split("\n")
+            lines = index.getAnchor().getString().replace("\r\n", "\n").split("\n")
         except Exception as e:
             logger.info(f"Could not read the index {name}: {e}")
         described = {

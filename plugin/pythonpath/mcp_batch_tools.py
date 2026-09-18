@@ -215,6 +215,15 @@ class BatchTools:
                 try:
                     parameters, moved = self._as_numbered_now(
                         doc, name, parameters, pins)
+                    if document and "document" not in parameters \
+                            and "document" in self.tools[name].get(
+                                "parameters", {}).get("properties", {}):
+                        # The batch was told which document it is for, so its
+                        # steps are: left alone, a step acts on the active
+                        # one — which may be another document than the one
+                        # whose paragraphs were pinned and whose undo group
+                        # is open.
+                        parameters = dict(parameters, document=document)
                     outcome = self._run_tool(name, parameters)
                 except AddressError as e:
                     outcome = {"success": False, "code": "INVALID_ADDRESS",

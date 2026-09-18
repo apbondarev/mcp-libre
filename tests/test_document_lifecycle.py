@@ -28,7 +28,7 @@ def bridge():
 @pytest.fixture
 def doc(tmp_path):
     document = writer_doc(["Heading", "Body text"], caret=(1, 0))
-    document.url = f"file://{tmp_path / 'guide.odt'}"
+    document.url = (tmp_path / 'guide.odt').as_uri()
     with open(tmp_path / "guide.odt", "wb") as handle:
         handle.write(b"PK\x03\x04 fake odf")
     return document
@@ -71,7 +71,7 @@ def test_saving_under_a_name_moves_the_document_there(bridge, unsaved, tmp_path)
     assert saved["format"] == "odt"
     assert saved["filter"] == "writer8"
     assert os.path.exists(target)
-    assert unsaved.getURL() == f"file://{target}"     # it lives there now
+    assert unsaved.getURL() == target.as_uri()     # it lives there now
 
 
 def test_the_extension_chooses_the_format(bridge, unsaved, tmp_path):
@@ -218,7 +218,7 @@ def test_an_unknown_answer_about_unsaved_changes_is_refused(bridge, doc):
 
 def test_says_what_is_still_open(bridge, doc, tmp_path):
     other = writer_doc(["Another"], caret=(0, 0))
-    other.url = f"file://{tmp_path / 'other.odt'}"
+    other.url = (tmp_path / 'other.odt').as_uri()
     bridge.desktop = FakeDesktop([doc, other])
 
     closed = bridge.close_document(doc=doc)
@@ -240,7 +240,7 @@ def test_renaming_writes_the_new_name_and_keeps_the_old_file(bridge, doc,
     assert "delete_original=true" in renamed["note"]
     assert os.path.exists(tmp_path / "guide-v2.odt")
     assert os.path.exists(tmp_path / "guide.odt")        # UNO has no rename
-    assert doc.getURL() == f"file://{tmp_path / 'guide-v2.odt'}"
+    assert doc.getURL() == (tmp_path / 'guide-v2.odt').as_uri()
 
 
 def test_the_old_file_goes_when_that_is_asked_for(bridge, doc, tmp_path):
@@ -301,7 +301,7 @@ def test_the_tools_are_registered_and_dispatch(tmp_path):
 
     server = LibreOfficeMCPServer()
     doc = writer_doc(["Heading", "Body"], caret=(1, 0))
-    doc.url = f"file://{tmp_path / 'a.odt'}"
+    doc.url = (tmp_path / 'a.odt').as_uri()
     (tmp_path / "a.odt").write_bytes(b"PK\x03\x04")
     server.uno_bridge.desktop = FakeDesktop([doc])
 
