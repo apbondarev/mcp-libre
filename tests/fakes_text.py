@@ -142,11 +142,51 @@ class FakeTextCursor:
 
 
 class FakeParagraph(FakeRange):
+    """com.sun.star.text.Paragraph — the paragraph itself, not a number.
+
+    Measured on a real Writer, and kept here: a held paragraph object
+    follows its paragraph when paragraphs are inserted above it, stays the
+    same paragraph when its whole text is rewritten through another cursor,
+    goes with the text *after* the cut when the paragraph is split, and
+    **throws** ("SwXParagraph: disposed or invalid") once the paragraph is
+    merged into the one before it or removed. A fake that pinned the number
+    at creation would have let a batch pin its paragraphs and prove nothing.
+    """
+
     def __init__(self, model, index):
+        ids = getattr(model, "paragraph_ids", None)
+        self.pid = ids[index] if ids is not None and index < len(ids) else None
+        self._fixed = index
         super().__init__(model, (index, 0), (index, len(model.paragraphs[index])))
-        self.index = index
         if model.expose_outline_level:
             self.OutlineLevel = model.outline_levels[index]
+
+    @property
+    def index(self):
+        if self.pid is None:
+            return self._fixed
+        try:
+            return self.model.paragraph_ids.index(self.pid)
+        except ValueError:
+            raise RuntimeError("SwXParagraph: disposed or invalid at "
+                               "./sw/source/core/unocore/unoparagraph.cxx")
+
+    @property
+    def start(self):
+        return (self.index, 0)
+
+    @start.setter
+    def start(self, value):
+        pass                      # where it starts follows the paragraph
+
+    @property
+    def end(self):
+        index = self.index
+        return (index, len(self.model.paragraphs[index]))
+
+    @end.setter
+    def end(self, value):
+        pass
 
     # -- page breaks, which belong to the paragraph after them --------
     #
@@ -339,7 +379,12 @@ class FakeText:
         The enumeration keeps its order — a table sits *between* paragraphs,
         and sorting the items would have moved every table to the end.
         """
+        self._move_cursors(lambda paragraph, offset:
+                           (paragraph + 1, offset) if paragraph >= index
+                           else (paragraph, offset))
         self.paragraphs.insert(index, line)
+        self.paragraph_ids.insert(index, self._next_paragraph_id)
+        self._next_paragraph_id += 1
         self.styles.insert(index, style)
         self.outline_levels.insert(index, level)
         self.portions = {(key + 1 if key >= index else key): value
@@ -366,7 +411,8 @@ class FakeText:
         piece = {"text": self.paragraphs[index],
                  "style": self.styles[index],
                  "level": self.outline_levels[index],
-                 "portions": self.portions.get(index)}
+                 "portions": self.portions.get(index),
+                 "id": self.paragraph_ids[index]}
         self._remove_paragraph_at(index)
         return piece
 
@@ -376,10 +422,14 @@ class FakeText:
                                   level=piece["level"])
         if piece["portions"] is not None:
             self.portions[index] = piece["portions"]
+        if piece.get("id") is not None:
+            self.paragraph_ids[index] = piece["id"]
 
     def _remove_paragraph_at(self, index):
         """Take a paragraph out, moving everything below it up one."""
+        self._paragraph_removed(index)
         del self.paragraphs[index]
+        del self.paragraph_ids[index]
         del self.styles[index]
         del self.outline_levels[index]
         self.portions.pop(index, None)
@@ -410,6 +460,18 @@ class FakeText:
             index + 1, tail,
             style="Standard" if heading else self.styles[index],
             level=0 if heading else self.outline_levels[index])
+        # Measured: a held paragraph object goes with the text *after* the
+        # cut — "P4 four" split after "P4" left it on " four" — so the new
+        # paragraph is the one before.
+        ids = self.paragraph_ids
+        ids[index], ids[index + 1] = ids[index + 1], ids[index]
+        # And a cursor at or after the cut goes with that text too — a point
+        # exactly at the cut slides past it, the way a point slides past text
+        # inserted exactly where it stands (measured: offset 3 became 6).
+        self._move_cursors(lambda paragraph, where:
+                           (index + 1, where - offset)
+                           if paragraph == index and where >= offset
+                           else (paragraph, where))
         if declared is not None:
             before, after = self._split_portions(declared, offset)
             self.portions[index] = before
@@ -684,6 +746,7 @@ class FakeText:
             index = content.index                    # a paragraph
             self._paragraph_removed(index)
             del self.paragraphs[index]
+            del self.paragraph_ids[index]
             del self.styles[index]
             del self.outline_levels[index]
             self.portions.pop(index, None)
@@ -747,6 +810,10 @@ class FakeText:
                  outline_levels=None, expose_outline_level=True,
                  default_locale=None, portions=None):
         self.paragraphs = list(paragraphs)
+        # Which paragraph is which, apart from where it stands: a held
+        # paragraph object is this id, and it survives what Writer's does.
+        self.paragraph_ids = list(range(len(self.paragraphs)))
+        self._next_paragraph_id = len(self.paragraphs)
         self.styles = list(styles) if styles else ["Standard"] * len(self.paragraphs)
         self.outline_levels = (list(outline_levels) if outline_levels
                                else [0] * len(self.paragraphs))
@@ -1116,6 +1183,19 @@ class FakeText:
             if low <= cursor.start and cursor.end <= high:
                 cursor.mark = cursor.pos = low
 
+    def _move_cursors(self, rule, keeping=None):
+        """Move every held cursor as Writer does when the text moves.
+
+        Every UNO cursor is kept up to date by the document; a fake whose
+        cursors stood still let an anchor look right after the paragraphs
+        around it had moved, which is the one thing anchors exist for.
+        """
+        for cursor in self.held_cursors:
+            if cursor is keeping:
+                continue
+            cursor.mark = rule(*cursor.mark)
+            cursor.pos = rule(*cursor.pos)
+
     def _paragraph_removed(self, index):
         """Cursors in a removed paragraph empty; those below it move up.
 
@@ -1172,14 +1252,39 @@ class FakeText:
             if kept is not None:
                 self.portions[paragraph] = kept
         (start_para, start_offset), (end_para, end_offset) = sorted([start, end])
+        grown = len(value) - (end_offset - start_offset)
         if start_para == end_para:
             paragraph = self.paragraphs[start_para]
             self.paragraphs[start_para] = (
                 paragraph[:start_offset] + value + paragraph[end_offset:])
+            # What stood after the rewritten stretch moves with it.
+            self._move_cursors(lambda where, offset:
+                               (where, offset + grown)
+                               if where == start_para and offset > end_offset
+                               or (where == start_para and offset == end_offset
+                                   and end_offset > start_offset)
+                               else (where, offset), keeping=writer)
             return
+        merged = end_para - start_para
+        landing = start_offset + len(value)
+
+        def across(where, offset):
+            if where > end_para:
+                return (where - merged, offset)
+            if where == end_para and offset >= end_offset:
+                return (start_para, landing + offset - end_offset)
+            if where > start_para or (where == start_para
+                                      and offset > start_offset):
+                return (start_para, start_offset)
+            return (where, offset)
+
+        self._move_cursors(across, keeping=writer)
         head = self.paragraphs[start_para][:start_offset]
         tail = self.paragraphs[end_para][end_offset:]
         self.paragraphs[start_para:end_para + 1] = [head + value + tail]
+        # Measured: a paragraph merged into the one before it is gone, and
+        # its object throws; the first keeps its identity.
+        del self.paragraph_ids[start_para + 1:end_para + 1]
         del self.styles[start_para + 1:end_para + 1]
         del self.outline_levels[start_para + 1:end_para + 1]
         self.enumeration_items = list(range(len(self.paragraphs)))

@@ -21,6 +21,27 @@ So an anchor is a held cursor plus what it held, and resolving one refuses
 rather than guesses when the ground has moved. Anchors live as long as the
 server process: they are a way through one piece of work, not a mark saved in
 the document — that is what a bookmark is for.
+
+A **paragraph anchor** is the other kind, and it names a paragraph rather
+than a stretch of text — which is what `read_paragraphs`, `read_runs` and
+`batch_live` need, since their unit is the paragraph and its text is what
+gets rewritten. Neither a text cursor nor the paragraph object alone does the
+job, measured:
+
+  * a text cursor over the paragraph **collapses** when the paragraph's text
+    is rewritten through another cursor, so the next step naming it would be
+    refused although the paragraph is exactly where it was;
+  * the paragraph object (`SwXParagraph`) survives that, and throws once the
+    paragraph is merged into the one before it or removed — but a split
+    leaves it with the text **after** the cut, so a paragraph break at its
+    very end moves it to the new, empty paragraph, and after `insert_caption`
+    below a paragraph its object named the caption.
+
+So a paragraph anchor holds both: the object says whether the paragraph is
+still there, and a cursor at its **start** says where it is. The start stays
+with the original text through a split at the end, at the start and in the
+middle alike, and through a rewrite of the whole text it stays inside the
+same paragraph.
 """
 
 from collections import OrderedDict
@@ -33,9 +54,11 @@ from uno_values import (AddressError, CELL_SERVICE, _get_property,
 
 logger = logging.getLogger(__name__)
 
-# Held cursors are cheap, but they are UNO proxies and they are never asked
-# for again once a piece of work is done, so the oldest are let go.
-MAX_ANCHORS = 500
+# Held cursors are cheap — 300 held left an edit exactly as fast, measured —
+# but they are UNO proxies and they are never asked for again once a piece of
+# work is done, so the oldest are let go. The reading tools hand out an anchor
+# per paragraph by default, so the limit is set for a whole long document.
+MAX_ANCHORS = 2000
 
 
 class AnchorsMixin:
@@ -108,8 +131,35 @@ class AnchorsMixin:
             logger.info(f"Anchor {dropped} let go, {MAX_ANCHORS} is the limit")
         return token
 
-    def _anchor_range(self, doc: Any, token: Any) -> Any:
-        """The range an anchor names, or an AddressError saying why not."""
+    def _hold_paragraph_anchor(self, doc: Any, paragraph: Any,
+                               index: Optional[int] = None) -> Optional[str]:
+        """Hold a paragraph — its object and a cursor at its start.
+
+        The object comes free with any walk of the body; the start cursor is
+        the one UNO call this costs.
+        """
+        try:
+            start = paragraph.getText().createTextCursorByRange(
+                paragraph.getStart())
+            held = paragraph.getString()
+        except Exception as e:
+            logger.info(f"Could not hold a paragraph: {e}")
+            return None
+        store = self._anchor_store()
+        token = secrets.token_hex(3)
+        while token in store:
+            token = secrets.token_hex(3)
+        store[token] = {"kind": "paragraph", "paragraph": paragraph,
+                        "cursor": start,
+                        "document": self._document_key(doc),
+                        "held": held, "was_empty": not held, "index": index}
+        while len(store) > MAX_ANCHORS:
+            dropped, _ = store.popitem(last=False)
+            logger.info(f"Anchor {dropped} let go, {MAX_ANCHORS} is the limit")
+        return token
+
+    def _anchor_entry(self, doc: Any, token: Any) -> Dict[str, Any]:
+        """The registry entry for a token, or an AddressError saying why not"""
         if not isinstance(token, str) or not token:
             raise AddressError(f"anchor must be a token from a tool that "
                                f"hands them out, got {token!r}")
@@ -117,12 +167,65 @@ class AnchorsMixin:
         if entry is None:
             raise AddressError(
                 f"no anchor {token!r} — anchors last as long as the server "
-                f"runs, and are made by anchor, or by find_text and "
-                f"read_paragraphs with anchors: true")
+                f"runs and the oldest are let go after {MAX_ANCHORS}; read "
+                f"that part of the document again for a fresh address")
         if entry["document"] != self._document_key(doc):
             raise AddressError(
                 f"anchor {token!r} was made in another document; it cannot be "
                 f"used against this one")
+        return entry
+
+    def paragraph_now(self, doc: Any, token: Any) -> int:
+        """Where a paragraph anchor's paragraph stands now, or AddressError.
+
+        Gone — merged into the one before, or removed — is a refusal, never a
+        guess at the neighbour.
+        """
+        entry = self._anchor_entry(doc, token)
+        if entry.get("kind") != "paragraph":
+            index = self._anchor_paragraph(doc, token)
+            if index is None:
+                raise AddressError(f"anchor {token!r} is in no body paragraph")
+            return index
+        try:
+            entry["paragraph"].getString()
+        except Exception:
+            raise AddressError(
+                f"the paragraph anchor {token!r} named ({entry['held'][:60]!r}) "
+                f"has been merged into the one before it, or removed")
+        point = entry["cursor"]
+        body = doc.getText()
+        remembered = entry.get("index")
+        try:
+            if remembered is not None:
+                paragraph = self._paragraph_at(body, remembered)
+                if paragraph is not None and self._holds_point(
+                        body, paragraph, point):
+                    return remembered
+            index, _ = self._locate_paragraph(body, point.getStart())
+        except Exception as e:
+            raise AddressError(f"could not place anchor {token!r}: {e}")
+        if index is None:
+            raise AddressError(f"anchor {token!r} is in no body paragraph")
+        entry["index"] = index
+        return index
+
+    def _holds_point(self, body: Any, paragraph: Any, point: Any) -> bool:
+        """Whether a position lies inside a paragraph, ends included"""
+        return (body.compareRegionStarts(paragraph.getStart(),
+                                         point.getStart()) >= 0
+                and body.compareRegionEnds(point.getEnd(),
+                                           paragraph.getEnd()) >= 0)
+
+    def _anchor_range(self, doc: Any, token: Any) -> Any:
+        """The range an anchor names, or an AddressError saying why not."""
+        entry = self._anchor_entry(doc, token)
+        if entry.get("kind") == "paragraph":
+            index = self.paragraph_now(doc, token)
+            paragraph = self._paragraph_at(doc.getText(), index)
+            if paragraph is None:
+                raise AddressError(f"anchor {token!r}: no body paragraph {index}")
+            return paragraph.getText().createTextCursorByRange(paragraph)
 
         cursor = entry["cursor"]
         try:
@@ -152,6 +255,12 @@ class AnchorsMixin:
         entry = self._anchor_store().get(token)
         if entry is None or entry["document"] != self._document_key(doc):
             return None
+        if entry.get("kind") == "paragraph":
+            try:
+                return self.paragraph_now(doc, token)
+            except AddressError as e:
+                logger.info(f"Could not place anchor {token}: {e}")
+                return None
         cursor = entry["cursor"]
         try:
             body = doc.getText()
@@ -176,7 +285,21 @@ class AnchorsMixin:
                        entry: Dict[str, Any]) -> Dict[str, Any]:
         """One anchor, as a caller sees it: where it points and whether it does."""
         report: Dict[str, Any] = {"anchor": token,
-                                  "held_when_made": entry["held"]}
+                                  "held_when_made": entry["held"],
+                                  "kind": entry.get("kind", "text")}
+        if entry.get("kind") == "paragraph":
+            try:
+                index = self.paragraph_now(doc, token)
+            except AddressError as e:
+                report["alive"] = False
+                report["why"] = str(e)
+                return report
+            paragraph = self._paragraph_at(doc.getText(), index)
+            payload = _text_payload(paragraph.getString() if paragraph else "")
+            report.update({"alive": True, "text": payload["text"],
+                           "truncated": payload["truncated"],
+                           "address": {"paragraph": index}})
+            return report
         cursor = entry["cursor"]
         try:
             text = cursor.getString()
@@ -302,6 +425,30 @@ class AnchorsMixin:
             store.pop(token, None)
         return {"success": True, "dropped": dropped, "count": len(dropped),
                 "still_held": len(store)}
+
+    def pin_paragraph_numbers(self, doc: Any, numbers: List[int]) -> Dict[int, str]:
+        """{number: paragraph anchor} for the body paragraphs named, one walk.
+
+        What `batch_live` holds before its first step, so that every step
+        finds the paragraph the plan meant however the numbers have moved —
+        by the batch's own steps or by the reader typing meanwhile, measured
+        to happen between the steps of one call. A number past the end of
+        the document is left out: a later step may be meant to reach a
+        paragraph an earlier one makes.
+        """
+        wanted = set(numbers)
+        pins: Dict[int, str] = {}
+        if not wanted:
+            return pins
+        last = max(wanted)
+        for paragraph, index in self._body_paragraphs(doc):
+            if index > last:
+                break
+            if index in wanted:
+                token = self._hold_paragraph_anchor(doc, paragraph, index)
+                if token is not None:
+                    pins[index] = token
+        return pins
 
     def _drop_document_anchors(self, doc: Any) -> int:
         """Let go of a closed document's anchors — their cursors are dead."""

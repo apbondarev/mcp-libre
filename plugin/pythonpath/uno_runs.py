@@ -55,19 +55,30 @@ class RunsMixin:
         # promise not kept — and it cost a caller a call per paragraph to
         # find out.
         block = self._block_of(address, located)
+        held = None
         try:
             if block:
                 runs, read, stopped = self._runs_across(doc, block)
             else:
-                runs = self._runs_in(doc, located, paragraph_cursor)
+                paragraph = self._paragraph_of(doc, located, paragraph_cursor)
+                runs = self._runs_in(doc, located, paragraph_cursor,
+                                     paragraph=paragraph)
                 read, stopped = [index, index] if index is not None else None, \
                     False
+                if paragraph is not None and index is not None \
+                        and located.get("offset", 0) == 0 \
+                        and located.get("length") == len(paragraph.getString()):
+                    # The whole paragraph was read, so the address to write
+                    # it back through is the paragraph itself, held.
+                    held = self._hold_paragraph_anchor(doc, paragraph, index)
         except Exception as e:
             logger.error(f"Could not read the runs: {e}")
             return refusal("FAILED", e)
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
+        if held:
+            result["address"] = {"paragraph": index, "anchor": held}
         if block:
             result["paragraphs"] = read
             result["paragraphs_read"] = (read[1] - read[0] + 1) if read else 0

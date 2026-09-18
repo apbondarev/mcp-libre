@@ -41,13 +41,33 @@ class AddressMixin:
                 f"address must be an object, got {type(address).__name__}")
 
         if "anchor" in address:
-            for other in ("paragraph", "through", "table", "cell", "offset",
-                          "length", "selection"):
+            for other in ("table", "cell", "selection"):
                 if other in address:
                     raise AddressError(
                         f"an anchor already says where: it takes no "
                         f"{other!r} beside it")
-            return self._anchor_range(doc, address["anchor"])
+            token = address["anchor"]
+            entry = self._anchor_entry(doc, token)
+            # The addresses the reading tools hand out carry their anchor
+            # beside the numbers they had when handed out, and passing one
+            # back is how a caller uses anchors without thinking about them:
+            # the anchor decides, the numbers are what it said then. Only a
+            # paragraph anchor takes an offset and a length of its own —
+            # counted within the paragraph — since a text anchor already
+            # covers exactly its stretch.
+            handed_out = "paragraph" in address or "through" in address
+            counts = "offset" in address or "length" in address
+            if counts and not handed_out:
+                if entry.get("kind") != "paragraph":
+                    raise AddressError(
+                        "a text anchor already covers exactly its stretch: it "
+                        "takes no 'offset' or 'length' beside it")
+                within = {"paragraph": self.paragraph_now(doc, token)}
+                for key in ("offset", "length"):
+                    if key in address:
+                        within[key] = address[key]
+                return self._resolve_address(doc, within)
+            return self._anchor_range(doc, token)
 
         if address.get("selection"):
             controller = doc.getCurrentController()
@@ -513,7 +533,8 @@ class AddressMixin:
 
     def _paragraph_index_of(self, doc: Any, address: Any) -> int:
         """The body paragraph an address points at, for scoping a check"""
-        if isinstance(address, dict) and isinstance(address.get("paragraph"), int) \
+        if isinstance(address, dict) and "anchor" not in address \
+                and isinstance(address.get("paragraph"), int) \
                 and not isinstance(address.get("paragraph"), bool):
             if self._paragraph_at(doc.getText(), address["paragraph"]) is None:
                 raise AddressError(f"no body paragraph {address['paragraph']}")

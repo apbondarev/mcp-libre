@@ -41,7 +41,7 @@ class ReadingMixin:
 
     def read_paragraphs(self, start: int = 0,
                         count: int = DEFAULT_PARAGRAPH_COUNT,
-                        anchors: bool = False,
+                        anchors: bool = True,
                         doc: Any = None) -> Dict[str, Any]:
         """
         Read a window of body paragraphs with their indices and styles
@@ -49,8 +49,12 @@ class ReadingMixin:
         count is capped at MAX_PARAGRAPH_COUNT. total_paragraphs always
         reflects the whole document, so the caller can page through it.
 
-        `anchors` hands each paragraph a token that keeps pointing at it after
-        the indices have moved, which is what a plan of several edits needs.
+        Every paragraph comes with an `address` holding a paragraph anchor
+        beside its number, so passing that address back reaches the same
+        paragraph after the numbers have moved — by the caller's own edits or
+        the reader's typing. It is on unless `anchors` is false: a plan made
+        from numbers alone went wrong on a real document the moment the
+        reader pressed Enter.
         """
         try:
             doc, error = self._writer_document(doc, "Reading paragraphs")
@@ -75,7 +79,15 @@ class ReadingMixin:
                     entry["paragraph"] = total
                     entry["style"] = _get_property(element, "ParaStyleName")
                     if anchors:
-                        entry["anchor"] = self._hold_anchor(doc, element)
+                        # The paragraph itself, held with a cursor at its
+                        # start — see uno_anchors for why both.
+                        token = self._hold_paragraph_anchor(doc, element, total)
+                        entry["anchor"] = token
+                        entry["address"] = {"paragraph": total,
+                                            "anchor": token} if token \
+                            else {"paragraph": total}
+                    else:
+                        entry["address"] = {"paragraph": total}
                     paragraphs.append(entry)
                 total += 1
 
@@ -282,7 +294,7 @@ class ReadingMixin:
                   case_sensitive: bool = False,
                   max_results: int = DEFAULT_SEARCH_RESULTS,
                   paragraphs_before: int = 0, paragraphs_after: int = 0,
-                  anchors: bool = False,
+                  anchors: bool = True,
                   doc: Any = None) -> Dict[str, Any]:
         """
         Find text in the active Writer document
@@ -298,10 +310,10 @@ class ReadingMixin:
         with the code block under it, and fetching that separately is a
         second call per hit.
 
-        `anchors` adds a token to every hit that goes on pointing at the match
-        while the document changes around it: a plan made from one search
-        survives its own edits, where the paragraph numbers in the addresses
-        do not.
+        Every hit's `address` carries an anchor that goes on pointing at the
+        match while the document changes around it — a plan made from one
+        search survives its own edits and the reader's typing, where the
+        paragraph numbers alone do not. It is on unless `anchors` is false.
         """
         try:
             doc, error = self._writer_document(doc, "Searching")
@@ -335,7 +347,12 @@ class ReadingMixin:
 
             if anchors:
                 for hit, match in zip(hits, matches):
-                    hit["anchor"] = self._hold_anchor(doc, match)
+                    token = self._hold_anchor(doc, match)
+                    hit["anchor"] = token
+                    if token and isinstance(hit.get("address"), dict):
+                        # Handed out inside the address, so passing the
+                        # address back is all it takes to use it.
+                        hit["address"] = dict(hit["address"], anchor=token)
 
             if paragraphs_before or paragraphs_after:
                 wanted = set()

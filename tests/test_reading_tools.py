@@ -201,6 +201,12 @@ def test_get_outline_tool_is_registered_and_dispatches():
 SEARCH_PARAGRAPHS = ["Alpha beta alpha.", "Gamma delta.", "ALPHA again."]
 
 
+def where(hit):
+    """A hit's position, without the anchor its address also carries"""
+    return {key: value for key, value in hit["address"].items()
+            if key != "anchor"}
+
+
 def test_finds_every_match_with_an_address(bridge):
     doc = writer_doc(SEARCH_PARAGRAPHS, caret=(0, 0))
 
@@ -208,9 +214,12 @@ def test_finds_every_match_with_an_address(bridge):
 
     assert result["success"] is True
     assert result["total_hits"] == 3
-    assert result["hits"][0]["address"] == {"paragraph": 0, "offset": 0, "length": 5}
-    assert result["hits"][1]["address"] == {"paragraph": 0, "offset": 11, "length": 5}
-    assert result["hits"][2]["address"] == {"paragraph": 2, "offset": 0, "length": 5}
+    assert [where(hit) for hit in result["hits"]] == [
+        {"paragraph": 0, "offset": 0, "length": 5},
+        {"paragraph": 0, "offset": 11, "length": 5},
+        {"paragraph": 2, "offset": 0, "length": 5}]
+    # Every address carries the anchor that makes passing it back safe.
+    assert all(hit["address"].get("anchor") for hit in result["hits"])
 
 
 def test_includes_the_matched_text_and_its_paragraph_as_context(bridge):
@@ -230,7 +239,7 @@ def test_honours_case_sensitivity(bridge):
 
     # Only the lowercase occurrence in "Alpha beta alpha.", not "Alpha" or "ALPHA"
     assert result["total_hits"] == 1
-    assert result["hits"][0]["address"] == {"paragraph": 0, "offset": 11, "length": 5}
+    assert where(result["hits"][0]) == {"paragraph": 0, "offset": 11, "length": 5}
 
 
 def test_searches_by_regular_expression(bridge):

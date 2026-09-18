@@ -3,6 +3,8 @@
 from typing import Any, Dict, List, Optional
 import logging
 
+from uno_values import AddressError
+
 logger = logging.getLogger(__name__)
 
 # A batch holds the server for as long as it runs — no step can be timed out
@@ -97,6 +99,82 @@ class BatchTools:
             checked.append((name, parameters))
         return checked
 
+    # Paragraph numbers outside an address: the paragraph a block goes in
+    # front of.
+    NUMBERED_PARAMETERS = {"move_paragraph_live": ("to",),
+                           "copy_paragraphs_live": ("to",)}
+
+    def _numbers_in(self, name: str, parameters: Dict[str, Any]) -> set:
+        """Every paragraph number a step's parameters name"""
+        found = set()
+
+        def walk(value):
+            if isinstance(value, list):
+                for item in value:
+                    walk(item)
+                return
+            if not isinstance(value, dict):
+                return
+            if not any(key in value for key in ("anchor", "table", "cell",
+                                                "selection")):
+                for key in ("paragraph", "through", "heading"):
+                    number = value.get(key)
+                    if isinstance(number, int) and not isinstance(number, bool):
+                        found.add(number)
+            for inner in value.values():
+                walk(inner)
+
+        walk(parameters)
+        for key in self.NUMBERED_PARAMETERS.get(name, ()):
+            number = parameters.get(key)
+            if isinstance(number, int) and not isinstance(number, bool):
+                found.add(number)
+        return found
+
+    def _as_numbered_now(self, doc: Any, name: str,
+                         parameters: Dict[str, Any], pins: Dict[int, str]):
+        """(parameters with today's numbers, {old: new} where one moved).
+
+        Raises AddressError when a pinned paragraph has gone — merged into
+        the one before it or removed — so the step is refused rather than
+        run against its neighbour.
+        """
+        import copy
+
+        moved: Dict[int, int] = {}
+
+        def now(number):
+            if number not in pins:
+                return number
+            current = self.uno_bridge.paragraph_now(doc, pins[number])
+            if current != number:
+                moved[number] = current
+            return current
+
+        def walk(value):
+            if isinstance(value, list):
+                return [walk(item) for item in value]
+            if not isinstance(value, dict):
+                return value
+            pinnable = not any(key in value for key in
+                               ("anchor", "table", "cell", "selection"))
+            out = {}
+            for key, inner in value.items():
+                if pinnable and key in ("paragraph", "through", "heading") \
+                        and isinstance(inner, int) \
+                        and not isinstance(inner, bool):
+                    out[key] = now(inner)
+                else:
+                    out[key] = walk(inner)
+            return out
+
+        translated = walk(copy.deepcopy(parameters))
+        for key in self.NUMBERED_PARAMETERS.get(name, ()):
+            number = translated.get(key)
+            if isinstance(number, int) and not isinstance(number, bool):
+                translated[key] = now(number)
+        return translated, moved
+
     def batch_live(self, steps: Any, on_error: str = "stop",
                    undo_title: Optional[str] = None,
                    document: Optional[str] = None) -> Dict[str, Any]:
@@ -115,6 +193,17 @@ class BatchTools:
         if isinstance(checked, dict):
             return checked
 
+        # Every paragraph the plan names by number is held before the first
+        # step, and each step is given the number that paragraph has *then*.
+        # Measured on a real document: a batch of ten edits by number, while
+        # the reader pressed Enter above, wrote none of its ten paragraphs —
+        # the typing lands between the steps of one call — and a plan whose
+        # own steps insert paragraphs used to have to be written backwards.
+        numbers = set()
+        for name, parameters in checked:
+            numbers |= self._numbers_in(name, parameters)
+        pins = self.uno_bridge.pin_paragraph_numbers(doc, sorted(numbers))
+
         title = undo_title or f"MCP: batch of {len(checked)} steps"
         group = self.uno_bridge.open_undo_group(doc, title)
         results: List[Dict[str, Any]] = []
@@ -122,11 +211,25 @@ class BatchTools:
         stopped_at = None
         try:
             for position, (name, parameters) in enumerate(checked):
-                outcome = self._run_tool(name, parameters)
+                moved = {}
+                try:
+                    parameters, moved = self._as_numbered_now(
+                        doc, name, parameters, pins)
+                    outcome = self._run_tool(name, parameters)
+                except AddressError as e:
+                    outcome = {"success": False, "code": "INVALID_ADDRESS",
+                               "error": f"{e}; the step was not run"}
                 worked = bool(outcome.get("success", True)) \
                     if isinstance(outcome, dict) else True
-                results.append({"step": position, "tool": name,
-                                "success": worked, "result": outcome})
+                entry = {"step": position, "tool": name,
+                         "success": worked, "result": outcome}
+                if moved:
+                    # The paragraph the plan meant had moved, and was
+                    # followed: said, so nobody has to wonder why step 7
+                    # wrote paragraph 140 when it asked for 131.
+                    entry["paragraphs_moved"] = {str(old): new
+                                                 for old, new in moved.items()}
+                results.append(entry)
                 if worked:
                     continue
                 failed += 1
@@ -135,6 +238,8 @@ class BatchTools:
                     break
         finally:
             self.uno_bridge.close_undo_group(group)
+            if pins:
+                self.uno_bridge.drop_anchors(list(pins.values()), doc=doc)
 
         undone = False
         if failed and on_error == "undo":
@@ -145,12 +250,18 @@ class BatchTools:
                     + (", taken back" if undone else ""))
         outcome = {"success": failed == 0,
                    "steps": len(checked),
+                   "paragraphs_pinned": len(pins),
                    "done": done,
                    "failed": failed,
                    "not_run": len(checked) - len(results),
                    "undone": undone,
                    "undo_title": title,
                    "results": results}
+        beyond = sorted(numbers - set(pins))
+        if beyond:
+            # Numbers past the end of the document when the batch began: left
+            # as they were, since an earlier step may be meant to make them.
+            outcome["paragraphs_not_pinned"] = beyond
         if failed:
             first = next(one for one in results if not one["success"])
             # The batch's own code is the failing step's, so a caller branches

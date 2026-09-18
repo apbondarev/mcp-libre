@@ -330,11 +330,14 @@ class FakeUndoManager:
             return None
         return (list(self.text.paragraphs), list(self.text.styles),
                 list(self.text.outline_levels),
-                {key: list(value) for key, value in self.text.portions.items()})
+                {key: list(value) for key, value in self.text.portions.items()},
+                list(getattr(self.text, "paragraph_ids", [])))
 
     def _restore(self, state):
-        paragraphs, styles, levels, portions = state
+        paragraphs, styles, levels, portions, ids = state
         self.text.paragraphs[:] = paragraphs
+        if hasattr(self.text, "paragraph_ids"):
+            self.text.paragraph_ids[:] = ids
         self.text.styles[:] = styles
         self.text.outline_levels[:] = levels
         self.text.portions.clear()

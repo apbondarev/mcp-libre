@@ -69,8 +69,8 @@ class ReadingTools:
                     },
                     "anchors": {
                         "type": "boolean",
-                        "description": "Give every paragraph an anchor as well as an index, so it can still be addressed after edits above it have renumbered the document",
-                        "default": False
+                        "description": "Hand every paragraph out with an `address` holding an anchor beside its index — pass that address back as it is and it reaches the same paragraph after edits above it, yours or the reader's, have renumbered the document. On by default; false saves the cost on a large read that nothing will be written back to",
+                        "default": True
                     },
                     "document": {
                         "type": "string",
@@ -131,8 +131,8 @@ class ReadingTools:
                     },
                     "anchors": {
                         "type": "boolean",
-                        "description": "Give every hit an anchor as well as an address, so a plan made from one search survives its own edits — the addresses renumber, the anchors do not",
-                        "default": False
+                        "description": "Put an anchor in every hit's address, so passing the address back reaches the match after the document has changed around it — a plan made from one search survives its own edits and the reader's typing. On by default",
+                        "default": True
                     },
                     "document": {
                         "type": "string",
@@ -176,7 +176,7 @@ class ReadingTools:
         return self.uno_bridge.get_cursor_info(doc=doc)
 
     def read_paragraphs_live(self, start: int = 0, count: int = 50,
-                             anchors: bool = False,
+                             anchors: bool = True,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """Read a window of paragraphs from a Writer document"""
         doc, error = self._target_document(document)
@@ -195,7 +195,7 @@ class ReadingTools:
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,
                        paragraphs_before: int = 0, paragraphs_after: int = 0,
-                       anchors: bool = False,
+                       anchors: bool = True,
                        document: Optional[str] = None) -> Dict[str, Any]:
         """Find text in a Writer document, with the block around each hit"""
         doc, error = self._target_document(document)

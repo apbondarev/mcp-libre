@@ -193,6 +193,26 @@ read an earlier step's result, so batch a plan already worked out.
 `track_changes` has three states: omitted follows the document's own setting,
 `true` records this edit anyway, `false` refuses to record it.
 
+## When the reader is editing too
+
+The reader can type while you work, and every call you make interleaves
+with their keystrokes — measured on a real document:
+
+- **Address by `anchor`, not by paragraph number.** A batch of ten edits by
+  number, while the reader pressed Enter above, hit none of its ten
+  paragraphs and overwrote others; the same batch by anchor hit all ten.
+  Reading the document just before does not help: the typing lands between
+  the steps of your call.
+- **Do not move, copy or settle changes while the reader is typing.**
+  `move_paragraph`, `copy_paragraphs`, `accept_tracked_changes`,
+  `reject_tracked_changes` and `convert_table_to_text` work through the
+  reader's own cursor, and a keystroke arriving mid-call replaced a line of
+  the document with the letters typed.
+- **Undoing a batch can erase the reader's work.** What they typed while the
+  batch ran is folded into its undo step, so `undo` takes it too, and
+  nothing in the step's title says so. Ask before undoing if they may have
+  typed meanwhile.
+
 ## Recorded changes, and how to work in a document that keeps them
 
 **Look before editing.** `get_document_info` says in two numbers whether the

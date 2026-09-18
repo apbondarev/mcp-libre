@@ -195,7 +195,8 @@ def test_search_hands_back_an_anchor_per_hit(bridge, doc):
 
 
 def test_search_without_anchors_holds_nothing(bridge, doc):
-    bridge.find_text("Operation", doc=doc)
+    # Anchors are on by default now; asking for none still holds none.
+    bridge.find_text("Operation", anchors=False, doc=doc)
 
     assert bridge.list_anchors(doc=doc)["held"] == 0
 
