@@ -743,8 +743,61 @@ class FakeText:
         return None
 
     def record_char_property(self, start, end, name, value):
-        """Remember a character property applied to a span."""
+        """Apply a character property to a span, and remember it.
+
+        Recording it alone was enough while only the tests looked at it, but
+        a hyperlink has to be visible where a real one is — on the portions —
+        or nothing walking the document could find it. So the portions of the
+        span are split and given the property, exactly as Writer splits a
+        run when part of it is made bold.
+        """
         self.char_formatting.append({"span": (start, end), name: value})
+        self.apply_char_property(start, end, name, value)
+
+    def apply_char_property(self, start, end, name, value):
+        """Split the portions of a span and give them a property."""
+        (first, start_offset), (last, end_offset) = sorted([start, end])
+        for paragraph in range(first, last + 1):
+            if paragraph >= len(self.paragraphs):
+                break
+            body = self.paragraphs[paragraph]
+            from_offset = start_offset if paragraph == first else 0
+            to_offset = end_offset if paragraph == last else len(body)
+            if from_offset >= to_offset:
+                continue
+            rebuilt, position = [], 0
+            for text, locale, properties, kind, field in \
+                    self.portions_of(paragraph):
+                if kind in ("TextField", "Footnote"):
+                    carrier = "Footnote" if kind == "Footnote" else "field"
+                    rebuilt.append({"text": text, "kind": kind,
+                                    carrier: field, "locale": locale,
+                                    **properties})
+                    position += len(text)
+                    continue
+                if kind != "Text":
+                    rebuilt.append({"kind": kind, "text": "", "field": field})
+                    continue
+                for index, character in enumerate(text, start=position):
+                    inside = from_offset <= index < to_offset
+                    piece = {"text": character, "locale": locale,
+                             **properties}
+                    if inside:
+                        piece[name] = value
+                    previous = rebuilt[-1] if rebuilt else None
+                    if previous is not None \
+                            and previous.get("kind", "Text") == "Text" \
+                            and {k: v for k, v in previous.items()
+                                 if k != "text"} == {k: v for k, v
+                                                     in piece.items()
+                                                     if k != "text"}:
+                        previous["text"] += character
+                    else:
+                        rebuilt.append(piece)
+                position += len(text)
+            self.portions[paragraph] = [
+                piece for piece in rebuilt
+                if piece.get("kind", "Text") != "Text" or piece.get("text")]
 
     def char_property(self, start, end, name):
         """The last value applied to this span for a property, else None."""

@@ -29,7 +29,7 @@ NOT_TOOLS = {
     "undo", "anchor_text", "instructions", "code", "elapsed_ms",
     "reply_to", "replies", "threads", "with_replies", "author", "change_id",
     "all", "address", "tracked", "document", "comment_id", "resolved",
-    "unresolved", "authors", "reference",
+    "unresolved", "authors", "reference", "link", "allow_protected",
 }
 
 

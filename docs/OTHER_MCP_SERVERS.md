@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -453,12 +453,19 @@ page style at that point: clearing it with None throws, and only an empty string
 works. Page measurements round through twips, so they are reported in millimetres to
 two decimals and never compared for equality.
 
-#### 3.9.9 Hyperlinks as a subject
+#### 3.9.9 Hyperlinks as a subject — **done**
 
-`list_hyperlinks` and `remove_hyperlink`. Setting one already works, through
-`format_range`'s `link` property, and `read_runs` reports the link a run carries —
-so what is missing is the document-wide view: which links a document holds, whether
-any of them are broken, and taking one away without touching its text.
+`list_hyperlinks`, `remove_hyperlink`, and `format_range` taught to set one.
+
+This section said setting a link already worked through `format_range`. It did not:
+`format_range` had every character property except that one, so making a word into a
+link meant rewriting the text with `replace_runs`. It takes `link`, `link_target` and
+`character_style` now. Removing one takes the two character styles with it, since
+clearing the URL alone leaves the text blue and underlined — measured. A link inside
+the document is checked against everything it could point at and reported broken when
+it points nowhere; an http one is left unjudged, because nothing here reaches the
+network. A scoped listing walks only the paragraphs it was asked about: 0.012s for one
+paragraph where the document-wide walk is 1.2s.
 
 #### 3.9.10 Paragraph surgery
 

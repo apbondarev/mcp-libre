@@ -52,6 +52,11 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+`format_range` makes a hyperlink on text that is already there (`link`), and
+`list_hyperlinks` / `remove_hyperlink` are the document-wide view: which
+links there are, which of the ones pointing *inside* the document are broken,
+and taking one away without touching its words.
+
 The page's size, orientation, margins and columns belong to a page style:
 `get_page_layout` and `set_page_layout` read and write them in millimetres,
 and `set_page_break` starts a new page at a paragraph — switching page style

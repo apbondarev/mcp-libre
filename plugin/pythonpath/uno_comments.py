@@ -152,6 +152,22 @@ class CommentsMixin:
             return overlaps, {"paragraph": paragraph, "offset": start,
                               "length": end - start}
 
+        if address.get("through") is not None:
+            # A block of whole paragraphs means all of them, here as
+            # everywhere else an address is read.
+            first = self._paragraph_index_of(
+                doc, {"paragraph": address.get("paragraph")})
+            last = self._paragraph_index_of(
+                doc, {"paragraph": address["through"]})
+            if last < first:
+                first, last = last, first
+
+            def in_block(located):
+                return (located is not None
+                        and located.get("paragraph") is not None
+                        and first <= located["paragraph"] <= last)
+            return in_block, {"paragraphs": [first, last]}
+
         index = self._paragraph_index_of(doc, address)
         return (lambda l: l is not None and l.get("paragraph") == index), \
             {"paragraph": index}

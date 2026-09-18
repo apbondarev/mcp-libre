@@ -113,6 +113,18 @@ class FormattingTools:
                         "type": "string",
                         "description": "Colour behind the characters as #RRGGBB, e.g. \"#FFFFCC\" to highlight a phrase"
                     },
+                    "link": {
+                        "type": "string",
+                        "description": "Make this text a hyperlink to that address — \"https://…\" for the web, or \"#Name\" for a bookmark, a heading or a table in this document. It goes on the text that is there, with the look Writer gives a link; an empty string takes a link away, and remove_hyperlink_live takes several"
+                    },
+                    "link_target": {
+                        "type": "string",
+                        "description": "Where the link opens, e.g. \"_blank\""
+                    },
+                    "character_style": {
+                        "type": "string",
+                        "description": "A character style to wear, e.g. \"Source Text\" for inline code or \"Emphasis\""
+                    },
                     "track_changes": {
                         "type": "boolean",
                         "description": "Omit to follow the document's own setting; true records this change, false refuses to record it"
@@ -307,6 +319,9 @@ class FormattingTools:
                           font_name: Optional[str] = None,
                           color: Any = None,
                           background_color: Any = None,
+                          link: Optional[str] = None,
+                          link_target: Optional[str] = None,
+                          character_style: Optional[str] = None,
                           track_changes: Optional[bool] = None,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Apply character formatting to the text at an address"""
@@ -318,6 +333,8 @@ class FormattingTools:
                                             font_size=font_size,
                                             font_name=font_name, color=color,
                                             background_color=background_color,
+                                            link=link, link_target=link_target,
+                                            character_style=character_style,
                                             track_changes=track_changes, doc=doc)
 
     def format_paragraph_live(self, address: Any, background_color: Any = None,

@@ -2385,6 +2385,97 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- hyperlinks: listing them, and taking one away ---")
+    linked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                          0, ())
+    linked_text = linked.getText()
+    nib = linked_text.createTextCursor()
+    for style, line in (("Heading 1", "Scalar types"),
+                        ("Default Paragraph Style",
+                         "See the GraphQL specification for more."),
+                        ("Default Paragraph Style",
+                         "And the section above, and a dead end.")):
+        nib.ParaStyleName = style
+        linked_text.insertString(nib, line, False)
+        linked_text.insertControlCharacter(nib, PARAGRAPH_BREAK, False)
+
+    # format_range had every character property but this one, so making a
+    # word into a link meant rewriting the text with replace_runs.
+    made = bridge.format_range({"paragraph": 1, "offset": 8, "length": 21},
+                               link="https://spec.graphql.org/",
+                               link_target="_blank", doc=linked)
+    check("format_range makes a link without touching the text",
+          (made.get("success"),
+           bridge.read_paragraphs(start=1, count=1,
+                                  doc=linked)["paragraphs"][0]["text"]),
+          (True, "See the GraphQL specification for more."))
+    bridge.add_bookmark({"paragraph": 0}, "Скаляры", doc=linked)
+    bridge.format_range({"paragraph": 2, "offset": 8, "length": 13},
+                        link="#Скаляры", doc=linked)
+    bridge.format_range({"paragraph": 2, "offset": 27, "length": 8},
+                        link="#Нетакой", doc=linked)
+
+    listed = bridge.list_hyperlinks(doc=linked)
+    print("   ", [(one["text"], one["url"], one["broken"])
+                  for one in listed["links"]])
+    check("every link is listed, with what it points at",
+          (listed["count"], listed["distinct_urls"], listed["internal"]),
+          (3, 3, 2))
+    by_url = {one["url"]: one for one in listed["links"]}
+    # Nothing here reaches the network, so an http link is neither claimed
+    # sound nor claimed broken.
+    check("an outside link is not judged",
+          by_url["https://spec.graphql.org/"]["broken"], None)
+    check("an inside one is, both ways",
+          (by_url["#Скаляры"]["broken"], by_url["#Нетакой"]["broken"]),
+          (False, True))
+    check("the text of a link is the words it sits on",
+          by_url["https://spec.graphql.org/"]["text"], "GraphQL specification")
+
+    bridge.format_range({"paragraph": 1, "offset": 8, "length": 7}, bold=True,
+                        doc=linked)
+    runs = bridge.read_runs({"paragraph": 1}, doc=linked)
+    check("a link split into two runs is still one link",
+          (len([run for run in runs["runs"] if run.get("link")]),
+           bridge.list_hyperlinks({"paragraph": 1}, doc=linked)["count"]),
+          (2, 1))
+
+    removed = bridge.remove_hyperlink({"paragraph": 1}, doc=linked)
+    print("   ", {key: removed.get(key) for key in ("success", "removed")})
+    check("removing one leaves the words",
+          (removed.get("removed"),
+           bridge.read_paragraphs(start=1, count=1,
+                                  doc=linked)["paragraphs"][0]["text"]),
+          (1, "See the GraphQL specification for more."))
+    # Clearing the URL alone leaves the blue underline: it is two character
+    # styles, not a colour.
+    span = bridge._resolve_address(linked, {"paragraph": 1, "offset": 8,
+                                            "length": 21})
+    check("and nothing of the link behind it",
+          (span.HyperLinkURL, span.CharStyleName, span.UnvisitedCharStyleName),
+          ("", "", ""))
+    check("while the bold inside it stayed",
+          [run["bold"] for run in bridge.read_runs({"paragraph": 1},
+                                                   doc=linked)["runs"]
+           if run["text"].startswith("GraphQL")], [True])
+
+    check("removing by url",
+          bridge.remove_hyperlink(url="#Нетакой", doc=linked).get("removed"),
+          1)
+    check("naming none, or two ways at once",
+          (bridge.remove_hyperlink(doc=linked).get("code"),
+           bridge.remove_hyperlink(url="x", all=True,
+                                   doc=linked).get("code")),
+          ("INVALID_PARAMETER", "INVALID_PARAMETER"))
+    check("a url nobody has",
+          bridge.remove_hyperlink(url="https://nowhere/",
+                                  doc=linked).get("code"), "NOT_FOUND")
+    check("and the rest of them at once",
+          (bridge.remove_hyperlink(all=True, doc=linked).get("removed"),
+           bridge.list_hyperlinks(doc=linked)["count"]), (1, 0))
+    linked.setModified(False)
+    linked.close(True)
+
     print("\n--- the page itself: size, margins, breaks, line numbers ---")
     laid = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                         0, ())

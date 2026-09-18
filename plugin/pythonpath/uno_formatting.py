@@ -153,6 +153,9 @@ class FormattingMixin:
                      font_name: Optional[str] = None,
                      color: Any = None,
                      background_color: Any = None,
+                     link: Optional[str] = None,
+                     link_target: Optional[str] = None,
+                     character_style: Optional[str] = None,
                      track_changes: Optional[bool] = None,
                      doc: Any = None) -> Dict[str, Any]:
         """
@@ -184,12 +187,26 @@ class FormattingMixin:
                 asked["background_color"] = _colour_name(_colour(background_color))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
+        # A link is character formatting like any other, and this was the one
+        # tool that could not set one: making a word into a link meant
+        # rewriting the text with replace_runs, which is a heavier thing than
+        # the caller asked for.
+        for key, value in (("link", link), ("link_target", link_target),
+                           ("character_style", character_style)):
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                return refusal("INVALID_PARAMETER",
+                               f"{key} must be a string, got "
+                               f"{type(value).__name__}")
+            asked[key] = value
 
         if not asked:
             return {"success": False, "code": "INVALID_PARAMETER",
                     "error": "Nothing to apply: pass at least one of bold, "
                              "italic, underline, font_size, font_name, "
-                             "color, background_color"}
+                             "color, background_color, link, link_target, "
+                             "character_style"}
 
         def edit():
             target = self._resolve_address(doc, address)
