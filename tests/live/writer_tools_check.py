@@ -2385,6 +2385,88 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- undo and redo, and text into a table and back ---")
+    stepped = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                           0, ())
+    stepped_text = stepped.getText()
+    pen = stepped_text.createTextCursor()
+    for line in ("Имя\tВозраст", "Аня\t31", "Борис\t45", "После таблицы"):
+        stepped_text.insertString(pen, line, False)
+        stepped_text.insertControlCharacter(pen, PARAGRAPH_BREAK, False)
+
+    def wording():
+        return [one["text"] for one in
+                bridge.read_paragraphs(start=0, count=20,
+                                       doc=stepped)["paragraphs"]]
+
+    bridge.replace_range({"paragraph": 3}, "ПОСЛЕ ТАБЛИЦЫ", flatten=True,
+                         doc=stepped)
+    listed = bridge.list_undo_steps(doc=stepped)
+    print("   ", [(one["title"], one["made_here"])
+                  for one in listed["undo"][:4]])
+    # The stack is the document's: the reader's typing is in it too, and the
+    # titles are what tell them apart.
+    check("the history says whose each step is",
+          (listed["undo"][0]["made_here"], listed["ours_on_top"],
+           any(not one["made_here"] for one in listed["undo"])),
+          (True, True, True))
+    check("with nothing to redo yet", listed["can_redo"], False)
+
+    back = bridge.undo(doc=stepped)
+    print("   ", {key: back.get(key) for key in ("undone", "steps", "next")})
+    check("an edit goes back",
+          (back.get("success"), wording()[3]), (True, "После таблицы"))
+    check("and comes again",
+          (bridge.redo(doc=stepped).get("steps"), wording()[3]),
+          (1, "ПОСЛЕ ТАБЛИЦЫ"))
+
+    bridge.undo(doc=stepped)
+    refused = bridge.undo(doc=stepped)
+    print("   ", refused.get("error"))
+    check("and it stops at a step it did not make",
+          (refused.get("success"), refused.get("code")),
+          (False, "INVALID_PARAMETER"))
+    check("unless it is told to",
+          bridge.undo(include_others=True, doc=stepped).get("steps"), 1)
+    bridge.redo(steps=2, include_others=True, doc=stepped)
+    check("a silly number of steps",
+          bridge.undo(steps=0, doc=stepped).get("code"), "INVALID_PARAMETER")
+
+    print("\n   text into a table:")
+    made = bridge.convert_text_to_table({"paragraph": 0, "through": 2},
+                                        doc=stepped)
+    print("   ", {key: made.get(key) for key in
+                  ("success", "table", "rows", "columns", "first_row")})
+    # Measured: convertToTable hands every character between the first cell
+    # and the last to some cell, so the separators come out first or they
+    # turn up at the head of the next one.
+    check("the paragraphs become a table with clean cells",
+          (made.get("success"), made.get("rows"), made.get("columns"),
+           made.get("first_row")), (True, 3, 2, ["Имя", "Возраст"]))
+    grid = bridge._table_by_name(stepped, made["table"])
+    check("and every cell came through",
+          [grid.getCellByName(name).getString()
+           for name in ("A2", "B2", "A3", "B3")], ["Аня", "31", "Борис", "45"])
+    check("the text after it is untouched", wording()[-2], "ПОСЛЕ ТАБЛИЦЫ")
+
+    # The way back is Writer's own command, and its Delimiter must be a
+    # string: with the tab's number it did nothing at all, silently.
+    returned = bridge.convert_table_to_text(made["table"], doc=stepped)
+    print("   ", {key: returned.get(key) for key in
+                  ("success", "gone", "rows", "separator")})
+    check("and the table goes back to text",
+          (returned.get("success"), returned.get("gone"), wording()[:3]),
+          (True, True, ["Имя\tВозраст", "Аня\t31", "Борис\t45"]))
+    check("a table nobody has",
+          bridge.convert_table_to_text("Нетакой", doc=stepped).get("code"),
+          "NOT_FOUND")
+    check("rows that do not match",
+          bridge.convert_text_to_table({"paragraph": 0, "through": 3},
+                                       doc=stepped).get("code"),
+          "INVALID_PARAMETER")
+    stepped.setModified(False)
+    stepped.close(True)
+
     print("\n--- writing styles: making, changing, replacing ---")
     booked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                           0, ())

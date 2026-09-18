@@ -46,6 +46,13 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+Made a mess? `undo` takes the last edit back and `redo` puts it again. The
+history is the document's, so the reader's own typing is in it too:
+`list_undo_steps` says whose each step is, and `undo` stops at the first one
+this server did not make unless `include_others` says otherwise.
+`convert_text_to_table` turns separated lines into a table and
+`convert_table_to_text` turns one back.
+
 `find_by_style` finds every paragraph in a style — the code blocks of a
 document, say — in milliseconds. What is applied *over* the styles is
 `get_direct_formatting`, and `clear_direct_formatting` takes it off without

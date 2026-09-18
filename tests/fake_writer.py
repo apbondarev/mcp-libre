@@ -234,9 +234,12 @@ class FakeViewCursor(FakeRange):
         the view cursor collapsed at the end, so a command sent to the view
         acted on nothing.
         """
-        if getattr(other, "model", None) is not self.model:
-            raise RuntimeError(
-                "End of content node doesn't have the proper start node")
+        other_model = getattr(other, "model", None)
+        if other_model is not None and other_model is not self.model:
+            # The **view** cursor can be sent into a table cell: it is a view,
+            # not a text. The rule that a range belongs to the text that owns
+            # it is enforced where it applies, in FakeText._own.
+            self.model = other_model
         reach = other.end if hasattr(other, "end") else other.start
         if expand:
             self.end = reach
@@ -317,6 +320,7 @@ class FakeUndoManager:
         self.calls = []
         self.text = text
         self.entries = []
+        self.redone = []
         self._depth = 0
         self._snapshot = None
         self._title = ""
@@ -351,16 +355,46 @@ class FakeUndoManager:
         if self._state() != self._snapshot:      # nothing written, no entry
             self.entries.append((self._title, self._snapshot))
             del self.entries[:-self.limit]
+            self.redone.clear()          # a new edit is the end of redo
         self._snapshot = None
 
     def getAllUndoActionTitles(self):
         return tuple(title for title, _ in reversed(self.entries))
 
-    def undo(self):
+    def getAllRedoActionTitles(self):
+        return tuple(title for title, _ in reversed(self.redone))
+
+    def isUndoPossible(self):
+        return bool(self.entries)
+
+    def isRedoPossible(self):
+        return bool(self.redone)
+
+    def getCurrentUndoActionTitle(self):
         if not self.entries:
             raise RuntimeError("nothing to undo")
-        _title, state = self.entries.pop()
+        return self.entries[-1][0]
+
+    def undo(self):
+        """Take the last entry back, and keep it for redo.
+
+        Measured on a real Writer: undoing fills the redo list, and redoing
+        empties it again.
+        """
+        if not self.entries:
+            raise RuntimeError("nothing to undo")
+        title, state = self.entries.pop()
+        now = self._state()
         self._restore(state)
+        self.redone.append((title, now))
+
+    def redo(self):
+        if not self.redone:
+            raise RuntimeError("nothing to redo")
+        title, state = self.redone.pop()
+        now = self._state()
+        self._restore(state)
+        self.entries.append((title, now))
 
 
 class FakeRedline:

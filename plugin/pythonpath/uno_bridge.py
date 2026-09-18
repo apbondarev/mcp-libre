@@ -36,6 +36,8 @@ Where a method lives:
     uno_direct.py      finding by style, and what is applied
                        over one
     uno_stylewriting.py making a style, changing it, replacing it
+    uno_history.py     undo and redo, whose step is whose
+    uno_convert.py     text into a table, and back again
     uno_redlines.py    the changes a document is keeping, and settling them
     uno_tables.py      tables: reading, placing, dressing
     uno_images.py      pictures
@@ -74,6 +76,8 @@ from uno_links import LinksMixin
 from uno_surgery import SurgeryMixin
 from uno_direct import DirectFormattingMixin
 from uno_stylewriting import StyleWritingMixin
+from uno_history import HistoryMixin
+from uno_convert import ConvertMixin
 from uno_redlines import RedlinesMixin
 from uno_tables import TablesMixin
 from uno_images import ImagesMixin
@@ -90,7 +94,7 @@ class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
                 IndexesMixin, NotesMixin, SectionsMixin,
                 HeadersMixin, LayoutMixin, LinksMixin,
                 SurgeryMixin, DirectFormattingMixin,
-                StyleWritingMixin,
+                StyleWritingMixin, HistoryMixin, ConvertMixin,
                 CommentsMixin,
                 RunsMixin,
                 FormattingMixin, EditingMixin, ReadingMixin, ViewMixin,

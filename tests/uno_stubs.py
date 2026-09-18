@@ -91,6 +91,13 @@ class FakeDispatchHelper:
     def executeDispatch(self, frame, command, target, flags, arguments):
         self.sent.append(command)
         document = getattr(frame, "document", None)
+        if command == ".uno:ConvertTableToText":
+            # Writer's own way back, and its Delimiter must be a string —
+            # measured: with the tab's number the dispatch did nothing.
+            delimiter = next((one.Value for one in arguments
+                              if one.Name == "Delimiter"), "\t")
+            self._table_to_text(document, delimiter)
+            return
         if command in (".uno:MoveDown", ".uno:MoveUp"):
             # There is no move on the model either: Writer's own command
             # carries the paragraph with everything on it, which the fake
@@ -113,6 +120,34 @@ class FakeDispatchHelper:
             one for one in redlines.entries
             if not (one.RedlineStart.start == span[0]
                     and one.RedlineEnd.start == span[1])]
+
+    def _table_to_text(self, document, delimiter):
+        """The table the caret is in becomes paragraphs, cells joined."""
+        if document is None or not isinstance(delimiter, str):
+            return
+        model = document.getText()
+        view = document.getCurrentController().getViewCursor()
+        table = next((one for one in getattr(document, "tables", [])
+                      if any(one.getCellByName(name) is not None
+                             for name in one.getCellNames())), None)
+        if table is None:
+            return
+        lines = []
+        rows = {}
+        for name in table.getCellNames():
+            column, number = name[0], int(name[1:])
+            rows.setdefault(number, []).append((column, name))
+        for number in sorted(rows):
+            cells = [table.getCellByName(name).getString()
+                     for _column, name in sorted(rows[number])]
+            lines.append(delimiter.join(cells))
+        at = getattr(table, "after_paragraph", 0)
+        for offset, line in enumerate(lines):
+            model._insert_paragraph_at(at + offset, line)
+        model.enumeration_items = [item for item in model.enumeration_items
+                                   if item is not table]
+        document.tables = [one for one in document.tables if one is not table]
+        view.start = view.end = (at, 0)
 
     def _move(self, document, down):
         """Move the selected paragraphs one step, as .uno:MoveDown does."""

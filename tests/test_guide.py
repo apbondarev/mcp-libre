@@ -30,7 +30,7 @@ NOT_TOOLS = {
     "reply_to", "replies", "threads", "with_replies", "author", "change_id",
     "all", "address", "tracked", "document", "comment_id", "resolved",
     "unresolved", "authors", "reference", "link", "allow_protected",
-    "from_style",
+    "from_style", "include_others",
 }
 
 

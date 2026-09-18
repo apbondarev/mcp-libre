@@ -421,6 +421,49 @@ class FakeText:
         else:
             text_range.start = text_range.end = (index + 1, 0)
 
+    def convertToTable(self, ranges, cell_properties, row_properties,
+                       table_properties):
+        """XTextConvert.convertToTable: rows, cells, and two ranges each.
+
+        The signature was read off a running office by introspection —
+        `[][][]XTextRange`, not properties — and the measured behaviour it
+        carries is that **nothing between the first cell's start and the last
+        cell's end is dropped**: a separator left between two cell ranges
+        turns up at the head of the next cell. The tool takes the separators
+        out first, and so the fake expects cells that already sit end to end.
+        """
+        from tests.fakes_tables import FakeTextTable
+
+        rows = [[(one[0], one[1]) for one in row] for row in ranges]
+        if not rows:
+            return None
+        first = rows[0][0][0].start[0]
+        last = rows[-1][-1][1].start[0]
+        table = FakeTextTable(f"Table{len(getattr(self.owner_document, 'tables', [])) + 1}")
+        table.initialize(len(rows), len(rows[0]))
+        for number, row in enumerate(rows, start=1):
+            for column, (start, end) in enumerate(row):
+                name = f"{chr(ord('A') + column)}{number}"
+                table.getCellByName(name).setString(
+                    self.slice_text(start.start, end.end))
+        # The paragraphs go, and the table stands where they were.
+        for _ in range(last - first + 1):
+            self._remove_paragraph_at(first)
+        items = list(self.enumeration_items)
+        position = 0
+        for index, item in enumerate(items):
+            if isinstance(item, int) and item >= first:
+                position = index
+                break
+            position = index + 1
+        items.insert(position, table)
+        self.enumeration_items = items
+        if self.owner_document is not None:
+            self.owner_document.tables.append(table)
+        table._anchor = FakeRange(self, (min(first, max(0, len(self.paragraphs) - 1)), 0))
+        table.after_paragraph = max(0, first - 1)
+        return table
+
     def insert_index(self, text_range, index):
         """An index lands between paragraphs, before the one it is put at.
 

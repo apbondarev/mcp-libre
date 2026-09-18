@@ -12,7 +12,7 @@ decisions other people made differently, each of which costs us something today.
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
 comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks, **3.9.10** paragraph surgery, **3.9.11** finding by style,
-**3.9.12** writing styles,
+**3.9.12** writing styles, **3.9.13** undo and redo, **3.9.14** text to a table and back,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -504,17 +504,26 @@ so it is refused here instead. "Use our house styles" is `replace_style`, which 
 from 20.5s to 0.25s on 184 paragraphs once the swap stopped addressing each place, and
 which reaches inside table cells, where 22 of those 184 were.
 
-#### 3.9.13 Undo and redo
+#### 3.9.13 Undo and redo — **done**
 
-The server groups every edit into one undo step and `batch_live` groups a plan into
-one, but nothing here can *take a step back*. The reader can, with Ctrl+Z; an
-assistant that has just made a mess cannot, and must undo it by editing again.
+`list_undo_steps`, `undo`, `redo`.
 
-#### 3.9.14 Text to a table, and back
+The undo history belongs to the document, so the reader's typing sits in it beside
+this server's edits — and the titles tell them apart ("MCP: …" against "Typing: …").
+`undo` stops at the first step it did not make unless told otherwise, which is the
+difference between an assistant cleaning up its own mess and taking back what the
+human typed.
 
-`XTextConvert.convertToTable` and `convertToTextFrame` are on the body text —
-measured that far, no further: the shape of their arguments needs a round of its own.
-Table *shape* is otherwise **done** (3.9.15 below).
+#### 3.9.14 Text to a table, and back — **done**
+
+`convert_text_to_table`, `convert_table_to_text`.
+
+The argument shape this section stopped at was read off the office by introspection:
+`[][][]XTextRange` — rows, cells, and the two ranges that start and end each cell.
+With it, nothing between the first cell and the last is dropped, so a separator left
+between two ranges turns up inside a cell; the tool takes the separators out first,
+which is the one way measured to give clean cells. The way back is Writer's own
+command, whose delimiter must be a string — the tab's number did nothing.
 
 #### 3.9.15 Table shape — **done**
 
