@@ -180,7 +180,7 @@ class TextTools:
 
         # Runs: reading and rewriting formatted pieces
         self.tools["read_runs_live"] = {
-            "description": "Read the text at an address as the formatted runs it is made of, each with its own address, font, colour and language. Use this before rewriting text that is not uniformly formatted: replacing such a range in one go flattens it, so a monospace term or a coloured phrase inside it loses its look",
+            "description": "Read the text at an address as the formatted runs it is made of, each with its own address, font, colour and language. Use this before rewriting text that is not uniformly formatted: replacing such a range in one go flattens it, so a monospace term or a coloured phrase inside it loses its look. A block address ({\"paragraph\": N, \"through\": M}) reads every paragraph in it — the runs come back in document order, each saying which paragraph it is in, with `paragraphs` and `paragraphs_read` beside them — up to 50 paragraphs, after which the answer says `truncated`",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -206,7 +206,7 @@ class TextTools:
         }
 
         self.tools["replace_runs_live"] = {
-            "description": "Replace the text at an address with a sequence of runs, each carrying its own formatting. This is how text keeps its appearance through a translation: read the runs, translate each one's text, write them back. Also the cheap way to syntax-highlight, since the whole sequence is one edit and one undo step",
+            "description": "Replace the text at an address with a sequence of runs, each carrying its own formatting. This is how text keeps its appearance through a translation: read the runs, translate each one's text, write them back. Also the cheap way to syntax-highlight, since the whole sequence is one edit and one undo step. Runs are written one paragraph at a time: an address covering several paragraphs is refused, because writing over it would collapse them into one",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -233,8 +233,8 @@ class TextTools:
                                 "underline": {"type": "boolean"},
                                 "font_name": {"type": "string"},
                                 "font_size": {"type": "number"},
-                                "color": {"type": "string", "description": "#RRGGBB"},
-                                "background_color": {"type": "string", "description": "#RRGGBB"},
+                                "color": {"type": "string", "description": "#RRGGBB, or \"automatic\" to take the colour off"},
+                                "background_color": {"type": "string", "description": "#RRGGBB, or \"automatic\" to take it off"},
                                 "language": {"type": "string", "description": "Language tag such as ru-RU"},
                                 "link": {"type": "string", "description": "Hyperlink URL. Carry this over when rewriting text that read_runs_live reported a link on, or the link is destroyed"},
                                 "link_target": {"type": "string", "description": "Where the link opens, e.g. \"_blank\""},

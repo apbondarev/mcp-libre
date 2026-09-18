@@ -296,3 +296,65 @@ def test_reports_italic_from_a_uno_enum_not_from_its_repr(bridge):
 
     assert runs[0]["italic"] is False
     assert runs[1]["italic"] is True
+
+
+# --- a block of paragraphs ------------------------------------------------
+#
+# read_runs over {"paragraph": N, "through": M} used to answer with the first
+# paragraph's runs while reporting that the range spanned all of them, which
+# reads as a promise to have returned the lot. A caller checking the
+# formatting of fifteen paragraphs paid a call per paragraph to find out.
+
+
+@pytest.fixture
+def block():
+    return writer_doc(["Первый абзац", "Второй абзац", "Третий абзац",
+                       "Четвёртый"], caret=(0, 0))
+
+
+def test_a_block_address_reads_every_paragraph_in_it(bridge, block):
+    bridge.format_range({"paragraph": 1, "offset": 7, "length": 5}, bold=True,
+                        doc=block)
+
+    read = bridge.read_runs({"paragraph": 0, "through": 2}, doc=block)
+
+    assert read["success"] is True
+    assert read["paragraphs"] == [0, 2]
+    assert read["paragraphs_read"] == 3
+    assert sorted({run["address"]["paragraph"] for run in read["runs"]}) == \
+        [0, 1, 2]
+    assert "".join(run["text"] for run in read["runs"]
+                   if run["address"]["paragraph"] == 1) == "Второй абзац"
+    assert [run["bold"] for run in read["runs"] if run["text"] == "абзац"
+            and run["address"]["paragraph"] == 1] == [True]
+
+
+def test_one_paragraph_still_answers_as_it_did(bridge, block):
+    read = bridge.read_runs({"paragraph": 1}, doc=block)
+
+    assert read["paragraph"] == 1
+    assert "paragraphs" not in read
+    assert "".join(run["text"] for run in read["runs"]) == "Второй абзац"
+
+
+def test_writing_runs_over_a_block_is_refused(bridge, block):
+    was = list(block.getText().paragraphs)
+
+    # Measured before the guard: three paragraphs went in, one came out, and
+    # the call answered success.
+    refused = bridge.replace_runs({"paragraph": 0, "through": 2},
+                                  [{"text": "ОДНА СТРОКА"}], doc=block)
+
+    assert (refused["success"], refused["code"]) == (False,
+                                                     "WOULD_LOSE_FORMATTING")
+    assert refused["paragraphs"] == [0, 2]
+    assert block.getText().paragraphs == was
+
+
+def test_and_can_still_be_asked_for_knowingly(bridge, block):
+    written = bridge.replace_runs({"paragraph": 0, "through": 2},
+                                  [{"text": "ОДНА СТРОКА"}], flatten=True,
+                                  doc=block)
+
+    assert written["success"] is True
+    assert block.getText().paragraphs[0] == "ОДНА СТРОКА"

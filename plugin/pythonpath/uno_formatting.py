@@ -9,7 +9,7 @@ as DIRECT_VALUE, which is how describe_style tells it from what is inherited.
 import uno
 from typing import Any, Optional, Dict
 import logging
-from uno_values import (AddressError, STYLE_EFFECTIVE, STYLE_EFFECTIVE_PAGE, STYLE_FAMILIES, 
+from uno_values import (AUTOMATIC_COLOUR, AddressError, STYLE_EFFECTIVE, STYLE_EFFECTIVE_PAGE, STYLE_FAMILIES, 
     UNVISITED_LINK_STYLE, VISITED_LINK_STYLE, WRITER_SERVICE, _border_line, 
     _colour, _colour_name, _get_property, _get_property_state, 
     _points_to_uno, _raw, _style_value, _supports, refusal)
@@ -294,7 +294,12 @@ class FormattingMixin:
                 asked["background_color"] = _colour_name(_colour(background_color))
             if border is not None:
                 asked["border"] = bool(border)
-                asked["border_color"] = _colour_name(_colour(border_color))
+                border_asked = _colour(border_color)
+                if border_asked == AUTOMATIC_COLOUR:
+                    raise AddressError(
+                        "a border has no automatic colour; give it one like "
+                        "\"#808080\", or pass border=false to take it away")
+                asked["border_color"] = _colour_name(border_asked)
                 asked["border_width"] = float(border_width)
             if padding is not None:
                 asked["padding"] = float(padding)
@@ -349,6 +354,12 @@ class FormattingMixin:
 
         for paragraph, index in self._body_paragraphs(doc):
             if start <= index <= end:
+                if colour == AUTOMATIC_COLOUR:
+                    # Automatic on a paragraph is no fill at all, not a fill
+                    # of some colour: the paragraph goes back to its style.
+                    paragraph.FillStyle = uno.Enum(
+                        "com.sun.star.drawing.FillStyle", "NONE")
+                    continue
                 paragraph.FillStyle = uno.Enum("com.sun.star.drawing.FillStyle",
                                                "SOLID")
                 paragraph.FillColor = colour

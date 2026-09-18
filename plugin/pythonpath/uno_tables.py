@@ -11,7 +11,7 @@ makes a change stick.
 import uno
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (AddressError, CELL_SERVICE, TABLE_SERVICE, _cell_position, 
+from uno_values import (AUTOMATIC_COLOUR, AddressError, CELL_SERVICE, TABLE_SERVICE, _cell_position, 
     _colour, _colour_name, _column_letters, _column_shares, _get_property, 
     _supports, _table_size, _text_payload, _millimetres, refusal)
 
@@ -888,12 +888,18 @@ class TablesMixin:
                 row = _cell_position(cell_name)[0]
                 in_header = header_rows is not None and row is not None \
                     and row <= header_rows
-                if fill is not None:
+                for colour in (fill,
+                               header_fill if in_header else None):
+                    if colour is None:
+                        continue
+                    if colour == AUTOMATIC_COLOUR:
+                        # A cell shows its colour only with BackTransparent
+                        # off, so taking the colour away is turning it back
+                        # on — there is no "automatic" BackColor.
+                        cell.BackTransparent = True
+                        continue
                     cell.BackTransparent = False
-                    cell.BackColor = fill
-                if header_fill is not None and in_header:
-                    cell.BackTransparent = False
-                    cell.BackColor = header_fill
+                    cell.BackColor = colour
                 if paragraph_style is not None:
                     paragraphs = cell.createEnumeration()
                     while paragraphs.hasMoreElements():

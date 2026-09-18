@@ -46,6 +46,13 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+`read_runs` over `{"paragraph": N, "through": M}` reads **every** paragraph
+in the block, each run saying which paragraph it is in — one call instead of
+one per paragraph. `replace_runs` writes one paragraph at a time and refuses
+a block, since writing over it would collapse the paragraphs into one. A
+colour comes **off** with `"automatic"`, which is what untouched text has;
+`#000000` looks the same and is not the same thing.
+
 To **move** a paragraph, use `move_paragraph` — never read-delete-rewrite,
 which loses its comments and its pictures. `copy_paragraphs` copies a block
 with everything on it, and `split_paragraph` / `merge_paragraphs` cut and

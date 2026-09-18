@@ -87,28 +87,43 @@ VISITED_LINK_STYLE = "Visited Internet Link"
 HUNDREDTHS_MM_PER_POINT = 2540.0 / 72.0
 
 
+# What Writer calls automatic: no colour of one's own, so the text takes the
+# colour of its style and the background stays transparent. Measured: -1 is
+# exactly what untouched text reports for CharColor and CharBackColor alike,
+# and writing it back is how a colour someone else applied is taken off —
+# black is not the same thing, it is a colour.
+AUTOMATIC_COLOUR = -1
+AUTOMATIC_NAMES = ("auto", "automatic", "none", "default")
+
+
 def _colour(value: Any) -> int:
     """
-    A colour as UNO wants it: 0xRRGGBB
+    A colour as UNO wants it: 0xRRGGBB, or -1 for automatic
 
-    Accepts "#F5F5F5", "F5F5F5" or a plain integer, and refuses anything else
-    rather than painting text some arbitrary colour.
+    Accepts "#F5F5F5", "F5F5F5", a plain integer, and "auto"/"automatic" for
+    the colour a style decides. Anything else is refused rather than painting
+    text something arbitrary.
     """
     if isinstance(value, bool):
         raise AddressError(f"colour must be #RRGGBB or a number, got {value!r}")
+    if isinstance(value, str) and value.strip().lower() in AUTOMATIC_NAMES:
+        return AUTOMATIC_COLOUR
     if isinstance(value, int):
-        if 0 <= value <= 0xFFFFFF:
+        if value == AUTOMATIC_COLOUR or 0 <= value <= 0xFFFFFF:
             return value
         raise AddressError(f"colour {value} is outside 0x000000..0xFFFFFF")
     match = COLOUR_TAG.match(value) if isinstance(value, str) else None
     if not match:
         raise AddressError(
-            f"colour must look like \"#RRGGBB\", got {value!r}")
+            f"colour must look like \"#RRGGBB\", or \"automatic\" to take a "
+            f"colour off, got {value!r}")
     return int(match.group(1), 16)
 
 
 def _colour_name(value: int) -> str:
-    """The #RRGGBB spelling of a colour, for reporting back"""
+    """The #RRGGBB spelling of a colour, or "automatic" for no colour at all"""
+    if value == AUTOMATIC_COLOUR:
+        return "automatic"
     return f"#{value:06X}"
 
 
@@ -760,6 +775,12 @@ MAX_TEXT_CHARS = 2000
 # Paragraph window sizes for read_paragraphs
 DEFAULT_PARAGRAPH_COUNT = 50
 MAX_PARAGRAPH_COUNT = 200
+
+# How many paragraphs' runs one read_runs call will read. The runs of a
+# paragraph are several objects each, so a block of a hundred is already a
+# large answer; beyond this the call says it stopped rather than growing
+# without bound.
+MAX_RUN_PARAGRAPHS = 50
 
 # Cap on headings returned by get_outline
 MAX_OUTLINE_ENTRIES = 200

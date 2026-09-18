@@ -64,8 +64,10 @@ class FormattingTools:
                                 "underline": {"type": "boolean"},
                                 "font_size": {"type": "number"},
                                 "font_name": {"type": "string"},
-                                "color": {"type": "string"},
-                                "background_color": {"type": "string"}
+                                "color": {"type": "string",
+                                          "description": "#RRGGBB, or \"automatic\" to take the colour off"},
+                                "background_color": {"type": "string",
+                                                     "description": "#RRGGBB, or \"automatic\" to take it off"}
                             },
                             "required": ["address"]
                         }
@@ -107,11 +109,11 @@ class FormattingTools:
                     "font_name": {"type": "string", "description": "Font family, e.g. \"Liberation Mono\" for a code block"},
                     "color": {
                         "type": "string",
-                        "description": "Text colour as #RRGGBB, e.g. \"#0000CC\". This is what syntax highlighting is made of: find the tokens with find_text_live and colour each one"
+                        "description": "Text colour as #RRGGBB, e.g. \"#0000CC\". This is what syntax highlighting is made of: find the tokens with find_text_live and colour each one — or \"automatic\" to take the colour off, which is what untouched text has (black is a colour, not the absence of one)"
                     },
                     "background_color": {
                         "type": "string",
-                        "description": "Colour behind the characters as #RRGGBB, e.g. \"#FFFFCC\" to highlight a phrase"
+                        "description": "Colour behind the characters as #RRGGBB, e.g. \"#FFFFCC\" to highlight a phrase — or \"automatic\" to take the colour off, which is what untouched text has (black is a colour, not the absence of one)"
                     },
                     "link": {
                         "type": "string",
@@ -191,7 +193,7 @@ class FormattingTools:
                     },
                     "background_color": {
                         "type": "string",
-                        "description": "Fill behind the paragraph as #RRGGBB, e.g. \"#F5F5F5\" for a code block"
+                        "description": "Fill behind the paragraph as #RRGGBB, e.g. \"#F5F5F5\" for a code block — or \"automatic\" to take the fill off altogether, which is not the same as filling it white"
                     },
                     "border": {
                         "type": "boolean",

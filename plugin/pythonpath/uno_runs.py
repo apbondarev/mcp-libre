@@ -8,7 +8,8 @@ pictures, styles — is counted before anything is written.
 
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (REDLINE_KINDS, AddressError, _colour_name,
+from uno_values import (MAX_RUN_PARAGRAPHS, REDLINE_KINDS, AddressError,
+    _colour_name,
     _comment_key, _distinct_changes, 
     _describe_comment, _distinct_comments, _distinct_images, _get_property, 
     _is_italic, _locale, _locale_name, _same_paragraph, _text_payload, refusal)
@@ -48,14 +49,31 @@ class RunsMixin:
                     "error": "That address is outside the body text and in no "
                              "table cell, so its runs cannot be read"}
 
+        # A block address covers whole paragraphs, and the runs of all of them
+        # are what a caller asking for a block means. Reporting only the
+        # first paragraph's while saying the range spans fifteen reads as a
+        # promise not kept — and it cost a caller a call per paragraph to
+        # find out.
+        block = self._block_of(address, located)
         try:
-            runs = self._runs_in(doc, located, paragraph_cursor)
+            if block:
+                runs, read, stopped = self._runs_across(doc, block)
+            else:
+                runs = self._runs_in(doc, located, paragraph_cursor)
+                read, stopped = [index, index] if index is not None else None, \
+                    False
         except Exception as e:
             logger.error(f"Could not read the runs: {e}")
             return refusal("FAILED", e)
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
+        if block:
+            result["paragraphs"] = read
+            result["paragraphs_read"] = (read[1] - read[0] + 1) if read else 0
+            if stopped:
+                result["truncated"] = True
+                result["truncated_at"] = MAX_RUN_PARAGRAPHS
         # Runs belong to one paragraph. When the range reaches further — into
         # a table, say — saying so beats letting a caller believe the runs
         # are the whole of what was asked for.
@@ -66,16 +84,69 @@ class RunsMixin:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
 
+    def _block_of(self, address: Any, located: Dict[str, Any]):
+        """(first, last) when an address names a block of paragraphs, else None
+
+        Only `through` makes a block here: a range with an offset and a
+        length is one paragraph's, and a cell address is the cell's.
+        """
+        if not isinstance(address, dict) or address.get("through") is None:
+            return None
+        if located.get("cell") or located.get("paragraph") is None:
+            return None
+        first = located["paragraph"]
+        last = address["through"]
+        if not isinstance(last, int) or isinstance(last, bool):
+            return None
+        if last < first:
+            first, last = last, first
+        return first, last
+
+    def _runs_across(self, doc: Any, block) -> tuple:
+        """The runs of every paragraph in a block, in one walk of it"""
+        first, last = block
+        runs: List[Dict[str, Any]] = []
+        body = doc.getText()
+        read_last = first
+        stopped = False
+        # One walk for the whole block: reaching a paragraph by index is a
+        # walk of its own, and doing that per paragraph made a block of four
+        # cost four walks of a three-hundred-paragraph document.
+        for paragraph, index in self._body_paragraphs(doc):
+            if index < first:
+                continue
+            if index > last:
+                break
+            if index - first >= MAX_RUN_PARAGRAPHS:
+                stopped = True
+                break
+            located = {"paragraph": index, "offset": 0,
+                       "length": len(paragraph.getString())}
+            cursor = body.createTextCursorByRange(paragraph.getStart())
+            cursor.gotoEndOfParagraph(True)
+            runs.extend(self._runs_in(doc, located, cursor,
+                                      paragraph=paragraph))
+            read_last = index
+        return runs, [first, read_last], stopped
+
     def _runs_in(self, doc: Any, located: Dict[str, Any],
-                 paragraph_cursor: Any) -> List[Dict[str, Any]]:
-        """The runs a located range covers, clipped to it"""
+                 paragraph_cursor: Any,
+                 paragraph: Any = None) -> List[Dict[str, Any]]:
+        """The runs a located range covers, clipped to it
+
+        `paragraph` is taken from a caller that already holds it: finding one
+        by index walks the body, and a block of paragraphs read one walk at a
+        time cost a second and a half where the whole block should cost what
+        one paragraph does.
+        """
         index = located["paragraph"]
         span_start = located["offset"]
         span_end = span_start + max(located["length"], 0)
         if span_end == span_start:
             span_end = span_start + len(paragraph_cursor.getString())
 
-        paragraph = self._paragraph_of(doc, located, paragraph_cursor)
+        if paragraph is None:
+            paragraph = self._paragraph_of(doc, located, paragraph_cursor)
         if paragraph is None:
             return []
         shift = 0
@@ -463,6 +534,22 @@ class RunsMixin:
         protected = self._refuse_protected(doc, target, allow_protected)
         if protected:
             return protected
+
+        # Measured: writing runs over a block of paragraphs collapsed three
+        # paragraphs into one and answered success — the runs are one
+        # paragraph's, and setString over the whole block takes the breaks
+        # with it. Runs are written a paragraph at a time.
+        block = self._block_of(address, located)
+        if block and block[0] != block[1] and not flatten:
+            return refusal(
+                "WOULD_LOSE_FORMATTING",
+                f"that address covers paragraphs {block[0]} to {block[1]}, and "
+                f"writing runs over it would collapse them into one — the "
+                f"paragraph breaks go with the rewrite. Write the runs of one "
+                f"paragraph at a time (read_runs over a block reports each "
+                f"run's own paragraph), or pass flatten=true to join them "
+                f"knowingly",
+                paragraphs=[block[0], block[1]])
 
         if located["paragraph"] is None and not located.get("cell"):
             return {"success": False, "code": "INVALID_ADDRESS",

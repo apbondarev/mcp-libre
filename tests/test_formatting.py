@@ -196,8 +196,28 @@ def test_accepts_a_colour_as_a_number(bridge, doc):
     assert applied(doc, "CharColor") == 0x336699
 
 
+def test_a_colour_can_be_taken_off_again(bridge, doc):
+    """Automatic is what untouched text has: -1, and not black.
+
+    Measured on a live Writer: CharColor and CharBackColor both read -1 on
+    text nobody has coloured, and writing -1 back is how a colour someone
+    else applied comes off. Black is a colour, not the absence of one.
+    """
+    bridge.format_range({"paragraph": 0}, color="#CC0000",
+                        background_color="#FFFF00", doc=doc)
+
+    off = bridge.format_range({"paragraph": 0}, color="automatic",
+                              background_color="auto", doc=doc)
+
+    assert off["success"] is True
+    assert off["applied"] == {"color": "automatic",
+                              "background_color": "automatic"}
+    span = bridge._resolve_address(doc, {"paragraph": 0})
+    assert (span.CharColor, span.CharBackColor) == (-1, -1)
+
+
 def test_rejects_something_that_is_not_a_colour(bridge, doc):
-    for bad in ["blueish", "#12345", "#GGHHII", None.__class__, -1, 0x1000000]:
+    for bad in ["blueish", "#12345", "#GGHHII", None.__class__, -2, 0x1000000]:
         result = bridge.format_range({"paragraph": 0}, color=bad, doc=doc)
         assert result["success"] is False, bad
         assert "colour" in result["error"].lower() or "color" in result["error"].lower()

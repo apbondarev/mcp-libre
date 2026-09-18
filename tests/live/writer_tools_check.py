@@ -2385,6 +2385,76 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- runs over a block, and taking a colour off ---")
+    blocked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                           0, ())
+    blocked_text = blocked.getText()
+    pen = blocked_text.createTextCursor()
+    for line in ("Первый абзац с цветом", "Второй абзац жирный",
+                 "Третий абзац обычный", "Четвёртый"):
+        blocked_text.insertString(pen, line, False)
+        blocked_text.insertControlCharacter(pen, PARAGRAPH_BREAK, False)
+    bridge.format_range({"paragraph": 0, "offset": 7, "length": 5},
+                        color="#CC0000", doc=blocked)
+    bridge.format_range({"paragraph": 1, "offset": 7, "length": 5}, bold=True,
+                        doc=blocked)
+
+    read = bridge.read_runs({"paragraph": 0, "through": 2}, doc=blocked)
+    print("   ", [(run["text"], run["address"]["paragraph"])
+                  for run in read["runs"]])
+    # It used to answer with the first paragraph's runs while reporting that
+    # the range spanned three, which reads as a promise not kept.
+    check("a block address reads every paragraph in it",
+          (sorted({run["address"]["paragraph"] for run in read["runs"]}),
+           read.get("paragraphs"), read.get("paragraphs_read")),
+          ([0, 1, 2], [0, 2], 3))
+    check("and one paragraph answers as it always did",
+          ("paragraphs" in bridge.read_runs({"paragraph": 1}, doc=blocked),
+           bridge.read_runs({"paragraph": 1}, doc=blocked)["paragraph"]),
+          (False, 1))
+
+    was = [one["text"] for one in
+           bridge.read_paragraphs(start=0, count=5, doc=blocked)["paragraphs"]]
+    refused = bridge.replace_runs({"paragraph": 0, "through": 2},
+                                  [{"text": "ОДНА СТРОКА"}], doc=blocked)
+    print("   ", refused.get("error"))
+    # Measured before the guard: three paragraphs in, one out, and success.
+    check("writing runs over a block is refused, not silently collapsing it",
+          (refused.get("success"), refused.get("code"),
+           refused.get("paragraphs")),
+          (False, "WOULD_LOSE_FORMATTING", [0, 2]))
+    check("with the paragraphs still there",
+          [one["text"] for one in bridge.read_paragraphs(
+              start=0, count=5, doc=blocked)["paragraphs"]], was)
+
+    print("\n   taking a colour off:")
+    bridge.format_range({"paragraph": 3}, color="#CC0000",
+                        background_color="#FFFF00", doc=blocked)
+    coloured = bridge._resolve_address(blocked, {"paragraph": 3})
+    check("a colour goes on", (coloured.CharColor, coloured.CharBackColor),
+          (0xCC0000, 0xFFFF00))
+    off = bridge.format_range({"paragraph": 3}, color="automatic",
+                              background_color="auto", doc=blocked)
+    print("   ", off.get("applied"))
+    plain = bridge._resolve_address(blocked, {"paragraph": 3})
+    # Automatic is -1 — exactly what untouched text reports — and not black.
+    check("and comes off as automatic, which is what untouched text has",
+          (plain.CharColor, plain.CharBackColor), (-1, -1))
+    check("which the runs report as no colour at all",
+          [(run.get("color"), run.get("background_color"))
+           for run in bridge.read_runs({"paragraph": 3},
+                                       doc=blocked)["runs"]],
+          [(None, None)])
+    check("a paragraph fill comes off the same way",
+          bridge.format_paragraph({"paragraph": 3}, background_color="auto",
+                                  doc=blocked).get("success"), True)
+    check("but a border has no automatic colour",
+          bridge.format_paragraph({"paragraph": 3}, border=True,
+                                  border_color="automatic",
+                                  doc=blocked).get("code"), "INVALID_ADDRESS")
+    blocked.setModified(False)
+    blocked.close(True)
+
     print("\n--- paragraph surgery: split, join, move, copy ---")
     cut = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                        0, ())
