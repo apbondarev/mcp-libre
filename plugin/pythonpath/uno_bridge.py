@@ -30,6 +30,7 @@ Where a method lives:
     uno_sections.py    named regions, and the protection UNO
                        does not enforce
     uno_headers.py     headers and footers, per page style
+    uno_layout.py      the page itself: size, margins, breaks
     uno_redlines.py    the changes a document is keeping, and settling them
     uno_tables.py      tables: reading, placing, dressing
     uno_images.py      pictures
@@ -63,6 +64,7 @@ from uno_indexes import IndexesMixin
 from uno_notes import NotesMixin
 from uno_sections import SectionsMixin
 from uno_headers import HeadersMixin
+from uno_layout import LayoutMixin
 from uno_redlines import RedlinesMixin
 from uno_tables import TablesMixin
 from uno_images import ImagesMixin
@@ -77,7 +79,7 @@ logger = logging.getLogger(__name__)
 class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
                 RedlinesMixin, FieldsMixin, BookmarksMixin, ReferencesMixin,
                 IndexesMixin, NotesMixin, SectionsMixin,
-                HeadersMixin,
+                HeadersMixin, LayoutMixin,
                 CommentsMixin,
                 RunsMixin,
                 FormattingMixin, EditingMixin, ReadingMixin, ViewMixin,

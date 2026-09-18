@@ -19,6 +19,15 @@ PLUGIN_PYTHONPATH = Path(__file__).resolve().parent.parent / "plugin" / "pythonp
 # Constant groups the bridge imports by name. The values are the real ones,
 # read from a running LibreOffice — a stub that made them up would let a
 # wrong constant pass here and fail in an office.
+# An enum constant in pyuno is an object carrying its name in `.value`, not
+# an integer — `from com.sun.star.style.BreakType import PAGE_BEFORE` hands
+# one out, while importing the group throws "No module named 'com'".
+_ENUMS = {
+    "com.sun.star.style.BreakType": ("NONE", "COLUMN_BEFORE", "COLUMN_AFTER",
+                                     "COLUMN_BOTH", "PAGE_BEFORE",
+                                     "PAGE_AFTER", "PAGE_BOTH"),
+}
+
 _CONSTANTS = {
     "com.sun.star.text.ControlCharacter": {
         "PARAGRAPH_BREAK": 0, "LINE_BREAK": 1, "HARD_HYPHEN": 2,
@@ -136,6 +145,7 @@ def install_uno_stubs():
             "com.sun.star.util.DateTime": ("NanoSeconds", "Seconds", "Minutes",
                                            "Hours", "Day", "Month", "Year",
                                            "IsUTC"),
+            "com.sun.star.awt.Size": ("Width", "Height"),
             "com.sun.star.table.BorderLine2": ("Color", "InnerLineWidth",
                                                "OuterLineWidth", "LineDistance",
                                                "LineStyle", "LineWidth"),
@@ -143,7 +153,10 @@ def install_uno_stubs():
 
         def create_uno_struct(name, *args):
             fields = _STRUCT_FIELDS.get(name, ())
-            struct = types.SimpleNamespace(**{field: "" for field in fields})
+            # A size is a pair of numbers, and a fake that started it at ""
+            # would hand the layout tools a string to arithmetic on.
+            blank = 0 if name == "com.sun.star.awt.Size" else ""
+            struct = types.SimpleNamespace(**{field: blank for field in fields})
             for field, value in zip(fields, args):
                 setattr(struct, field, value)
             return struct
@@ -172,6 +185,15 @@ def install_uno_stubs():
     for package in ("com", "com.sun", "com.sun.star"):
         if package not in sys.modules:
             sys.modules[package] = types.ModuleType(package)
+
+    for module_name, names in _ENUMS.items():
+        if module_name in sys.modules:
+            continue
+        from tests.fakes_values import FakeEnum
+        module = types.ModuleType(module_name)
+        for name in names:
+            setattr(module, name, FakeEnum(name))
+        sys.modules[module_name] = module
 
     for module_name, values in _CONSTANTS.items():
         if module_name in sys.modules:

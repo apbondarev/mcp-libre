@@ -2385,6 +2385,102 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- the page itself: size, margins, breaks, line numbers ---")
+    laid = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                        0, ())
+    laid_text = laid.getText()
+    ruler = laid_text.createTextCursor()
+    for line in ("First", "Second", "Third"):
+        laid_text.insertString(ruler, line, False)
+        laid_text.insertControlCharacter(ruler, PARAGRAPH_BREAK, False)
+
+    layout = bridge.get_page_layout(doc=laid)
+    print("   ", {key: layout.get(key) for key in
+                  ("page_style", "width_mm", "height_mm", "paper",
+                   "orientation", "margins_mm", "columns")})
+    check("A4 upright, in millimetres",
+          (layout.get("paper"), layout.get("orientation"),
+           round(layout["width_mm"])), ("a4", "portrait", 210))
+    # Writer keeps these in 1/100 mm through twips, so A4 answers 210.01.
+    check("and never exactly what was asked for",
+          layout["width_mm"] == 210.0, False)
+    check("with margins and one column",
+          (layout["margins_mm"]["left"], layout["columns"]), (20.0, 1))
+
+    # Measured: IsLandscape on its own leaves the page upright, so the tool
+    # swaps the size to match the word.
+    turned = bridge.set_page_layout(orientation="landscape", doc=laid)
+    check("turning the page turns it",
+          (turned.get("orientation"), turned["width_mm"] > turned["height_mm"],
+           turned.get("paper")), ("landscape", True, "a4"))
+    bridge.set_page_layout(orientation="portrait", doc=laid)
+    check("another paper",
+          bridge.set_page_layout(paper="letter", doc=laid).get("paper"),
+          "letter")
+    margins = bridge.set_page_layout(margins_mm={"left": 30, "right": 15},
+                                     doc=laid)
+    check("margins, to within the rounding",
+          (round(margins["margins_mm"]["left"]),
+           round(margins["margins_mm"]["right"]),
+           round(margins["was"]["margins_mm"]["left"])), (30, 15, 20))
+    check("columns on the page",
+          bridge.set_page_layout(columns=2, doc=laid).get("columns"), 2)
+    check("and back to one",
+          bridge.set_page_layout(columns=1, doc=laid).get("columns"), 1)
+    check("a paper nobody has",
+          bridge.set_page_layout(paper="papyrus", doc=laid).get("code"),
+          "INVALID_PARAMETER")
+    bridge.set_page_layout(paper="a4", margins_mm={"left": 20, "right": 20},
+                           doc=laid)
+
+    print("\n   breaks:")
+    broken = bridge.set_page_break({"paragraph": 1}, doc=laid)
+    print("   ", broken)
+    check("a page break goes on the paragraph after it",
+          (broken.get("success"), broken.get("break_type")),
+          (True, "PAGE_BEFORE"))
+    switched = bridge.set_page_break({"paragraph": 2}, page_style="Landscape",
+                                     page_number=1, doc=laid)
+    check("and can turn the document landscape at that point",
+          (switched.get("page_style"), switched.get("page_number")),
+          ("Landscape", 1))
+    # PageDescName refuses None outright, and "" is what clears it.
+    cleared = bridge.set_page_break({"paragraph": 1}, kind="none", doc=laid)
+    check("taking a break away",
+          (cleared.get("break_type"), cleared.get("page_style")),
+          ("NONE", None))
+    check("a kind nobody has",
+          bridge.set_page_break({"paragraph": 1}, kind="sideways",
+                                doc=laid).get("code"), "INVALID_PARAMETER")
+    check("a page style nobody has",
+          bridge.set_page_break({"paragraph": 1}, page_style="Нетакой",
+                                doc=laid).get("code"), "NOT_FOUND")
+
+    print("\n   line numbers:")
+    numbered = bridge.set_line_numbering(on=True, interval=5,
+                                         restart_each_page=True, doc=laid)
+    print("   ", {key: numbered.get(key) for key in
+                  ("on", "interval", "restart_each_page", "distance_mm")})
+    check("the lines are numbered",
+          (numbered.get("on"), numbered.get("interval"),
+           numbered.get("restart_each_page")), (True, 5, True))
+    check("which the page layout reports",
+          bridge.get_page_layout(doc=laid)["line_numbering"]["on"], True)
+    check("and off again",
+          bridge.set_line_numbering(on=False, doc=laid).get("on"), False)
+
+    described = bridge.describe_style(name="Standard", family="page",
+                                      doc=laid)
+    print("   ", {key: value["value"] for key, value
+                  in described["effective"].items()})
+    check("describe_style asks a page style about the page",
+          (described["effective"]["TextColumns"]["value"],
+           described["effective"]["IsLandscape"]["value"],
+           [key for key in described["effective"] if key.startswith("Char")]),
+          (1, False, []))
+    laid.setModified(False)
+    laid.close(True)
+
     print("\n--- headers and footers, which belong to a page style ---")
     paged = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                          0, ())

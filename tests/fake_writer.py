@@ -44,6 +44,7 @@ from tests.fakes_references import (FakeFieldMaster, FakeReferenceField,
 from tests.fakes_indexes import (FakeDocumentIndex, FakeIndexMark,
                                  SERVICE_OF_KIND)
 from tests.fakes_notes import FakeNote
+from tests.fakes_pagestyles import FakeLineNumbering
 from tests.fakes_sections import FakeColumns, FakeTextSection
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
                                      FakeGraphic, FakeImage,
@@ -470,6 +471,13 @@ class FakeDoc:
         return [fields.getByIndex(index)
                 for index in range(fields.getCount())
                 if hasattr(fields.getByIndex(index), "attachTextFieldMaster")]
+
+    @property
+    def LineNumberingProperties(self):
+        """How the document numbers its lines, if it does."""
+        if not hasattr(self, "_line_numbering"):
+            self._line_numbering = FakeLineNumbering()
+        return self._line_numbering
 
     def getTextSections(self):
         """The named regions of the document, by name."""

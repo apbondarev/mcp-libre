@@ -270,6 +270,17 @@ def _style_value(name: str, value: Any) -> Any:
         return STYLE_CATEGORIES.get(value, value)
     if name.startswith("CharLocale"):
         return _locale_name(value)
+    if name == "Size" and hasattr(value, "Width"):
+        # The page's own size, which stringifies as a struct dump otherwise.
+        return (f"{round(_get_property(value, 'Width', 0) / 100.0, 2)} × "
+                f"{round(_get_property(value, 'Height', 0) / 100.0, 2)} mm")
+    if name == "TextColumns" and hasattr(value, "getColumnCount"):
+        # Measured: a style with no columns of its own counts 0, and so does
+        # one told to use a single column.
+        try:
+            return max(1, value.getColumnCount())
+        except Exception:
+            return None
     if name == "ParaLineSpacing":
         mode = _get_property(value, "Mode", None)
         height = _get_property(value, "Height", None)
@@ -585,6 +596,8 @@ STYLE_FAMILIES = {"paragraph": "ParagraphStyles", "character": "CharacterStyles"
 
 # Writer measures these in 1/100 mm, and font sizes in points.
 STYLE_HUNDREDTHS_MM = {
+    "Width", "Height", "TopMargin", "BottomMargin", "LeftMargin",
+    "RightMargin", "GutterMargin",
     "ParaTopMargin", "ParaBottomMargin", "ParaLeftMargin", "ParaRightMargin",
     "ParaFirstLineIndent", "TopBorderDistance", "BottomBorderDistance",
     "LeftBorderDistance", "RightBorderDistance", "BorderDistance",
@@ -603,6 +616,15 @@ STYLE_CATEGORIES = {0: "text", 1: "chapter", 2: "list", 3: "index",
 
 # What "everything about this style" means in practice, in the order a reader
 # would want it. Anything else is reachable with all_properties=true.
+# What is in force on a **page** style is a different question from what is
+# in force on a paragraph: a page has a size, margins and columns, and none
+# of the character properties mean anything on one.
+STYLE_EFFECTIVE_PAGE = (
+    "Width", "Height", "IsLandscape", "TopMargin", "BottomMargin",
+    "LeftMargin", "RightMargin", "GutterMargin", "TextColumns",
+    "NumberingType", "PageStyleLayout", "FollowStyle", "HeaderIsOn",
+    "FooterIsOn", "BackColor", "FillStyle", "FillColor")
+
 STYLE_EFFECTIVE = (
     "CharFontName", "CharHeight", "CharWeight", "CharPosture",
     "CharUnderline", "CharColor", "CharBackColor", "CharLocale",

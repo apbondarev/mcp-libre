@@ -9,7 +9,7 @@ as DIRECT_VALUE, which is how describe_style tells it from what is inherited.
 import uno
 from typing import Any, Optional, Dict
 import logging
-from uno_values import (AddressError, STYLE_EFFECTIVE, STYLE_FAMILIES, 
+from uno_values import (AddressError, STYLE_EFFECTIVE, STYLE_EFFECTIVE_PAGE, STYLE_FAMILIES, 
     UNVISITED_LINK_STYLE, VISITED_LINK_STYLE, WRITER_SERVICE, _border_line, 
     _colour, _colour_name, _get_property, _get_property_state, 
     _points_to_uno, _raw, _style_value, _supports, refusal)
@@ -522,6 +522,11 @@ class FormattingMixin:
             logger.error(f"Could not list the properties of {name}: {e}")
             return refusal("FAILED", e)
 
+        # A page style is asked a different set of questions from a
+        # paragraph one: its size, its margins and its columns are what is
+        # in force on it, and no character property means anything.
+        in_force = (STYLE_EFFECTIVE_PAGE if family.lower() == "page"
+                    else STYLE_EFFECTIVE)
         set_here, effective, everything = {}, {}, {}
         for prop in sorted(properties):
             state = None
@@ -533,7 +538,7 @@ class FormattingMixin:
             readable = _style_value(prop, value)
             if state == "DIRECT_VALUE":
                 set_here[prop] = {"value": readable, "raw": _raw(value)}
-            if prop in STYLE_EFFECTIVE:
+            if prop in in_force:
                 effective[prop] = {"value": readable,
                                    "from": "this style"
                                    if state == "DIRECT_VALUE" else "inherited"}

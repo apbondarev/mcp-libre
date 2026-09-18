@@ -46,6 +46,12 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+The page's size, orientation, margins and columns belong to a page style:
+`get_page_layout` and `set_page_layout` read and write them in millimetres,
+and `set_page_break` starts a new page at a paragraph — switching page style
+there is how a document turns landscape half way through. Writer rounds these
+lengths, so A4 answers 210.01 mm wide: never compare one for equality.
+
 The running title and the page number live in a **header or footer of a page
 style**, not in the text: translating a document leaves them in the old
 language until `set_header` / `set_footer` are used, where `{page}`,

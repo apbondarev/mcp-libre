@@ -148,6 +148,47 @@ class FakeParagraph(FakeRange):
         if model.expose_outline_level:
             self.OutlineLevel = model.outline_levels[index]
 
+    # -- page breaks, which belong to the paragraph after them --------
+    #
+    # Measured on a live Writer: BreakType is an enum whose .value reads
+    # "PAGE_BEFORE"; PageDescName refuses None with a CannotConvertException
+    # and takes "" instead, reading back as None; and PageNumberOffset
+    # refuses None the same way.
+
+    @property
+    def BreakType(self):
+        from tests.fakes_values import FakeEnum
+        return FakeEnum(self.model.breaks.get(self.index, {})
+                        .get("BreakType", "NONE"))
+
+    @BreakType.setter
+    def BreakType(self, value):
+        name = getattr(value, "value", value)
+        self.model.breaks.setdefault(self.index, {})["BreakType"] = name
+
+    @property
+    def PageDescName(self):
+        return self.model.breaks.get(self.index, {}).get("PageDescName")
+
+    @PageDescName.setter
+    def PageDescName(self, value):
+        if value is None:
+            raise RuntimeError("Type 0 is not supported! at "
+                               "./stoc/source/typeconv/convert.cxx:444")
+        self.model.breaks.setdefault(self.index, {})["PageDescName"] = \
+            value or None
+
+    @property
+    def PageNumberOffset(self):
+        return self.model.breaks.get(self.index, {}).get("PageNumberOffset")
+
+    @PageNumberOffset.setter
+    def PageNumberOffset(self, value):
+        if value is None:
+            raise RuntimeError("Type 0 is not supported! at "
+                               "./stoc/source/typeconv/convert.cxx:364")
+        self.model.breaks.setdefault(self.index, {})["PageNumberOffset"] = value
+
     @property
     def FillStyle(self):
         return self.model.fills.get(self.index, {}).get("FillStyle")
@@ -617,6 +658,7 @@ class FakeText:
         self.expose_outline_level = expose_outline_level
         self.default_locale = default_locale or ("en", "US")
         self.char_formatting = []
+        self.breaks = {}
         self.border_formatting = []
         self.created_comments = []
         self.fills = {}

@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -441,11 +441,17 @@ nothing on a header answers until `HeaderIsOn` is true — the other properties 
 None, not a value — switching a header off **throws its text away**, and asking for
 the left or the right page is what makes the two sides differ at all.
 
-#### 3.9.8 Page layout
+#### 3.9.8 Page layout — **done**
 
-Page size, margins, orientation, columns, page breaks, line numbering — through page
-styles, which `describe_style` can already read for a paragraph style and would need
-to learn for a page one.
+`get_page_layout`, `set_page_layout`, `set_page_break`, `set_line_numbering`, and
+`describe_style` taught to answer a page style's own questions.
+
+Two measurements shaped it. `IsLandscape` turns nothing on its own — the page stayed
+21001 × 29700 with the flag set — so the tool swaps the size to match the word. And a
+page break lives on the paragraph that follows it, where `PageDescName` switches the
+page style at that point: clearing it with None throws, and only an empty string
+works. Page measurements round through twips, so they are reported in millimetres to
+two decimals and never compared for equality.
 
 #### 3.9.9 Hyperlinks as a subject
 
