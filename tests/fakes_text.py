@@ -325,6 +325,26 @@ class FakeText:
             items.append(index)
         self.enumeration_items = items
 
+    def take_paragraph(self, index):
+        """Lift a paragraph out whole — its text, style and portions.
+
+        A move is not a rewrite: what hangs off the paragraph travels with
+        it, which is exactly why Writer's own command is the way to move one.
+        """
+        piece = {"text": self.paragraphs[index],
+                 "style": self.styles[index],
+                 "level": self.outline_levels[index],
+                 "portions": self.portions.get(index)}
+        self._remove_paragraph_at(index)
+        return piece
+
+    def put_paragraph(self, index, piece):
+        """Put a lifted paragraph back in, with everything it carried."""
+        self._insert_paragraph_at(index, piece["text"], style=piece["style"],
+                                  level=piece["level"])
+        if piece["portions"] is not None:
+            self.portions[index] = piece["portions"]
+
     def _remove_paragraph_at(self, index):
         """Take a paragraph out, moving everything below it up one."""
         del self.paragraphs[index]

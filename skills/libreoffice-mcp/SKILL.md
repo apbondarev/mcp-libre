@@ -46,6 +46,11 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+To **move** a paragraph, use `move_paragraph` — never read-delete-rewrite,
+which loses its comments and its pictures. `copy_paragraphs` copies a block
+with everything on it, and `split_paragraph` / `merge_paragraphs` cut and
+join.
+
 `format_range` makes a hyperlink on text that is already there (`link`), and
 `list_hyperlinks` / `remove_hyperlink` are the document-wide view: which
 links there are, which of the ones pointing *inside* the document are broken,

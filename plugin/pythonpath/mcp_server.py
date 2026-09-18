@@ -45,6 +45,7 @@ from mcp_section_tools import SectionTools
 from mcp_header_tools import HeaderTools
 from mcp_layout_tools import LayoutTools
 from mcp_link_tools import LinkTools
+from mcp_surgery_tools import SurgeryTools
 from mcp_review_tools import ReviewTools
 from mcp_table_tools import TableTools
 from mcp_table_shape_tools import TableShapeTools
@@ -55,7 +56,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, ReferenceTools, IndexTools, NoteTools, SectionTools, HeaderTools, LayoutTools, LinkTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
+class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, ReferenceTools, IndexTools, NoteTools, SectionTools, HeaderTools, LayoutTools, LinkTools, SurgeryTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
                            AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
@@ -85,6 +86,7 @@ class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, R
         self._register_header()
         self._register_layout()
         self._register_link()
+        self._register_surgery()
         self._register_review()
         self._register_table()
         self._register_table_shape()

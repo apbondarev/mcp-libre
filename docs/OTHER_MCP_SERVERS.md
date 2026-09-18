@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks, **3.9.10** paragraph surgery,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -467,11 +467,18 @@ it points nowhere; an http one is left unjudged, because nothing here reaches th
 network. A scoped listing walks only the paragraphs it was asked about: 0.012s for one
 paragraph where the document-wide walk is 1.2s.
 
-#### 3.9.10 Paragraph surgery
+#### 3.9.10 Paragraph surgery — **done**
 
-Split a paragraph, merge two, move one up or down, copy a block. Today the way to
-move a paragraph is to read it, delete it and write it again somewhere else, which
-loses its comments and pictures on the way.
+`split_paragraph`, `merge_paragraphs`, `move_paragraph`, `copy_paragraphs`.
+
+The complaint here was exact: moving a paragraph meant reading it, deleting it and
+writing it again, which lost its comments and pictures. There is no move on the model,
+so the tool sends Writer's own `.uno:MoveDown` / `.uno:MoveUp` to the view cursor —
+measured to carry the comment and the formatting, and to reverse exactly — and copying
+goes through the controller's transferable, which keeps the comments and leaves the
+system clipboard alone. Splitting keeps a comment that spans the cut on both halves;
+joining deletes the one newline between two paragraphs, and checks that it really is
+one, so a table between them is not destroyed.
 
 #### 3.9.11 Finding by style, and direct formatting
 

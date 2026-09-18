@@ -91,6 +91,12 @@ class FakeDispatchHelper:
     def executeDispatch(self, frame, command, target, flags, arguments):
         self.sent.append(command)
         document = getattr(frame, "document", None)
+        if command in (".uno:MoveDown", ".uno:MoveUp"):
+            # There is no move on the model either: Writer's own command
+            # carries the paragraph with everything on it, which the fake
+            # models by moving the line and what hangs off it.
+            self._move(document, command.endswith("Down"))
+            return
         redlines = getattr(document, "redlines", None)
         if redlines is None:
             return
@@ -107,6 +113,29 @@ class FakeDispatchHelper:
             one for one in redlines.entries
             if not (one.RedlineStart.start == span[0]
                     and one.RedlineEnd.start == span[1])]
+
+    def _move(self, document, down):
+        """Move the selected paragraphs one step, as .uno:MoveDown does."""
+        if document is None:
+            return
+        model = document.getText()
+        # A move acts on the **view cursor**, which in a real office is the
+        # selection a reader sees; the fake keeps the two apart, so this asks
+        # the view the way Writer does.
+        view = document.getCurrentController().getViewCursor()
+        try:
+            first, last = view.start[0], view.end[0]
+        except Exception:
+            return
+        target = last + 1 if down else first - 1
+        if target < 0 or target >= len(model.paragraphs):
+            return
+        block = list(range(first, last + 1))
+        moving = [model.take_paragraph(index) for index in reversed(block)]
+        moving.reverse()
+        landing = (first + 1) if down else (first - 1)
+        for offset, piece in enumerate(moving):
+            model.put_paragraph(landing + offset, piece)
 
 
 class FakeServiceManager:

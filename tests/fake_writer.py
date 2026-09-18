@@ -215,11 +215,22 @@ class FakeViewCursor(FakeRange):
         return False
 
     def gotoRange(self, other, expand):
+        """Move the view cursor, keeping the mark when asked to expand.
+
+        `expand` is what turns two calls into a selection — go to the start
+        without it, then to the end with it — and a fake that ignored it left
+        the view cursor collapsed at the end, so a command sent to the view
+        acted on nothing.
+        """
         if getattr(other, "model", None) is not self.model:
             raise RuntimeError(
                 "End of content node doesn't have the proper start node")
-        self.start = other.start
-        self.end = other.end if hasattr(other, "end") else other.start
+        reach = other.end if hasattr(other, "end") else other.start
+        if expand:
+            self.end = reach
+        else:
+            self.start = other.start
+            self.end = reach
         # A cursor sent into the text is on the page that text is on; the
         # fake keeps it simple and says the paragraph's index decides.
         self.page = min(self.pages, 1 + self.start[0] // 2)
@@ -253,6 +264,28 @@ class FakeController:
 
     def getSelection(self):
         return self._selection
+
+    # -- copying, through the view rather than the system clipboard -----
+    #
+    # Measured: the controller's own transferable carries a paragraph with
+    # its comments and its formatting, and the reader's clipboard is never
+    # touched.
+
+    def getTransferable(self):
+        model = self._view_cursor.model
+        first, last = self._view_cursor.start[0], self._view_cursor.end[0]
+        return [{"text": model.paragraphs[index],
+                 "style": model.styles[index],
+                 "level": model.outline_levels[index],
+                 "portions": model.portions.get(index)}
+                for index in range(first, last + 1)]
+
+    def insertTransferable(self, carried):
+        model = self._view_cursor.model
+        at = self._view_cursor.start[0]
+        for offset, piece in enumerate(carried):
+            model.put_paragraph(at + offset, dict(piece))
+        return True
 
 
 class FakeUndoManager:

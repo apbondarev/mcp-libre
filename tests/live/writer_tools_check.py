@@ -2385,6 +2385,86 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- paragraph surgery: split, join, move, copy ---")
+    cut = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                       0, ())
+    cut_text = cut.getText()
+    scalpel = cut_text.createTextCursor()
+    for line in ("Заголовок", "Первый абзац", "Второй абзац", "Третий абзац",
+                 "Четвёртый абзац"):
+        cut_text.insertString(scalpel, line, False)
+        cut_text.insertControlCharacter(scalpel, PARAGRAPH_BREAK, False)
+    bridge.add_comment({"paragraph": 1, "offset": 0, "length": 6}, "Заметка",
+                       doc=cut)
+    bridge.format_range({"paragraph": 1, "offset": 7, "length": 5}, bold=True,
+                        doc=cut)
+
+    def shape():
+        return [one["text"] for one in
+                bridge.read_paragraphs(start=0, count=20,
+                                       doc=cut)["paragraphs"]]
+
+    split = bridge.split_paragraph({"paragraph": 2, "offset": 6}, doc=cut)
+    print("   ", {key: split.get(key) for key in ("success", "split", "at")})
+    check("a paragraph comes apart where it was cut",
+          (split.get("success"),
+           [one["text"] for one in split["paragraphs"]]),
+          (True, ["Второй", " абзац"]))
+    merged = bridge.merge_paragraphs({"paragraph": 2}, doc=cut)
+    check("and the two go back together",
+          (merged.get("joins"), merged.get("text")), (1, "Второй абзац"))
+    check("a block joins into one",
+          bridge.merge_paragraphs({"paragraph": 3, "through": 4},
+                                  doc=cut).get("text"),
+          "Третий абзацЧетвёртый абзац")
+    check("the last paragraph has nothing after it to join to",
+          bridge.merge_paragraphs({"paragraph": 20}, doc=cut).get("code"),
+          "INVALID_ADDRESS")
+
+    print("\n   moving, with everything on it:")
+    was = shape()
+    moved = bridge.move_paragraph({"paragraph": 1}, direction="down", doc=cut)
+    print("   ", {key: moved.get(key) for key in ("moved", "to", "text")})
+    # There is no move on the model: .uno:MoveDown is what carries a
+    # paragraph with its comments and its formatting.
+    check("the paragraph moved", (moved.get("success"), shape()[2]),
+          (True, "Первый абзац"))
+    carried = bridge.list_comments(doc=cut)
+    check("its comment came with it",
+          (carried["count"], carried["comments"][0]["address"]["paragraph"]),
+          (1, 2))
+    check("and so did the bold inside it",
+          [run["bold"] for run in bridge.read_runs({"paragraph": 2},
+                                                   doc=cut)["runs"]
+           if run["text"] == "абзац"], [True])
+    bridge.move_paragraph({"paragraph": 2}, direction="up", doc=cut)
+    check("and it goes back", shape(), was)
+    bridge.move_paragraph({"paragraph": 1}, to=3, doc=cut)
+    check("moving to a named place", shape()[2], "Первый абзац")
+    bridge.move_paragraph({"paragraph": 2}, to=1, doc=cut)
+    check("and back again", shape(), was)
+    check("naming none, or two ways, or nowhere to go",
+          (bridge.move_paragraph({"paragraph": 1}, doc=cut).get("code"),
+           bridge.move_paragraph({"paragraph": 1}, direction="up", to=3,
+                                 doc=cut).get("code"),
+           bridge.move_paragraph({"paragraph": 0}, direction="up",
+                                 doc=cut).get("code")),
+          ("INVALID_PARAMETER", "INVALID_PARAMETER", "INVALID_PARAMETER"))
+
+    print("\n   copying, through the view rather than the clipboard:")
+    copied = bridge.copy_paragraphs({"paragraph": 1}, to=4, doc=cut)
+    print("   ", {key: copied.get(key) for key in
+                  ("success", "copied", "to", "paragraphs")})
+    check("the copy is there and so is the original",
+          (shape()[4], shape()[1]), ("Первый абзац", "Первый абзац"))
+    check("and the comment was copied with it",
+          bridge.list_comments(doc=cut)["count"], 2)
+    check("copying a block into itself",
+          bridge.copy_paragraphs({"paragraph": 1}, to=1, doc=cut).get("code"),
+          "INVALID_PARAMETER")
+    cut.setModified(False)
+    cut.close(True)
+
     print("\n--- hyperlinks: listing them, and taking one away ---")
     linked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                           0, ())
