@@ -163,7 +163,17 @@ def install_uno_stubs():
     if "uno" not in sys.modules:
         uno = types.ModuleType("uno")
         uno.getComponentContext = lambda: FakeComponentContext()
-        uno.Enum = lambda type_name, value: f"{type_name}.{value}"
+        def make_enum(type_name, value):
+            """A pyuno enum: it carries its name in `.value`, not as a string.
+
+            The stub used to hand back "com.sun.star.awt.FontSlant.ITALIC",
+            which no code reading `.value` could use — and reading `.value`
+            is exactly what the bridge has to do.
+            """
+            from tests.fakes_values import FakeEnum
+            return FakeEnum(value)
+
+        uno.Enum = make_enum
         # uno.Any wraps a value in a typed Any for a UNO call; a fake only
         # needs the value to arrive, so it passes straight through.
         uno.Any = lambda type_name, value: value

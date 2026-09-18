@@ -83,9 +83,17 @@ class FakeStyle:
     # --- inheritance ------------------------------------------------------
     @property
     def ParentStyle(self):
+        """What it inherits from — written, if it has been written."""
+        own = object.__getattribute__(self, "_own")
+        if "ParentStyle" in own:
+            return own["ParentStyle"]
         return FAKE_STYLE_PARENTS.get(self.name,
                                       "" if self.name == "Standard"
                                       else "Standard")
+
+    @ParentStyle.setter
+    def ParentStyle(self, value):
+        object.__getattribute__(self, "_own")["ParentStyle"] = value
 
     def _chain(self):
         chain, name = [], self.ParentStyle
@@ -142,8 +150,41 @@ class FakeStyle:
             raise RuntimeError(f"no property {prop}")
         return FakeEnum("DEFAULT_VALUE")
 
+    def rename(self, name, family=None):
+        """Used by the family when a style is inserted or renamed."""
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "Name", name)
+        if family is not None:
+            object.__setattr__(self, "_styles", family)
+
+    def setName(self, name):
+        """Measured on a live Writer: the text wearing it follows at once."""
+        family = object.__getattribute__(self, "_styles")
+        was = self.name
+        if family is not None:
+            if name in family.names:
+                raise RuntimeError(f"the style {name} is already there")
+            family.names = [name if one == was else one
+                            for one in family.names]
+            family.styles.pop(was, None)
+            family.styles[name] = self
+            model = getattr(family, "model", None)
+            if model is not None:
+                model.styles = [name if one == was else one
+                                for one in model.styles]
+        self.rename(name)
+
     def isUserDefined(self):
-        return self.name not in FAKE_STYLE_PARENTS
+        return (self.name not in FAKE_STYLE_PARENTS
+                and self.name not in FAKE_STYLE_DEFAULTS
+                and self.name not in ("Standard", "Text body", "Heading",
+                                      "Heading 1", "Heading 2", "Heading 3",
+                                      "Preformatted Text", "Quotations",
+                                      "Comment", "List", "Caption",
+                                      "Table Contents", "Table Heading",
+                                      "Figure", "Illustration", "Table",
+                                      "Text", "Drawing", "Default Style",
+                                      "Emphasis", "Source Text"))
 
     def isInUse(self):
         return True
@@ -164,6 +205,27 @@ class FakeStyleFamily:
         if name not in self.names:
             raise RuntimeError(f"no style {name}")
         return self.styles.setdefault(name, FakeStyle(name, styles=self))
+
+    def insertByName(self, name, style):
+        """A style made here is the document's own, not the office's."""
+        if name in self.names:
+            raise RuntimeError(f"the style {name} is already there")
+        style.rename(name, self)
+        self.names.append(name)
+        self.styles[name] = style
+
+    def removeByName(self, name):
+        """Measured: removing a built-in style is accepted and does nothing.
+
+        No exception, no removal — which is why the tools refuse one rather
+        than letting a caller believe it went.
+        """
+        style = self.styles.get(name)
+        if style is not None and not style.isUserDefined():
+            return
+        if name in self.names:
+            self.names.remove(name)
+        self.styles.pop(name, None)
 
 
 class FakePageStyleFamily:

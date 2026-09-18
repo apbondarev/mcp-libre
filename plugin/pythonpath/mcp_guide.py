@@ -52,6 +52,14 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+`find_by_style` finds every paragraph in a style — the code blocks of a
+document, say — in milliseconds. What is applied *over* the styles is
+`get_direct_formatting`, and `clear_direct_formatting` takes it off without
+touching links or character styles. Styles themselves are written with
+`create_style` (`from_style` clones one), `update_style`, `rename_style`,
+`delete_style` and `replace_style`, which is what "use our house styles"
+means; a built-in style can be changed but not renamed or removed.
+
 `read_runs` over `{"paragraph": N, "through": M}` reads **every** paragraph
 in the block, each run saying which paragraph it is in — one call instead of
 one per paragraph. `replace_runs` writes one paragraph at a time and refuses

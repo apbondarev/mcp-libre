@@ -155,6 +155,22 @@ class FakeParagraph(FakeRange):
     # and takes "" instead, reading back as None; and PageNumberOffset
     # refuses None the same way.
 
+    def getPropertyState(self, name):
+        from tests.fakes_values import FakeEnum
+        if name.startswith("Char"):
+            # Character formatting sits on the paragraph when it was applied
+            # to the whole of it — which is the case a clean-up must not miss.
+            return FakeEnum(self.model.paragraph_state(self.index, name))
+        return FakeEnum(self.model.paragraph_state(self.index, name))
+
+    def getPropertyStates(self, names):
+        from tests.fakes_values import FakeEnum
+        return tuple(FakeEnum(self.getPropertyState(name).value)
+                     for name in names)
+
+    def setPropertyToDefault(self, name):
+        self.model.clear_paragraph_property(self.index, name)
+
     @property
     def BreakType(self):
         from tests.fakes_values import FakeEnum
@@ -252,6 +268,22 @@ class FakeTextPortion:
     def getEnd(self):
         return FakeRange(self.model,
                          (self.paragraph, self.offset + len(self._text)))
+
+
+def _property_states(self, names):
+    """The states of several properties in one call, as UNO answers them."""
+    from tests.fakes_values import FakeEnum
+    return tuple(FakeEnum(self.getPropertyState(name).value)
+                 for name in names)
+
+
+def _range_property_state(self, name):
+    from tests.fakes_values import FakeEnum
+    return FakeEnum(self.model.char_state(self.start, self.end, name))
+
+
+def _range_property_to_default(self, name):
+    self.model.clear_char_property(self.start, self.end, name)
 
 
 def _char_property(name):
@@ -679,6 +711,12 @@ class FakeText:
         self.default_locale = default_locale or ("en", "US")
         self.char_formatting = []
         self.breaks = {}
+        # Character formatting applied to a **whole** paragraph lands on the
+        # paragraph in Writer, not on the text: measured, a paragraph made
+        # bold end to end answers DEFAULT_VALUE for CharWeight on its range
+        # while the value reads 150. Kept here so a clean-up that ignored the
+        # paragraph would fail in the tests as it failed in the office.
+        self.paragraph_direct = {}
         self.border_formatting = []
         self.created_comments = []
         self.fills = {}
@@ -753,6 +791,71 @@ class FakeText:
             piece for piece in rebuilt
             if piece.get("kind", "Text") != "Text" or piece.get("text")]
 
+    def char_state(self, start, end, name):
+        """DIRECT_VALUE, AMBIGUOUS_VALUE or DEFAULT_VALUE for a span.
+
+        A property the paragraph carries reads as DEFAULT on the text, which
+        is what a real Writer answers when the formatting was applied to the
+        whole paragraph.
+        """
+        (first, from_offset), (last, to_offset) = sorted([start, end])
+        if name in self.paragraph_direct.get(first, {}) and first == last:
+            return "DEFAULT_VALUE"
+        carried, total = 0, 0
+        for paragraph in range(first, last + 1):
+            if paragraph >= len(self.paragraphs):
+                break
+            body = self.paragraphs[paragraph]
+            starts = from_offset if paragraph == first else 0
+            ends = to_offset if paragraph == last else len(body)
+            offset = 0
+            for text, _locale, properties, kind, _field in \
+                    self.portions_of(paragraph):
+                if kind == "Text" and text:
+                    covered = max(0, min(offset + len(text), ends)
+                                  - max(offset, starts))
+                    if covered:
+                        total += covered
+                        if name in properties:
+                            carried += covered
+                offset += len(text)
+        if not total or not carried:
+            return "DEFAULT_VALUE"
+        return "DIRECT_VALUE" if carried == total else "AMBIGUOUS_VALUE"
+
+    def clear_char_property(self, start, end, name):
+        """Take a character property off a span, as setPropertyToDefault does"""
+        (first, _), (last, _) = sorted([start, end])
+        if first == last:
+            self.paragraph_direct.get(first, {}).pop(name, None)
+        for paragraph in range(first, last + 1):
+            declared = self.portions.get(paragraph)
+            if not declared:
+                continue
+            self.portions[paragraph] = [
+                {key: value for key, value in dict(piece).items()
+                 if key != name} if isinstance(piece, dict) else piece
+                for piece in declared]
+
+    def paragraph_state(self, index, name):
+        if name in ("FillStyle", "FillColor"):
+            return ("DIRECT_VALUE" if name in self.fills.get(index, {})
+                    else "DEFAULT_VALUE")
+        if name in ("BreakType", "PageDescName", "PageNumberOffset"):
+            return ("DIRECT_VALUE" if name in self.breaks.get(index, {})
+                    else "DEFAULT_VALUE")
+        return ("DIRECT_VALUE" if name in self.paragraph_direct.get(index, {})
+                else "DEFAULT_VALUE")
+
+    def clear_paragraph_property(self, index, name):
+        self.fills.get(index, {}).pop(name, None)
+        self.breaks.get(index, {}).pop(name, None)
+        if self.paragraph_direct.get(index, {}).pop(name, None) is not None:
+            # It was applied to the whole paragraph, so it is on the text too.
+            self.clear_char_property((index, 0),
+                                     (index, len(self.paragraphs[index])),
+                                     name)
+
     def record_border_property(self, start, end, name, value):
         self.border_formatting.append({"span": (start, end), name: value})
 
@@ -773,6 +876,10 @@ class FakeText:
         """
         self.char_formatting.append({"span": (start, end), name: value})
         self.apply_char_property(start, end, name, value)
+        (first, from_offset), (last, to_offset) = sorted([start, end])
+        if first == last and from_offset == 0 \
+                and to_offset >= len(self.paragraphs[first]):
+            self.paragraph_direct.setdefault(first, {})[name] = value
 
     def apply_char_property(self, start, end, name, value):
         """Split the portions of a span and give them a property."""

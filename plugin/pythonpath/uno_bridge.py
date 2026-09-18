@@ -33,6 +33,9 @@ Where a method lives:
     uno_layout.py      the page itself: size, margins, breaks
     uno_links.py       hyperlinks, and taking one away
     uno_surgery.py     splitting, joining, moving paragraphs
+    uno_direct.py      finding by style, and what is applied
+                       over one
+    uno_stylewriting.py making a style, changing it, replacing it
     uno_redlines.py    the changes a document is keeping, and settling them
     uno_tables.py      tables: reading, placing, dressing
     uno_images.py      pictures
@@ -69,6 +72,8 @@ from uno_headers import HeadersMixin
 from uno_layout import LayoutMixin
 from uno_links import LinksMixin
 from uno_surgery import SurgeryMixin
+from uno_direct import DirectFormattingMixin
+from uno_stylewriting import StyleWritingMixin
 from uno_redlines import RedlinesMixin
 from uno_tables import TablesMixin
 from uno_images import ImagesMixin
@@ -84,7 +89,8 @@ class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
                 RedlinesMixin, FieldsMixin, BookmarksMixin, ReferencesMixin,
                 IndexesMixin, NotesMixin, SectionsMixin,
                 HeadersMixin, LayoutMixin, LinksMixin,
-                SurgeryMixin,
+                SurgeryMixin, DirectFormattingMixin,
+                StyleWritingMixin,
                 CommentsMixin,
                 RunsMixin,
                 FormattingMixin, EditingMixin, ReadingMixin, ViewMixin,

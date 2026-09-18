@@ -2385,6 +2385,203 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- writing styles: making, changing, replacing ---")
+    booked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                          0, ())
+    booked_text = booked.getText()
+    nib = booked_text.createTextCursor()
+    for style, line in (("Heading 1", "Заголовок"),
+                        ("Preformatted Text", "query { hero }"),
+                        ("Default Paragraph Style", "Обычный"),
+                        ("Preformatted Text", "mutation { }")):
+        nib.ParaStyleName = style
+        booked_text.insertString(nib, line, False)
+        booked_text.insertControlCharacter(nib, PARAGRAPH_BREAK, False)
+
+    made = bridge.create_style("Наш код", based_on="Preformatted Text",
+                               properties={"color": "#006600",
+                                           "font_size": 10,
+                                           "space_above_pt": 6},
+                               doc=booked)
+    print("   ", {key: made.get(key) for key in
+                  ("success", "name", "based_on", "set")})
+    check("a style is made with what it was given",
+          (made.get("success"), made.get("based_on"), sorted(made.get("set"))),
+          (True, "Preformatted Text", ["color", "font_size",
+                                       "space_above_pt"]))
+    check("and its own definition says so",
+          bridge.describe_style(name="Наш код",
+                                doc=booked)["set_here"]["CharColor"]["value"],
+          "#006600")
+    clone = bridge.create_style("Копия кода", from_style="Наш код",
+                                properties={"color": "#CC0000"}, doc=booked)
+    check("a style can be cloned and then changed",
+          (clone.get("copied_properties") > 0,
+           bridge.describe_style(name="Копия кода",
+                                 doc=booked)["set_here"]["CharColor"]["value"]),
+          (True, "#CC0000"))
+    # A bad property used to be found after insertByName, leaving the style.
+    refused = bridge.create_style("Третий", properties={"sparkle": True},
+                                  doc=booked)
+    check("a refused property leaves no style behind",
+          (refused.get("code"),
+           bridge.describe_style(name="Третий", doc=booked).get("code")),
+          ("INVALID_PARAMETER", "NOT_FOUND"))
+
+    bridge.apply_paragraph_style({"paragraph": 1}, "Наш код", doc=booked)
+    bridge.update_style("Наш код", properties={"italic": True,
+                                               "alignment": "center"},
+                        doc=booked)
+    wearing = bridge._paragraph_at(booked.getText(), 1)
+    check("changing a style changes what wears it",
+          (wearing.ParaAdjust, wearing.CharPosture.value), (3, "ITALIC"))
+    check("a built-in style can be changed too",
+          bridge.update_style("Preformatted Text",
+                              properties={"space_below_pt": 3},
+                              doc=booked).get("success"), True)
+
+    bridge.rename_style("Наш код", "Код дома", doc=booked)
+    check("renaming carries the text with it",
+          bridge._paragraph_at(booked.getText(), 1).ParaStyleName, "Код дома")
+    check("a built-in style keeps the name it is known by",
+          bridge.rename_style("Standard", "Наш обычный",
+                              doc=booked).get("code"), "INVALID_PARAMETER")
+
+    # A code block inside a table cell is not a body paragraph, and
+    # "throughout" has to reach it: on a real document the body held 162 of
+    # them and Writer's own search found 184.
+    grid = booked.createInstance("com.sun.star.text.TextTable")
+    grid.initialize(1, 1)
+    grid.setName("Сетка")
+    booked_text.insertTextContent(bridge._resolve_address(
+        booked, {"paragraph": 2}).getStart(), grid, False)
+    cell = grid.getCellByName("A1")
+    cell.setString("query in a cell")
+    cell.createEnumeration().nextElement().ParaStyleName = "Preformatted Text"
+
+    swapped = bridge.replace_style("Preformatted Text", "Код дома",
+                                   doc=booked)
+    print("   ", swapped)
+    check("one style takes the place of another",
+          (swapped.get("places_changed") >= 3,
+           bridge._paragraph_at(booked.getText(), 4).ParaStyleName),
+          (True, "Код дома"))
+    check("reaching inside a table cell as well",
+          cell.createEnumeration().nextElement().ParaStyleName, "Код дома")
+
+    # Measured: UNO accepts removing a built-in style, removes nothing and
+    # says nothing, so this refuses rather than reporting it done.
+    check("removing a built-in style is refused",
+          bridge.delete_style("Preformatted Text", doc=booked).get("code"),
+          "INVALID_PARAMETER")
+    removed = bridge.delete_style("Код дома", replace_with="Preformatted Text",
+                                  doc=booked)
+    print("   ", removed)
+    check("and one of our own goes, moving its text first",
+          (removed.get("success"),
+           bridge._paragraph_at(booked.getText(), 1).ParaStyleName),
+          (True, "Preformatted Text"))
+    booked.setModified(False)
+    booked.close(True)
+
+    print("\n--- finding by style, and the formatting over one ---")
+    styled = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
+                                          0, ())
+    styled_text = styled.getText()
+    quill = styled_text.createTextCursor()
+    for style, line in (("Heading 1", "Заголовок"),
+                        ("Default Paragraph Style", "Обычный абзац тут"),
+                        ("Preformatted Text", "query { hero }"),
+                        ("Default Paragraph Style", "Ещё обычный"),
+                        ("Preformatted Text", "mutation { }")):
+        quill.ParaStyleName = style
+        styled_text.insertString(quill, line, False)
+        styled_text.insertControlCharacter(quill, PARAGRAPH_BREAK, False)
+    bridge.format_range({"paragraph": 1, "offset": 0, "length": 7}, bold=True,
+                        color="#CC0000", doc=styled)
+    bridge.format_range({"paragraph": 1, "offset": 8, "length": 5},
+                        character_style="Emphasis", doc=styled)
+    bridge.format_range({"paragraph": 3, "offset": 0, "length": 4},
+                        link="https://example.org/", doc=styled)
+
+    started = time.time()
+    found = bridge.find_by_style("Preformatted Text", doc=styled)
+    took = time.time() - started
+    print("   ", [(hit["address"], hit["text"]) for hit in found["hits"]])
+    # Writer's own search takes a paragraph style's name when SearchStyles is
+    # on, and answers in milliseconds where a walk would compare every
+    # paragraph.
+    check("the code blocks are found by their style",
+          [hit["text"] for hit in found["hits"] if hit["text"]],
+          ["query { hero }", "mutation { }"])
+    check("and quickly", took < 0.5, True)
+    check("a character style is found by walking the runs",
+          [(hit["text"], hit["address"]["offset"]) for hit in
+           bridge.find_by_style("Emphasis", family="character",
+                                doc=styled)["hits"]], [("абзац", 8)])
+    check("a style nobody has",
+          bridge.find_by_style("Нетакой", doc=styled).get("code"), "NOT_FOUND")
+
+    direct = bridge.get_direct_formatting({"paragraph": 1, "offset": 0,
+                                           "length": 7}, doc=styled)
+    print("   ", {key: (value["value"], value["where"])
+                  for key, value in direct["character"].items()})
+    check("what was applied over the style is named",
+          (sorted(direct["character"]), direct["character"]["color"]["value"]),
+          (["bold", "color"], "#CC0000"))
+    check("a paragraph wearing only its style has nothing over it",
+          bridge.get_direct_formatting({"paragraph": 2},
+                                       doc=styled)["character"], {})
+    # Applied to a whole paragraph it lands on the paragraph, where the range
+    # reports nothing at all.
+    bridge.format_range({"paragraph": 4}, bold=True, doc=styled)
+    whole = bridge.get_direct_formatting({"paragraph": 4}, doc=styled)
+    check("formatting over a whole paragraph is seen, on the paragraph",
+          (list(whole["character"]), whole["character"]["bold"]["where"]),
+          (["bold"], "paragraph"))
+
+    cleared = bridge.clear_direct_formatting({"paragraph": 1, "offset": 0,
+                                              "length": 7}, doc=styled)
+    print("   ", cleared.get("cleared"))
+    check("it comes off again",
+          (cleared.get("success"),
+           sorted(cleared["cleared"]["characters"])), (True, ["bold", "color"]))
+    check("and nothing is left over the style",
+          bridge.get_direct_formatting({"paragraph": 1, "offset": 0,
+                                        "length": 7},
+                                       doc=styled)["character"], {})
+    check("clearing a whole paragraph reaches the paragraph",
+          ("bold" in bridge.clear_direct_formatting(
+              {"paragraph": 4}, doc=styled)["cleared"]["characters"],
+           bridge.get_direct_formatting({"paragraph": 4},
+                                        doc=styled)["character"]),
+          (True, {}))
+
+    # Measured: neither a link nor a character style is direct formatting.
+    survived = bridge.clear_direct_formatting({"paragraph": 3}, doc=styled)
+    link = bridge._resolve_address(styled, {"paragraph": 3, "offset": 0,
+                                            "length": 4})
+    check("a hyperlink survives a clean-up",
+          (link.HyperLinkURL, survived.get("links_kept")),
+          ("https://example.org/", 1))
+    bridge.clear_direct_formatting({"paragraph": 1, "offset": 8, "length": 5},
+                                   doc=styled)
+    check("and so does a character style",
+          bridge._resolve_address(styled, {"paragraph": 1, "offset": 8,
+                                           "length": 5}).CharStyleName,
+          "Emphasis")
+    check("unless it is named outright",
+          bridge.clear_direct_formatting(
+              {"paragraph": 1, "offset": 8, "length": 5},
+              properties=["character_style"],
+              doc=styled)["cleared"]["characters"], ["character_style"])
+    check("clearing nothing at all",
+          bridge.clear_direct_formatting({"paragraph": 1}, characters=False,
+                                         doc=styled).get("code"),
+          "INVALID_PARAMETER")
+    styled.setModified(False)
+    styled.close(True)
+
     print("\n--- runs over a block, and taking a colour off ---")
     blocked = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                            0, ())

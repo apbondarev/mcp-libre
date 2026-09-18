@@ -11,7 +11,8 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks, **3.9.10** paragraph surgery,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections, **3.9.7** headers and footers, **3.9.8** page layout, **3.9.9** hyperlinks, **3.9.10** paragraph surgery, **3.9.11** finding by style,
+**3.9.12** writing styles,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -480,18 +481,28 @@ system clipboard alone. Splitting keeps a comment that spans the cut on both hal
 joining deletes the one newline between two paragraphs, and checks that it really is
 one, so a table between them is not destroyed.
 
-#### 3.9.11 Finding by style, and direct formatting
+#### 3.9.11 Finding by style, and direct formatting — **done**
 
-`find_by_style` (every paragraph in "Preformatted Text", say, which is how a code
-block is found), `get_direct_formatting` and `clear_direct_formatting` (the
-formatting applied over a style, which is what makes a document look inconsistent
-and what a clean-up removes).
+`find_by_style`, `get_direct_formatting`, `clear_direct_formatting`.
 
-#### 3.9.12 Styles beyond describing one
+A paragraph style turned out to be searchable — `SearchStyles` with its name — where a
+character style is not and is walked for. The clean-up rests on three measurements:
+character formatting applied to a *whole* paragraph sits on the paragraph, where the
+range reports nothing, so both are asked and both are cleared; a hyperlink and a
+character style both survive `setAllPropertiesToDefault`, so inline code and links come
+through; and a run's language is left alone unless named, since taking it off would
+hand the text back to the style's.
 
-Create, clone, update, rename, delete, and replace one style with another
-throughout. `describe_style` reads a style's own definition already; writing one is
-the other half, and "make this document use our house styles" needs it.
+#### 3.9.12 Styles beyond describing one — **done**
+
+`create_style` (on its own or cloned with `from_style`), `update_style`,
+`rename_style`, `delete_style`, `replace_style`.
+
+Renaming carries the text with it and removing lets it fall back to the parent, both
+measured — and removing a **built-in** style is accepted by UNO while doing nothing,
+so it is refused here instead. "Use our house styles" is `replace_style`, which went
+from 20.5s to 0.25s on 184 paragraphs once the swap stopped addressing each place, and
+which reaches inside table cells, where 22 of those 184 were.
 
 #### 3.9.13 Undo and redo
 

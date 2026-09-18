@@ -28,6 +28,8 @@ from tests.fakes_tables import (FakeCell, FakeCellCursor, FakeTableBorder,
 from tests.fakes_text import (BORDER_PROPERTIES, FakeParagraph, FakeRange,
                               FakeText, FakeTextCursor, FakeTextPortion,
                               _border_property, _char_property,
+                              _property_states, _range_property_state,
+                              _range_property_to_default,
                               _insert_text_content, _para_style_property)
 from tests.fakes_values import (CALC_SERVICES, FakeBorderLine, FakeComponents,
                                 FakeCount, FakeDateTime, FakeEnum,
@@ -116,6 +118,11 @@ for _range_type in (FakeRange, FakeTextCursor):
     for _border_name in BORDER_PROPERTIES:
         setattr(_range_type, _border_name, _border_property(_border_name))
     setattr(_range_type, "ParaStyleName", _para_style_property())
+    # Direct formatting is getPropertyState on the range itself, exactly as
+    # on a style — and getPropertyStates answers for a list in one call.
+    setattr(_range_type, "getPropertyState", _range_property_state)
+    setattr(_range_type, "getPropertyStates", _property_states)
+    setattr(_range_type, "setPropertyToDefault", _range_property_to_default)
 
 
 
@@ -174,6 +181,11 @@ class FakeSearchDescriptor:
     SearchString = ""
     SearchRegularExpression = False
     SearchCaseSensitive = False
+    # Measured: with this on, the search string is a **paragraph** style's
+    # name and findAll answers with the paragraphs in it — in milliseconds,
+    # where comparing ParaStyleName means walking the body. A character style
+    # is not found this way at all.
+    SearchStyles = False
 
 
 class FakeFindResults:
@@ -557,6 +569,11 @@ class FakeDoc:
                 self, _INDEX_SERVICES[service[len("com.sun.star.text."):]])
         if service == "com.sun.star.text.DocumentIndexMark":
             return FakeIndexMark()
+        if service in ("com.sun.star.style.ParagraphStyle",
+                       "com.sun.star.style.CharacterStyle"):
+            from tests.fakes_styles import FakeStyle
+            return FakeStyle("", family="ParagraphStyles"
+                             if "Paragraph" in service else "CharacterStyles")
         if service == "com.sun.star.text.TextSection":
             return FakeTextSection(self._text)
         if service == "com.sun.star.text.TextColumns":
@@ -627,6 +644,10 @@ class FakeDoc:
     def StyleFamilies(self):
         if not hasattr(self, "_style_families"):
             self._style_families = FakeStyleFamilies()
+            # The paragraph family knows the text, so renaming a style can
+            # carry the paragraphs wearing it — measured, they follow at once.
+            family = self._style_families.getByName("ParagraphStyles")
+            family.model = self._text
         return self._style_families
 
     def supportsService(self, name):
@@ -740,6 +761,13 @@ class FakeWriterDoc(FakeDoc):
     def findAll(self, descriptor):
         import re
 
+        if getattr(descriptor, "SearchStyles", False):
+            wanted = descriptor.SearchString
+            return FakeFindResults([
+                FakeRange(self._text, (index, 0),
+                          (index, len(self._text.paragraphs[index])))
+                for index, style in enumerate(self._text.styles)
+                if style == wanted])
         pattern = (descriptor.SearchString if descriptor.SearchRegularExpression
                    else re.escape(descriptor.SearchString))
         flags = 0 if descriptor.SearchCaseSensitive else re.IGNORECASE
