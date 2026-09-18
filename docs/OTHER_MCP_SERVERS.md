@@ -128,28 +128,42 @@ LibreOffice process warm outside the GUI.
 | | this server | the fork | docx-mcp | knorq | ubuntu |
 |---|---|---|---|---|---|
 | runs inside LibreOffice | yes | yes | — | — | via extension |
-| tools | 60 | ~398 | 200+ | 40 | 9 (× actions) |
+| tools | 108 | ~398 | 200+ | 40 | 9 (× actions) |
 | addressing | paragraph / block / range / cell / selection **+ anchor** | cursor + index | paragraph id | index **+ stable anchor** | index |
-| refuses a lossy write | **yes** | no | no | partly (batch overlap) | no |
+| refuses a lossy write | **yes** — runs, links, comments, pictures, fields, footnotes, recorded changes, tables, paragraph breaks, protected sections | no | no | partly (batch overlap) | no |
 | runs, links, comments, pictures survive a rewrite | **yes** | no | n/a | n/a | no |
 | comments | list/add/update/delete, language, ids, threads, **filters + bulk resolve/delete** | list/add/update/delete/resolve | + threads | + threads | list/add |
 | track changes | record-or-not (three states) **+ list/accept/reject** | + accept/reject | + accept/reject by author, change log | + accept/reject all | + accept/reject |
-| tables | read/describe/format/create/delete **+ rows/cols/merge/split/sort** | + rows/cols/merge/sort/convert | + rows | + cells | — |
+| tables | read/describe/format/create/delete, rows/cols/merge/split/sort **+ text ↔ table** | + rows/cols/merge/sort/convert | + rows | + cells | — |
+| fields, bookmarks, captions, cross-references | **yes**, broken references reported | yes | cross-reference validation | not listed | — |
+| tables of contents and indexes | **insert/update/delete, index marks** | yes | not listed | not listed | — |
+| footnotes and endnotes | **list/add/update/delete**, kept through a rewrite | yes | + validation | not listed | — |
+| sections | **list/create/update/delete, protection enforced** | yes | document protection | not listed | — |
+| headers, footers, page layout | **yes** — page-number fields, orientation, margins, columns, breaks, line numbering | yes | not listed | not listed | — |
+| hyperlinks | **list/remove, set via `format_range`, broken internal links reported** | full CRUD | not listed | not listed | — |
+| styles | describe **+ create/clone/update/rename/delete/replace, find by style, direct formatting** | same set | not listed | not listed | — |
+| paragraph surgery | **split/merge/move/copy**, comments carried | split/merge/move/copy | not listed | batch insert/delete | — |
 | page image | **render_page** | — | — | — | — |
-| undo | one step per call, **`batch_live`** for a whole plan | + explicit contexts, undo/redo | — | — | — |
-| concurrency | none (threaded server) | process lock + admission | n/a | n/a | n/a |
+| undo | one step per call, **`batch_live`** for a whole plan, **undo/redo that stops at the reader's own steps** | + explicit contexts, undo/redo | — | — | — |
+| concurrency | none in the extension; one lock in the standalone server | process lock + admission | n/a | n/a | n/a |
 | Origin/Host check | **no** (`ACAO: *`) | yes | n/a | n/a | n/a |
 | result shape | payload + `code` + `elapsed_ms` | full envelope | plain | plain | plain |
 | transport | HTTP+SSE, `2024-11-05` | SSE + JSON-RPC, session/version negotiation | stdio | stdio | stdio → HTTP |
 
+"Not listed" means section 1 does not describe that part of a server, not that it is
+known to be missing; "—" is used only where the server's shape rules it out (a
+file-only server has no view to lay a page out in) or its tool list plainly lacks it.
+
 What nobody else in the survey has, and we should not lose while copying from them:
 
-- **Refusing a write that would destroy something.** `replace_range`/`replace_runs` count runs, hyperlinks, comments, inline pictures and tables inside the range and refuse unless `flatten=true`. Every other server writes the string and lets the user find out.
+- **Refusing a write that would destroy something.** `replace_range`/`replace_runs` count runs, hyperlinks, comments, inline pictures, fields, footnote marks, recorded changes and tables inside the range — and `replace_runs` the paragraph breaks of a block — and refuse unless `flatten=true`. Every other server writes the string and lets the user find out.
 - **Comments as first-class**: stable ids, the anchoring rule (`AnnotationEnd` swallowed by a rewrite that starts where the anchor ends), the language-comes-from-the-"Comment"-style finding, comments carried through a rewrite rather than re-created.
 - **Pictures visible to text tools** (empty `Frame` portions), and the measured rule for which rewrite destroys an inline one.
 - **`render_page`** — the page as the user sees it, through LibreOffice alone, no external program. Nobody else renders anything.
 - **The address matrix**, including table cells and a live selection, measured per tool.
-- **Two-layer testing**: faithful fakes for unit tests plus a live harness against a real headless LibreOffice, which is what caught the italic enum, the comment anchor, the cell identification and the address drift.
+- **Protection enforced where UNO does not enforce it.** A protected section stops the reader's keyboard and nothing else — the API writes straight through it — so the writing tools refuse one themselves.
+- **Undo that knows whose steps are whose.** The history is the document's, so `undo` stops at the first step this server did not make instead of taking back what the human typed.
+- **Two-layer testing**: faithful fakes for unit tests plus a live harness against a real headless LibreOffice, which is what caught the italic enum, the comment anchor, the cell identification, the address drift after a field or a footnote mark, and `replace_runs` collapsing a block of paragraphs into one.
 
 ---
 
