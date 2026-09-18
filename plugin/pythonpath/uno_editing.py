@@ -64,6 +64,7 @@ class EditingMixin:
     def replace_selection(self, text: str, track_changes: Optional[bool] = None,
                           language: Optional[str] = None,
                           flatten: bool = False,
+                          allow_protected: bool = False,
                           doc: Any = None) -> Dict[str, Any]:
         """
         Replace the selected text
@@ -79,12 +80,14 @@ class EditingMixin:
             undo_title="MCP: replace selection",
             empty_error="Nothing is selected, so there is nothing to replace. "
                         "Select the text first, or use a tool that inserts.",
-            language=language, flatten=flatten)
+            language=language, flatten=flatten,
+            allow_protected=allow_protected)
 
     def replace_range(self, address: Any, text: str,
                       track_changes: Optional[bool] = None,
                       language: Optional[str] = None,
                       flatten: bool = False,
+                      allow_protected: bool = False,
                       doc: Any = None) -> Dict[str, Any]:
         """
         Replace the text at an address
@@ -111,13 +114,15 @@ class EditingMixin:
                                           "to add text at a point, or give a "
                                           "length" if asks_for_a_point else None),
                              language=language,
-                             flatten=flatten)
+                             flatten=flatten,
+                             allow_protected=allow_protected)
 
     def _replace(self, address: Any, text: str, track_changes: Optional[bool],
                  doc: Any, what: str, undo_title: str,
                  empty_error: Optional[str],
                  language: Optional[str] = None,
-                 flatten: bool = False) -> Dict[str, Any]:
+                 flatten: bool = False,
+                 allow_protected: bool = False) -> Dict[str, Any]:
         """
         Rewrite the range an address points at, as a single undo step
 
@@ -147,6 +152,13 @@ class EditingMixin:
             target = self._resolve_address(doc, address)
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
+
+        # A protected section stops the reader's keyboard and nothing else:
+        # the API writes straight through it — measured. So the refusal is
+        # here, where a tool can still be told to go ahead anyway.
+        protected = self._refuse_protected(doc, target, allow_protected)
+        if protected:
+            return protected
 
         replaced = target.getString()
         if empty_error and not replaced:

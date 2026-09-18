@@ -55,6 +55,11 @@ class TextTools:
                         "description": "Accept losing the formatting. Without it the call is refused when the range holds more than one formatted run, or a hyperlink, because replacing such a range with one string destroys inline code, italics and links. The safe route is read_runs_live, then replace_runs_live",
                         "default": False
                     },
+                    "allow_protected": {
+                        "type": "boolean",
+                        "description": "Write even when the text is inside a protected section. Writer protects a section against the reader's keyboard only, so a tool has to refuse on its own; this says you mean it",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -96,6 +101,11 @@ class TextTools:
                     "flatten": {
                         "type": "boolean",
                         "description": "Accept losing the formatting. Without it the call is refused when the range holds more than one formatted run, or a hyperlink, because replacing such a range with one string destroys inline code, italics and links. The safe route is read_runs_live, then replace_runs_live",
+                        "default": False
+                    },
+                    "allow_protected": {
+                        "type": "boolean",
+                        "description": "Write even when the text is inside a protected section. Writer protects a section against the reader's keyboard only, so a tool has to refuse on its own; this says you mean it",
                         "default": False
                     },
                     "document": {
@@ -242,6 +252,11 @@ class TextTools:
                         "description": "Write over the recorded changes this range carries. Without it such a rewrite is refused, because a deletion still waiting to be accepted would come back as ordinary text; settling them first with accept_tracked_changes_live or reject_tracked_changes_live is the way that keeps the record",
                         "default": False
                     },
+                    "allow_protected": {
+                        "type": "boolean",
+                        "description": "Write even when the text is inside a protected section. Writer protects a section against the reader's keyboard only, so a tool has to refuse on its own; this says you mean it",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -264,6 +279,7 @@ class TextTools:
                                track_changes: Optional[bool] = None,
                                language: Optional[str] = None,
                                flatten: bool = False,
+                               allow_protected: bool = False,
                                document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the selected text in a Writer document"""
         doc, error = self._target_document(document)
@@ -271,12 +287,15 @@ class TextTools:
             return error
         return self.uno_bridge.replace_selection(text, track_changes=track_changes,
                                                  language=language,
-                                                 flatten=flatten, doc=doc)
+                                                 flatten=flatten,
+                                                 allow_protected=allow_protected,
+                                                 doc=doc)
 
     def replace_range_live(self, address: Any, text: str,
                            track_changes: Optional[bool] = None,
                            language: Optional[str] = None,
                            flatten: bool = False,
+                           allow_protected: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address in a Writer document"""
         doc, error = self._target_document(document)
@@ -285,7 +304,9 @@ class TextTools:
         return self.uno_bridge.replace_range(address, text,
                                              track_changes=track_changes,
                                              language=language,
-                                             flatten=flatten, doc=doc)
+                                             flatten=flatten,
+                                             allow_protected=allow_protected,
+                                             doc=doc)
 
     def read_runs_live(self, address: Any,
                        document: Optional[str] = None) -> Dict[str, Any]:
@@ -298,6 +319,7 @@ class TextTools:
     def replace_runs_live(self, address: Any, runs: Any,
                           track_changes: Optional[bool] = None,
                           flatten: bool = False,
+                          allow_protected: bool = False,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Replace the text at an address with a sequence of formatted runs"""
         doc, error = self._target_document(document)
@@ -305,7 +327,9 @@ class TextTools:
             return error
         return self.uno_bridge.replace_runs(address, runs,
                                             track_changes=track_changes,
-                                            flatten=flatten, doc=doc)
+                                            flatten=flatten,
+                                            allow_protected=allow_protected,
+                                            doc=doc)
 
     def set_language_live(self, address: Any, language: str,
                           document: Optional[str] = None) -> Dict[str, Any]:

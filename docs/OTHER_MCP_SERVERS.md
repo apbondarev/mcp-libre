@@ -11,7 +11,7 @@ decisions other people made differently, each of which costs us something today.
 
 Done so far: **3.1** session anchors, **3.4** the manual handed to the client,
 **3.5** reviewing tracked changes, **3.7** batching into one undo step, **3.8**
-comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes,
+comment threads and working on many comments at once, **3.9.1** fields, **3.9.2** bookmarks, **3.9.3** captions and cross-references, **3.9.4** indexes, **3.9.5** footnotes and endnotes, **3.9.6** sections,
 **3.9.15** table shape,
 **3.10** error codes and `elapsed_ms`, **3.14** naming the document a tool acts
 on. Still open and worth doing next: **3.2** the `Origin` check, which is a defect
@@ -417,11 +417,18 @@ mark, the flatten guard counts them, and `replace_runs` keeps the mark's run whi
 rewriting the text around it — a translated sentence keeps its footnote. Notes have no
 ids in UNO, only positions, so one is named by where its mark sits.
 
-#### 3.9.6 Sections
+#### 3.9.6 Sections — **done**
 
-Named sections of a document, which is how Writer carries protected regions, linked
-content and per-section columns. Reading them at least would say why a part of a
-document refuses to be edited.
+`list_sections`, `create_section`, `update_section`, `delete_section`.
+
+The section that opened this item guessed that reading sections "would say why a part
+of a document refuses to be edited". Measured, it refuses nothing: `IsProtected` stops
+the reader's keyboard and the API writes straight through it, silently. So the
+refusal is now this server's — `replace_range`, `replace_selection` and `replace_runs`
+refuse a protected section by name and take `allow_protected=true` when a caller means
+it. Beside that: a section leaves the paragraph numbering exactly as it was, a hidden
+section is still numbered and still readable, sections nest, and `list_sections`
+answers by overlap, so asking about a paragraph names every section covering it.
 
 #### 3.9.7 Headers and footers
 

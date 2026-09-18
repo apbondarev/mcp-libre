@@ -419,6 +419,7 @@ class RunsMixin:
     def replace_runs(self, address: Any, runs: Any,
                      track_changes: Optional[bool] = None,
                      flatten: bool = False,
+                     allow_protected: bool = False,
                      doc: Any = None) -> Dict[str, Any]:
         """
         Replace a range with a sequence of runs, each formatted explicitly
@@ -458,6 +459,10 @@ class RunsMixin:
                 doc, target, self._paragraph_hint(address, doc))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
+
+        protected = self._refuse_protected(doc, target, allow_protected)
+        if protected:
+            return protected
 
         if located["paragraph"] is None and not located.get("cell"):
             return {"success": False, "code": "INVALID_ADDRESS",

@@ -52,6 +52,13 @@ be pointed at — every target carries the `reference` object to hand straight
 back — and `list_references` which references a document has and which of
 them are broken, since a broken one shows only an error sentence in the text.
 
+A **protected section is not protected from you**: Writer stops the reader's
+keyboard and lets the API write straight through, so `replace_range`,
+`replace_selection` and `replace_runs` refuse one themselves with READ_ONLY
+and the section's name. `list_sections` says which parts of a document are
+protected, hidden or set in columns; unprotect with `update_section`, or pass
+`allow_protected: true` when you mean it.
+
 A **footnote's mark is a character of the text**, not an invisible marker:
 rewriting the run it sits in destroys the note. `read_runs` says which run is
 a mark, `replace_runs` refuses to rewrite it and keeps it while the runs

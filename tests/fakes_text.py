@@ -427,6 +427,20 @@ class FakeText:
 
     def insertTextContent(self, text_range, content, absorb):
         """A bookmark goes on the range and changes no text."""
+        if hasattr(content, "IsProtected") and hasattr(content, "IsVisible"):
+            # A section covers the range it is put on and moves nothing: the
+            # paragraph numbering is exactly what it was — measured.
+            content._model = self
+            content._start = text_range.start
+            content._end = text_range.end
+            if self.owner_document is not None:
+                # This hands `self.sections` its list, so the section is
+                # appended once and both sides see it.
+                self.owner_document.getTextSections()
+            if not hasattr(self, "sections"):
+                self.sections = []
+            self.sections.append(content)
+            return
         if hasattr(content, "update") and hasattr(content, "IsProtected"):
             self.insert_index(text_range, content)
             return
@@ -486,6 +500,11 @@ class FakeText:
         A table goes altogether; a paragraph takes its line with it, and an
         index takes every paragraph it wrote.
         """
+        if hasattr(content, "IsProtected") and hasattr(content, "IsVisible"):
+            # The region goes; every paragraph it held stays where it was.
+            if content in getattr(self, "sections", []):
+                self.sections.remove(content)
+            return
         if hasattr(content, "update") and hasattr(content, "IsProtected"):
             self.remove_index(content)
             return
@@ -1000,3 +1019,16 @@ class FakeText:
         if range1.start == range2.start:
             return 0
         return 1 if range1.start < range2.start else -1
+
+    def compareRegionEnds(self, range1, range2):
+        """1 when the first ends before the second, 0 equal, -1 after.
+
+        The same convention as compareRegionStarts, and the pair is what
+        says whether one range is inside another — which is how a protected
+        section is recognised.
+        """
+        self._own(range1)
+        self._own(range2)
+        if range1.end == range2.end:
+            return 0
+        return 1 if range1.end < range2.end else -1

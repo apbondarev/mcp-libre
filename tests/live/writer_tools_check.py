@@ -2385,6 +2385,100 @@ try:
     numbered.setModified(False)
     numbered.close(True)
 
+    print("\n--- sections, and the protection UNO does not enforce ---")
+    regioned = desktop.loadComponentFromURL("private:factory/swriter",
+                                            "_blank", 0, ())
+    region_text = regioned.getText()
+    quill = region_text.createTextCursor()
+    for line in ("First paragraph", "Inside one", "Inside two",
+                 "After the section", "Last line"):
+        region_text.insertString(quill, line, False)
+        region_text.insertControlCharacter(quill, PARAGRAPH_BREAK, False)
+    counted = bridge.read_paragraphs(start=0, count=1,
+                                     doc=regioned)["total_paragraphs"]
+
+    made = bridge.create_section({"paragraph": 1, "through": 2}, "Правила",
+                                 doc=regioned)
+    print("   ", {key: made.get(key) for key in
+                  ("success", "name", "address", "columns", "text")})
+    check("a section covers the paragraphs it was given",
+          (made.get("success"), made.get("text")),
+          (True, "Inside one\nInside two"))
+    check("and moves nothing: the numbering is what it was",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=regioned)["total_paragraphs"], counted)
+    check("a section with no columns of its own counts as one",
+          made.get("columns"), 1)
+    check("a name that is taken",
+          bridge.create_section({"paragraph": 0}, "Правила",
+                                doc=regioned).get("code"),
+          "INVALID_PARAMETER")
+
+    print("\n   protection stops the reader's keyboard and nothing else:")
+    bridge.update_section("Правила", protected=True, doc=regioned)
+    refused = bridge.replace_range({"paragraph": 1}, "ПЕРЕПИСАНО",
+                                   flatten=True, doc=regioned)
+    print("   ", refused.get("error"))
+    check("so the refusal is ours",
+          (refused.get("success"), refused.get("code"),
+           refused.get("section")), (False, "READ_ONLY", "Правила"))
+    check("and the text is untouched",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=regioned)["paragraphs"][0]["text"],
+          "Inside one")
+    check("runs are refused the same way",
+          bridge.replace_runs({"paragraph": 1}, [{"text": "x"}],
+                              doc=regioned).get("code"), "READ_ONLY")
+    check("text outside the section is not refused",
+          bridge.replace_range({"paragraph": 0}, "Первый", flatten=True,
+                               doc=regioned).get("success"), True)
+    check("and saying you mean it writes anyway",
+          bridge.replace_range({"paragraph": 1}, "ВСЁ РАВНО", flatten=True,
+                               allow_protected=True,
+                               doc=regioned).get("success"), True)
+    bridge.update_section("Правила", protected=False, doc=regioned)
+    check("unprotected, the tools work again",
+          bridge.replace_range({"paragraph": 1}, "Inside one", flatten=True,
+                               doc=regioned).get("success"), True)
+
+    print("\n   hiding, columns, nesting:")
+    bridge.update_section("Правила", visible=False, doc=regioned)
+    check("a hidden section keeps its paragraphs, numbered and readable",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=regioned)["paragraphs"][0]["text"],
+          "Inside one")
+    bridge.update_section("Правила", visible=True, doc=regioned)
+    check("columns can be set",
+          bridge.update_section("Правила", columns=2,
+                                doc=regioned).get("columns"), 2)
+    renamed = bridge.update_section("Правила", new_name="Раздел",
+                                    doc=regioned)
+    check("and a section renamed in place",
+          (renamed.get("name"), renamed["was"]["name"]), ("Раздел", "Правила"))
+    bridge.create_section({"paragraph": 2}, "Вложенный", doc=regioned)
+    listed = bridge.list_sections(doc=regioned)
+    print("   ", [(one["name"], one["inside"], one["holds"])
+                  for one in listed["sections"]])
+    check("sections nest, and say which way round",
+          [one["inside"] for one in listed["sections"]], [None, "Раздел"])
+    # A section covers whole paragraphs, so asking about one is a question
+    # about overlap rather than about where a section begins.
+    check("asking which sections cover a paragraph",
+          bridge.list_sections({"paragraph": 2}, doc=regioned)["count"], 2)
+
+    removed = bridge.delete_section("Вложенный", doc=regioned)
+    check("removing a section leaves its paragraphs",
+          (removed.get("success"), removed.get("kept_text")),
+          (True, "Inside two"))
+    check("with the numbering still what it was",
+          bridge.read_paragraphs(start=0, count=1,
+                                 doc=regioned)["total_paragraphs"], counted)
+    check("a section nobody has",
+          bridge.delete_section("Нетакой", doc=regioned).get("code"),
+          "NOT_FOUND")
+    regioned.setModified(False)
+    regioned.close(True)
+
     print("\n--- footnotes and endnotes ---")
     noted = desktop.loadComponentFromURL("private:factory/swriter", "_blank",
                                          0, ())

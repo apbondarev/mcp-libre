@@ -44,6 +44,7 @@ from tests.fakes_references import (FakeFieldMaster, FakeReferenceField,
 from tests.fakes_indexes import (FakeDocumentIndex, FakeIndexMark,
                                  SERVICE_OF_KIND)
 from tests.fakes_notes import FakeNote
+from tests.fakes_sections import FakeColumns, FakeTextSection
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
                                      FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
@@ -467,6 +468,13 @@ class FakeDoc:
                 for index in range(fields.getCount())
                 if hasattr(fields.getByIndex(index), "attachTextFieldMaster")]
 
+    def getTextSections(self):
+        """The named regions of the document, by name."""
+        if not hasattr(self, "_sections"):
+            self._sections = FakeNameAccess([])
+            self._text.sections = self._sections.items
+        return self._sections
+
     def getFootnotes(self):
         """The footnotes, by index — UNO offers no names for them."""
         return FakeIndexed([one for one in self._text.notes_in_order()
@@ -505,6 +513,10 @@ class FakeDoc:
                 self, _INDEX_SERVICES[service[len("com.sun.star.text."):]])
         if service == "com.sun.star.text.DocumentIndexMark":
             return FakeIndexMark()
+        if service == "com.sun.star.text.TextSection":
+            return FakeTextSection(self._text)
+        if service == "com.sun.star.text.TextColumns":
+            return FakeColumns()
         if service == "com.sun.star.text.Footnote":
             return FakeNote("footnote")
         if service == "com.sun.star.text.Endnote":
