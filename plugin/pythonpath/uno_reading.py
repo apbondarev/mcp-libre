@@ -55,6 +55,12 @@ class ReadingMixin:
         the reader's typing. It is on unless `anchors` is false: a plan made
         from numbers alone went wrong on a real document the moment the
         reader pressed Enter.
+
+        A formula is an object, not text, so a paragraph's string passes over
+        it ("equals  of the whole"). A paragraph that holds one also carries
+        `formulas` — name, StarMath text and offset — and `text_with_formulas`,
+        its string with each put back where it stands. `text` itself is left
+        as it is: every offset in every address counts in it.
         """
         try:
             doc, error = self._writer_document(doc, "Reading paragraphs")
@@ -68,6 +74,9 @@ class ReadingMixin:
             window = max(1, min(int(count), MAX_PARAGRAPH_COUNT))
             paragraphs = []
             total = 0
+            standing: Dict[int, List[Dict[str, Any]]] = {}
+            for one in self._formula_places(doc):
+                standing.setdefault(one["paragraph"], []).append(one)
 
             enumeration = doc.getText().createEnumeration()
             while enumeration.hasMoreElements():
@@ -75,8 +84,16 @@ class ReadingMixin:
                 if not hasattr(element, "getStart"):
                     continue
                 if start <= total < start + window:
-                    entry = _text_payload(element.getString())
+                    raw = element.getString()
+                    entry = _text_payload(raw)
                     entry["paragraph"] = total
+                    if total in standing:
+                        entry["formulas"] = [
+                            {"name": one["name"], "formula": one["formula"],
+                             "offset": one["offset"]}
+                            for one in standing[total]]
+                        entry["text_with_formulas"] = _text_payload(
+                            self._with_formulas(raw, standing[total]))["text"]
                     entry["style"] = _get_property(element, "ParaStyleName")
                     if anchors:
                         # The paragraph itself, held with a cursor at its

@@ -24,6 +24,7 @@ Where a method lives:
     uno_comments.py    the notes in the margin
     uno_fields.py      the bits that write themselves: dates, page numbers
     uno_bookmarks.py   names the document itself keeps for places
+    uno_formulas.py    the maths a document carries as objects of their own
     uno_references.py  captions, and the fields that point at them
     uno_indexes.py     the tables a document writes about itself
     uno_notes.py       footnotes and endnotes
@@ -66,6 +67,7 @@ from uno_runs import RunsMixin
 from uno_comments import CommentsMixin
 from uno_fields import FieldsMixin
 from uno_bookmarks import BookmarksMixin
+from uno_formulas import FormulasMixin
 from uno_references import ReferencesMixin
 from uno_indexes import IndexesMixin
 from uno_notes import NotesMixin
@@ -90,7 +92,7 @@ logger = logging.getLogger(__name__)
 
 
 class UNOBridge(RenderingMixin, SpellingMixin, ImagesMixin, TablesMixin,
-                RedlinesMixin, FieldsMixin, BookmarksMixin, ReferencesMixin,
+                RedlinesMixin, FieldsMixin, BookmarksMixin, FormulasMixin, ReferencesMixin,
                 IndexesMixin, NotesMixin, SectionsMixin,
                 HeadersMixin, LayoutMixin, LinksMixin,
                 SurgeryMixin, DirectFormattingMixin,

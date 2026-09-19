@@ -49,6 +49,7 @@ from tests.fakes_notes import FakeNote
 from tests.fakes_pagestyles import FakeLineNumbering
 from tests.fakes_sections import FakeColumns, FakeTextSection
 from tests.fakes_annotations import (FakeAnnotation, FakeBookmark, FakeField,
+                                     FakeFormulaObject,
                                      FakeGraphic, FakeImage,
                                      FakeNoteCursor, FakeNoteParagraph,
                                      FakeNoteText)
@@ -526,6 +527,13 @@ class FakeDoc:
             self._text.bookmarks = self._bookmarks.items
         return self._bookmarks
 
+    def getEmbeddedObjects(self):
+        """Every embedded object by name — formulas and anything else."""
+        if not hasattr(self, "_embedded"):
+            self._embedded = FakeNameAccess([])
+            self._text.formulas = self._embedded.items
+        return self._embedded
+
     _sequence_ids = iter(range(0, 100000))
 
     def getTextFieldMasters(self):
@@ -642,6 +650,8 @@ class FakeDoc:
             return FakeTextTable(f"Table{len(getattr(self, 'tables', [])) + 1}")
         if service == "com.sun.star.text.Bookmark":
             return FakeBookmark()
+        if service == "com.sun.star.text.TextEmbeddedObject":
+            return FakeFormulaObject()
         if service == "com.sun.star.text.textfield.Annotation":
             note = FakeAnnotation(named=False)
             note.document = self

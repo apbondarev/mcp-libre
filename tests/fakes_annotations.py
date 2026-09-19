@@ -84,6 +84,72 @@ class FakeBookmark:
                         "com.sun.star.text.TextContent")
 
 
+class FakeMathModel:
+    """The Math document inside a formula: `Formula` is all the bridge uses."""
+
+    def __init__(self, formula=""):
+        self.Formula = formula
+
+
+class FakeVisualArea:
+    """What the Math document says it takes: it answers in twips (9), and a
+    longer formula is a wider one — measured, a fraction was 172 x 569 twips
+    and "a = b" 462 x 267."""
+
+    def __init__(self, model):
+        self._model = model
+
+    def getMapUnit(self, aspect):
+        return 9
+
+    def getVisualAreaSize(self, aspect):
+        from tests.fakes_values import FakeSize
+        text = getattr(self._model, "Formula", "")
+        return FakeSize(100 * len(text), 300)
+
+
+class FakeChartModel:
+    """An embedded object that is not a formula: there is no Formula on it."""
+
+
+class FakeFormulaObject:
+    """com.sun.star.text.TextEmbeddedObject, as the bridge touches it.
+
+    Measured on a real Writer: an inline one adds no character to its
+    paragraph and is anchored at an empty range; Writer names it itself when
+    it is put in; and a name that is taken is refused with an error, where a
+    bookmark would be quietly renamed.
+    """
+
+    def __init__(self, formula="", name="", chart=False):
+        self.CLSID = ""
+        self.AnchorType = None
+        self.Width = 3528
+        self.Height = 471
+        self.Model = FakeChartModel() if chart else FakeMathModel(formula)
+        self._name = name
+        self._anchor = None
+        self._siblings = []
+
+    def getEmbeddedObject(self):
+        return FakeVisualArea(self.Model)
+
+    def getName(self):
+        return self._name
+
+    def setName(self, name):
+        if any(other is not self and other.getName() == name
+               for other in self._siblings):
+            raise RuntimeError("SwXFrame::setName(): Illegal object name. "
+                               "Duplicate name?")
+        self._name = name
+
+    def getAnchor(self):
+        if self._anchor is None:
+            raise RuntimeError("this object is in no text")
+        return self._anchor
+
+
 class FakeField:
     """com.sun.star.text.TextField, as the bridge touches it.
 

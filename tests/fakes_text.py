@@ -625,6 +625,24 @@ class FakeText:
 
     def insertTextContent(self, text_range, content, absorb):
         """A bookmark goes on the range and changes no text."""
+        if hasattr(content, "CLSID") and hasattr(content, "Model"):
+            # An inline formula adds no character to the paragraph. Put over
+            # a range it takes that text's place; put on one it goes at the
+            # start, and Writer names it when it has no name — measured.
+            start, end = sorted([text_range.start, text_range.end])
+            if not hasattr(self, "formulas"):
+                if self.owner_document is not None:
+                    self.owner_document.getEmbeddedObjects()
+                else:
+                    self.formulas = []
+            if absorb and start != end:
+                self.replace_range(start, end, "")
+            content._anchor = FakeRange(self, start, start)
+            content._siblings = self.formulas
+            if not content.getName():
+                content._name = f"Object{len(self.formulas) + 1}"
+            self.formulas.append(content)
+            return
         if hasattr(content, "IsProtected") and hasattr(content, "IsVisible"):
             # A section covers the range it is put on and moves nothing: the
             # paragraph numbering is exactly what it was — measured.
@@ -698,6 +716,9 @@ class FakeText:
         A table goes altogether; a paragraph takes its line with it, and an
         index takes every paragraph it wrote.
         """
+        if hasattr(content, "CLSID") and hasattr(content, "Model"):
+            self.formulas.remove(content)
+            return
         if hasattr(content, "IsProtected") and hasattr(content, "IsVisible"):
             # The region goes; every paragraph it held stays where it was.
             if content in getattr(self, "sections", []):

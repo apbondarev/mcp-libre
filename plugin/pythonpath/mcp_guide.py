@@ -122,6 +122,19 @@ reopened, shows in the Navigator, and survives a rewrite of the very text it
 covers. `add_bookmark`, `list_bookmarks`, `rename_bookmark` and `delete_bookmark`
 work in names, and the address a bookmark reports is what the other tools take.
 
+A **formula is not text**. It is an object sitting in the paragraph, so a
+paragraph's `text` passes over it: a problem that says "the volume is 1/5 of
+the whole" has `text` "the volume is  of the whole" — two spaces, and nothing
+in the string to say a formula was there. A paragraph that holds one therefore
+carries `formulas` and `text_with_formulas`, its text with each formula put
+back in StarMath where it stands (`⟦formula: { frac { 1 } { 5 } }⟧`); read
+that, not `text`, when reasoning about maths. `text` itself is unchanged,
+because every offset in every address counts in it. `read_runs` lists them in
+`formulas` too, and `list_formulas` gives them all with the words on either side,
+`text_before` and `text_after`. `add_formula`, `set_formula` and `delete_formula` work by the
+formula's name; `set_formula` is **not on the Undo list**, so it hands back the
+text it replaced.
+
 ## Rewriting text without destroying it
 
 Writing a string over a range flattens it: bold, italics, inline code (a

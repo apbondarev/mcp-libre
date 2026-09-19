@@ -14,6 +14,7 @@ their subject, one module per part:
     mcp_comment_tools.py     the notes in the margin
     mcp_field_tools.py       the bits that write themselves
     mcp_bookmark_tools.py    names the document keeps for places
+    mcp_formula_tools.py     the maths a document carries as objects
     mcp_review_tools.py      the changes a document is keeping
     mcp_table_tools.py       tables
     mcp_table_shape_tools.py rows, columns, merged cells, sorting
@@ -38,6 +39,7 @@ from mcp_image_tools import ImageTools
 from mcp_comment_tools import CommentTools
 from mcp_field_tools import FieldTools
 from mcp_bookmark_tools import BookmarkTools
+from mcp_formula_tools import FormulaTools
 from mcp_reference_tools import ReferenceTools
 from mcp_index_tools import IndexTools
 from mcp_note_tools import NoteTools
@@ -59,7 +61,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, ReferenceTools, IndexTools, NoteTools, SectionTools, HeaderTools, LayoutTools, LinkTools, SurgeryTools, DirectTools, StyleWritingTools, HistoryTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
+class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, FormulaTools, ReferenceTools, IndexTools, NoteTools, SectionTools, HeaderTools, LayoutTools, LinkTools, SurgeryTools, DirectTools, StyleWritingTools, HistoryTools, TableShapeTools, TableTools, CommentTools, ImageTools, 
                            DocumentTools, FormattingTools, TextTools, 
                            AnchorTools, ReadingTools):
     """Embedded MCP server for LibreOffice plugin"""
@@ -82,6 +84,7 @@ class LibreOfficeMCPServer(BatchTools, ReviewTools, FieldTools, BookmarkTools, R
         self._register_comment()
         self._register_field()
         self._register_bookmark()
+        self._register_formula()
         self._register_reference()
         self._register_index()
         self._register_note()

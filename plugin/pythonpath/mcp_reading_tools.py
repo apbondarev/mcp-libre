@@ -53,7 +53,7 @@ class ReadingTools:
 
         # Reading tools
         self.tools["read_paragraphs_live"] = {
-            "description": "Read a window of paragraphs from the active Writer document, with their indices and styles",
+            "description": "Read a window of paragraphs from the active Writer document, with their indices and styles. A formula is an object, not text, so a paragraph's `text` leaves it out (\"equals  of the whole\"): a paragraph that holds one also carries `formulas` (name, StarMath text, offset) and `text_with_formulas`, its text with each formula put back as ⟦formula: …⟧ where it stands — read that one, when it is there. `text` is unchanged, since every offset counts in it",
             "parameters": {
                 "type": "object",
                 "properties": {

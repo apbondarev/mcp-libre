@@ -77,6 +77,7 @@ class RunsMixin:
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
+        self._say_which_formulas(doc, result, index, read, located, block)
         if held:
             result["address"] = {"paragraph": index, "anchor": held}
         if block:
@@ -94,6 +95,29 @@ class RunsMixin:
         except Exception as e:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
+
+    def _say_which_formulas(self, doc: Any, result: Dict[str, Any],
+                            index: Optional[int], read: Any,
+                            located: Dict[str, Any], block: Any) -> None:
+        """Add `formulas` when the paragraphs read hold any.
+
+        The runs are made of text, and a formula is not text, so between two
+        runs there can be a formula that none of them mentions.
+        """
+        if index is None:
+            return
+        try:
+            first, last = (read or [index, index]) if block else (index, index)
+            lower = located.get("offset", 0)
+            upper = lower + (located.get("length") or 0)
+            here = [one for one in self._formula_places(doc)
+                    if first <= one["paragraph"] <= last
+                    and (block or lower <= one["offset"] <= upper)]
+        except Exception as e:
+            logger.info(f"Could not look for formulas among the runs: {e}")
+            return
+        if here:
+            result["formulas"] = here
 
     def _block_of(self, address: Any, located: Dict[str, Any]):
         """(first, last) when an address names a block of paragraphs, else None
