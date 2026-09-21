@@ -137,6 +137,41 @@ class FormulasMixin:
         found.sort(key=lambda one: one["offset"])
         return found
 
+    def _formulas_across(self, doc: Any, first: int, last: int,
+                         span: Any = None) -> List[Dict[str, Any]]:
+        """The formulas standing in a block of paragraphs
+
+        Placing every formula of a document addresses every anchor, which
+        walks the body — 4.0s on a real guide holding one formula, paid by a
+        `read_runs` that asked about ten paragraphs nowhere near it. One
+        comparison per formula says whether it is in the block at all, and
+        only the ones that are get placed.
+        """
+        formulas = self._formulas_of(doc) or []
+        if not formulas:
+            return []
+        if span is None:
+            return [one for one in self._formula_places(doc)
+                    if first <= one["paragraph"] <= last]
+        found = []
+        for name, obj, model in formulas:
+            if not self._anchored_in(doc, obj, span):
+                continue
+            try:
+                address, _, _ = self._locate_range(doc, obj.getAnchor())
+                text = model.Formula
+            except Exception as e:
+                logger.info(f"Could not place formula {name}: {e}")
+                continue
+            paragraph = address.get("paragraph")
+            if paragraph is None or not first <= paragraph <= last:
+                continue
+            found.append({"name": name, "formula": text,
+                          "paragraph": paragraph,
+                          "offset": address.get("offset", 0)})
+        found.sort(key=lambda one: (one["paragraph"], one["offset"]))
+        return found
+
     @staticmethod
     def _with_formulas(text: str, places: List[Dict[str, Any]]) -> str:
         """A paragraph's string with each formula put back where it stands."""

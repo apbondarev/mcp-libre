@@ -8,7 +8,8 @@ pictures, styles — is counted before anything is written.
 
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (MAX_RUN_PARAGRAPHS, REDLINE_KINDS, AddressError,
+from uno_values import (MAX_RUN_PARAGRAPHS, REDLINE_KINDS, TABLE_SERVICE,
+    AddressError, _supports,
     _colour_name,
     _comment_key, _distinct_changes, 
     _describe_comment, _distinct_comments, _distinct_images, _get_property, 
@@ -56,9 +57,10 @@ class RunsMixin:
         # find out.
         block = self._block_of(address, located)
         held = None
+        passed = None
         try:
             if block:
-                runs, read, stopped = self._runs_across(doc, block)
+                runs, read, stopped, passed = self._runs_across(doc, block)
             else:
                 paragraph = self._paragraph_of(doc, located, paragraph_cursor)
                 runs = self._runs_in(doc, located, paragraph_cursor,
@@ -78,7 +80,7 @@ class RunsMixin:
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
         self._say_which_formulas(doc, result, index, read, located, block,
-                                 paragraph_cursor)
+                                 paragraph_cursor, target)
         if held:
             result["address"] = {"paragraph": index, "anchor": held}
         if block:
@@ -92,7 +94,9 @@ class RunsMixin:
         # are the whole of what was asked for.
         try:
             return self._note_what_is_out_of_reach(doc, target, result,
-                                                   known_paragraph=index)
+                                                   known_paragraph=index,
+                                                   known_block=block,
+                                                   known_tables=passed)
         except Exception as e:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
@@ -100,15 +104,16 @@ class RunsMixin:
     def _say_which_formulas(self, doc: Any, result: Dict[str, Any],
                             index: Optional[int], read: Any,
                             located: Dict[str, Any], block: Any,
-                            paragraph_cursor: Any = None) -> None:
+                            paragraph_cursor: Any = None,
+                            span: Any = None) -> None:
         """Add `formulas` when the paragraphs read hold any.
 
         The runs are made of text, and a formula is not text, so between two
         runs there can be a formula that none of them mentions.
 
         One paragraph is answered from its own anchor comparisons
-        (`_formulas_in`); a block, which is many paragraphs and no one
-        cursor, is worth the single sweep that places them all.
+        (`_formulas_in`), a block from the block's range (`_formulas_across`).
+        Neither places every formula in the document, which walks the body.
         """
         if index is None:
             return
@@ -120,8 +125,7 @@ class RunsMixin:
                                          paragraph_cursor)
             else:
                 first, last = read or [index, index]
-                here = [one for one in self._formula_places(doc)
-                        if first <= one["paragraph"] <= last]
+                here = self._formulas_across(doc, first, last, span)
         except Exception as e:
             logger.info(f"Could not look for formulas among the runs: {e}")
             return
@@ -147,31 +151,46 @@ class RunsMixin:
         return first, last
 
     def _runs_across(self, doc: Any, block) -> tuple:
-        """The runs of every paragraph in a block, in one walk of it"""
+        """The runs of every paragraph in a block, and the tables in between
+
+        One walk for the whole block: reaching a paragraph by index is a walk
+        of its own, and doing that per paragraph made a block of four cost
+        four walks of a three-hundred-paragraph document. The tables are
+        collected by the same walk, which passes them anyway — asking
+        `_table_positions` afterwards was a second walk of the *whole*
+        document to find what had just gone by.
+        """
         first, last = block
         runs: List[Dict[str, Any]] = []
         body = doc.getText()
         read_last = first
         stopped = False
-        # One walk for the whole block: reaching a paragraph by index is a
-        # walk of its own, and doing that per paragraph made a block of four
-        # cost four walks of a three-hundred-paragraph document.
-        for paragraph, index in self._body_paragraphs(doc):
-            if index < first:
+        tables: List[tuple] = []
+        index = 0
+        enumeration = body.createEnumeration()
+        while enumeration.hasMoreElements():
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                # A table stands *between* paragraphs, so one with paragraphs
+                # of the block on either side is inside it.
+                if first < index <= last and _supports(element, TABLE_SERVICE):
+                    tables.append((element, index))
                 continue
-            if index > last:
-                break
-            if index - first >= MAX_RUN_PARAGRAPHS:
-                stopped = True
+            if index < first:
+                index += 1
+                continue
+            if index > last or index - first >= MAX_RUN_PARAGRAPHS:
+                stopped = index <= last
                 break
             located = {"paragraph": index, "offset": 0,
-                       "length": len(paragraph.getString())}
-            cursor = body.createTextCursorByRange(paragraph.getStart())
+                       "length": len(element.getString())}
+            cursor = body.createTextCursorByRange(element.getStart())
             cursor.gotoEndOfParagraph(True)
             runs.extend(self._runs_in(doc, located, cursor,
-                                      paragraph=paragraph))
+                                      paragraph=element))
             read_last = index
-        return runs, [first, read_last], stopped
+            index += 1
+        return runs, [first, read_last], stopped, tables
 
     def _runs_in(self, doc: Any, located: Dict[str, Any],
                  paragraph_cursor: Any,

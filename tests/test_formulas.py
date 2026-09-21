@@ -433,3 +433,24 @@ def test_a_formula_that_will_not_answer_does_not_move_the_others(bridge, doc):
     assert read[1]["formulas"] == [
         {"name": "ро", "formula": "rho",
          "offset": len("Плотность 1-й части равна ")}]
+
+
+def test_the_runs_of_a_block_find_its_formulas_without_placing_them_all(
+        bridge, doc, monkeypatch):
+    # The same walk the single-paragraph path was spared: on a real guide
+    # holding one formula, placing them all cost 4.0s of a read_runs that
+    # asked about ten paragraphs nowhere near it.
+    put(bridge, doc, 1, len("Плотность 1-й части равна "), "rho", name="ро")
+
+    def refuse(*arguments, **named):
+        raise AssertionError("read_runs placed every formula in the document")
+
+    monkeypatch.setattr(bridge, "_formula_places", refuse)
+
+    inside = bridge.read_runs({"paragraph": 1, "through": 2}, doc=doc)
+    outside = bridge.read_runs({"paragraph": 0, "through": 0}, doc=doc)
+
+    assert inside["formulas"] == [{"name": "ро", "formula": "rho",
+                                   "paragraph": 1,
+                                   "offset": len("Плотность 1-й части равна ")}]
+    assert "formulas" not in outside

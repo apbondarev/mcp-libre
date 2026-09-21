@@ -902,3 +902,42 @@ def test_the_describing_tool_is_registered_and_dispatches():
     assert described["success"] is True
     assert described["table"]["columns"] == 2
     assert len(described["cells"]) == 4
+
+
+# --- a block says what it spans without being compared with the document ----
+#
+# A block address names its own paragraphs, and _range_spans compared it with
+# every paragraph and every table anyway: on a 6981-paragraph document
+# read_runs over two paragraphs cost 23s against 1.5s for one.
+
+def test_runs_over_a_block_say_which_table_stands_in_it(bridge, table_doc):
+    runs = bridge.read_runs({"paragraph": 0, "through": 1}, doc=table_doc)
+
+    assert runs["success"] is True
+    assert runs["spans_paragraphs"] == [0, 1]
+    assert runs["spans_tables"] == [{"name": "Table1", "rows": 2,
+                                     "columns": 2}]
+    assert "read_table" in runs["note"]
+
+
+def test_a_block_is_not_compared_with_every_paragraph_of_the_document(
+        bridge, table_doc, monkeypatch):
+    def refuse(*arguments, **named):
+        raise AssertionError("read_runs walked the body to place a block")
+
+    monkeypatch.setattr(bridge, "_range_spans", refuse)
+
+    runs = bridge.read_runs({"paragraph": 0, "through": 1}, doc=table_doc)
+
+    assert runs["spans_paragraphs"] == [0, 1]
+    assert runs["spans_tables"][0]["name"] == "Table1"
+
+
+def test_a_table_outside_the_block_is_not_reported(bridge):
+    table = FakeTextTable("Table1", cells=[["a", "b"]], after_paragraph=2)
+    doc = writer_doc(["Ноль", "Один", "Два"], caret=(0, 0), tables=[table])
+
+    runs = bridge.read_runs({"paragraph": 0, "through": 1}, doc=doc)
+
+    assert "spans_tables" not in runs
+    assert runs["spans_paragraphs"] == [0, 1]

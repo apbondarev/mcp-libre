@@ -214,12 +214,52 @@ class TablesMixin:
                     if positions is not None
                     else self._paragraphs_before_table(doc, table))}
 
+    def _spans_of_block(self, doc: Any, block,
+                        tables: Any = None) -> Dict[str, Any]:
+        """What a block address covers, without comparing it with the document
+
+        A block names its own paragraphs, so the walk `_range_spans` makes —
+        a region comparison against every paragraph and every table, six UNO
+        calls apiece — answers a question the address has already answered.
+        Measured on a 6981-paragraph document: `read_runs` over two
+        paragraphs cost 23s against 1.5s for one, and this walk was the
+        difference. What is left to find is the tables standing *between*
+        those paragraphs, and `_table_positions` places them all in one
+        sweep that compares nothing.
+        """
+        first, last = block
+        found: Dict[str, Any] = {"paragraphs": list(range(first, last + 1)),
+                                 "tables": []}
+        try:
+            if tables is None:
+                # Nobody walked past them for us, so find them: still one
+                # sweep that compares nothing, not a comparison per paragraph.
+                positions = self._table_positions(doc)
+                held = doc.getTextTables()
+                tables = [(held.getByName(name), after)
+                          for name, after in sorted(positions.items(),
+                                                    key=lambda one: one[1])
+                          if first < after <= last]
+            for table, after in tables:
+                name = _get_property(table, "Name", "") or ""
+                try:
+                    found["tables"].append(
+                        self._describe_table(doc, table, {name: after}))
+                except Exception as e:
+                    logger.info(f"Could not describe the table {name}: {e}")
+        except Exception as e:
+            logger.info(f"Could not place the tables of a block: {e}")
+        return found
+
     def _note_what_is_out_of_reach(self, doc: Any, span: Any,
                                    result: Dict[str, Any],
-                                   known_paragraph: Optional[int] = None
-                                   ) -> Dict[str, Any]:
+                                   known_paragraph: Optional[int] = None,
+                                   known_block: Any = None,
+                                   known_tables: Any = None) -> Dict[str, Any]:
         """Say when a range reaches past the paragraph its runs come from"""
-        spans = self._range_spans(doc, span, known_paragraph)
+        spans = (self._spans_of_block(doc, known_block, known_tables)
+                 if known_block
+                 else self._range_spans(doc, span, known_paragraph))
         if len(spans["paragraphs"]) > 1:
             result["spans_paragraphs"] = spans["paragraphs"]
         if spans["tables"]:
