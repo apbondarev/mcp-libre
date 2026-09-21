@@ -77,7 +77,8 @@ class RunsMixin:
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
-        self._say_which_formulas(doc, result, index, read, located, block)
+        self._say_which_formulas(doc, result, index, read, located, block,
+                                 paragraph_cursor)
         if held:
             result["address"] = {"paragraph": index, "anchor": held}
         if block:
@@ -98,21 +99,29 @@ class RunsMixin:
 
     def _say_which_formulas(self, doc: Any, result: Dict[str, Any],
                             index: Optional[int], read: Any,
-                            located: Dict[str, Any], block: Any) -> None:
+                            located: Dict[str, Any], block: Any,
+                            paragraph_cursor: Any = None) -> None:
         """Add `formulas` when the paragraphs read hold any.
 
         The runs are made of text, and a formula is not text, so between two
         runs there can be a formula that none of them mentions.
+
+        One paragraph is answered from its own anchor comparisons
+        (`_formulas_in`); a block, which is many paragraphs and no one
+        cursor, is worth the single sweep that places them all.
         """
         if index is None:
             return
         try:
-            first, last = (read or [index, index]) if block else (index, index)
             lower = located.get("offset", 0)
             upper = lower + (located.get("length") or 0)
-            here = [one for one in self._formula_places(doc)
-                    if first <= one["paragraph"] <= last
-                    and (block or lower <= one["offset"] <= upper)]
+            if not block:
+                here = self._formulas_in(doc, index, lower, upper,
+                                         paragraph_cursor)
+            else:
+                first, last = read or [index, index]
+                here = [one for one in self._formula_places(doc)
+                        if first <= one["paragraph"] <= last]
         except Exception as e:
             logger.info(f"Could not look for formulas among the runs: {e}")
             return

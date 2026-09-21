@@ -22,6 +22,7 @@ import uno  # noqa: E402
 from com.sun.star.text.ControlCharacter import PARAGRAPH_BREAK  # noqa: E402
 
 PORT = 2010
+FIFTH = "{ frac { 1 } { 5 } }"
 PROFILE = "/tmp/mcp_live_check_profile"
 failures = []
 
@@ -142,8 +143,16 @@ try:
     found = bridge.find_text("alpha", doc=doc)
     print(found)
     check("hit count", found.get("total_hits"), 2)
-    check("first hit address", found["hits"][0]["address"],
-          {"paragraph": 1, "offset": 0, "length": 5})
+    first = dict(found["hits"][0]["address"])
+    # A hit is handed out with the anchor that holds it, so that passing the
+    # address back hits the same words however the paragraphs above it move.
+    check("first hit is anchored", isinstance(first.pop("anchor", None), str),
+          True)
+    check("first hit address", first, {"paragraph": 1, "offset": 0,
+                                       "length": 5})
+    check("and the anchor resolves to the hit",
+          bridge._resolve_address(
+              doc, found["hits"][0]["address"]).getString(), "Alpha")
     check("hit context", found["hits"][0]["context"], "Alpha beta alpha.")
 
     print("\n--- find_text with a regular expression ---")
@@ -3691,6 +3700,76 @@ try:
                                  doc=doc)["paragraphs"][0]["text"],
           "запрос is the entry point")
     body.removeTextContent(bridge._paragraph_at(body, talk))
+
+    print("\n--- formulas, which are objects and not text ---")
+    sentence = "Объем первой части равен  от всего объема."
+    after_equals = len("Объем первой части равен ")
+    writing = body.createTextCursorByRange(body.getEnd())
+    body.insertControlCharacter(writing, PARAGRAPH_BREAK, False)
+    body.insertString(writing, sentence, False)
+    here = bridge.read_paragraphs(start=0, count=1,
+                                  doc=doc)["total_paragraphs"] - 1
+    made = bridge.add_formula({"paragraph": here, "offset": after_equals,
+                               "length": 0}, FIFTH, name="доля", doc=doc)
+    print("   ", {key: made.get(key) for key in
+                  ("success", "name", "formula", "address", "inline",
+                   "width_mm", "height_mm")})
+    check("a formula goes in", made.get("success"), True)
+    read_here = bridge.read_paragraphs(start=here, count=1,
+                                       doc=doc)["paragraphs"][0]
+    check("and adds no character to the paragraph", read_here["text"], sentence)
+    check("the paragraph says what its string leaves out",
+          read_here.get("text_with_formulas"),
+          f"Объем первой части равен ⟦formula: {FIFTH}⟧ от всего объема.")
+    # Writer leaves a new object at 35.28 x 4.71 mm whatever is written in it,
+    # which is what made inserted formulas look distorted.
+    check("it is sized from the Math document, not left as Writer made it",
+          (made.get("width_mm"), made.get("height_mm")) != (35.28, 4.71), True)
+
+    # Answering about one paragraph must not place every formula in the
+    # document: that addresses every anchor, which walks the body.
+    swept = []
+    placing = bridge._formula_places
+
+    def counted(*arguments, **named):
+        swept.append(True)
+        return placing(*arguments, **named)
+
+    bridge._formula_places = counted
+    try:
+        runs = bridge.read_runs({"paragraph": here}, doc=doc)
+        elsewhere = bridge.read_runs({"paragraph": here - 1}, doc=doc)
+    finally:
+        bridge._formula_places = placing
+    check("the runs of a paragraph say which formula stands among them",
+          runs.get("formulas"),
+          [{"name": "доля", "formula": FIFTH, "paragraph": here,
+            "offset": after_equals}])
+    check("a paragraph without one says nothing of formulas",
+          "formulas" in elsewhere, False)
+    check("and neither reading placed every formula in the document",
+          swept, [])
+
+    listed = bridge.list_formulas(doc=doc)
+    check("listed with its place",
+          [(one["name"], one["address"]["paragraph"], one["address"]["offset"])
+           for one in listed["formulas"]], [("доля", here, after_equals)])
+    check("and with the words on either side of it",
+          (listed["formulas"][0].get("text_before", "")[-6:],
+           listed["formulas"][0].get("text_after", "")[:3]),
+          ("равен ", " от"))
+    changed = bridge.set_formula("доля", "{ frac { 1 } { 3 } }", doc=doc)
+    check("changed, saying what it was",
+          (changed.get("success"), changed.get("was")), (True, FIFTH))
+    gone = bridge.delete_formula("доля", doc=doc)
+    check("deleted, leaving the text",
+          (gone.get("success"),
+           bridge.read_paragraphs(start=here, count=1,
+                                  doc=doc)["paragraphs"][0]["text"]),
+          (True, sentence))
+    check("and the document has none left",
+          bridge.list_formulas(doc=doc)["count"], 0)
+    body.removeTextContent(bridge._paragraph_at(body, here))
 
     print("\n--- a plan carried out in one call, and taken back in one step ---")
     from mcp_server import LibreOfficeMCPServer

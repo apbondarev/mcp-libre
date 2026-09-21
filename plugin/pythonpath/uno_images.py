@@ -153,11 +153,14 @@ class ImagesMixin:
         return found
 
     def _anchored_in(self, doc: Any, image: Any, paragraph_cursor: Any) -> bool:
-        """Whether a picture's anchor sits in this paragraph, asked cheaply"""
+        """Whether an object's anchor sits in this paragraph, asked cheaply
+
+        A picture or a formula alike: what it needs is `getAnchor`.
+        """
         try:
             anchor = image.getAnchor()
         except Exception as e:
-            logger.info(f"A picture would not say where it is: {e}")
+            logger.info(f"An object would not say where it is: {e}")
             return True                   # let the slow path decide
         try:
             body = doc.getText()

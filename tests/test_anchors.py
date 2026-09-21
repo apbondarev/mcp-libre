@@ -10,6 +10,7 @@ tests/live/writer_tools_check.py; these check what is built on top of it.
 import pytest
 
 from tests.fake_writer import writer_doc
+from tests.fakes_tables import FakeTextTable
 from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
@@ -229,3 +230,19 @@ def test_closing_a_document_takes_its_anchors_with_it(bridge, doc):
 
     assert closed["anchors_let_go"] == 2
     assert bridge._anchor_store() == {}
+
+
+def test_an_address_in_a_cell_resolves_with_its_anchor_beside_it(bridge):
+    # The address a search hands out for a hit in a cell carries its anchor
+    # beside the table and the cell, and passing it straight back is the whole
+    # habit the anchors are for. Refusing that pair made every hit in a table
+    # unusable as an address — caught by the live check on a real document.
+    doc = writer_doc(["Схемы и типы"], caret=(0, 0),
+                     tables=[FakeTextTable("Table1",
+                                           cells=[["Operation", "R2-D2"]])])
+    in_cell = {"table": "Table1", "cell": "B1", "offset": 0, "length": 5}
+    token = bridge.anchor(in_cell, doc=doc)["anchors"][0]["anchor"]
+
+    handed_out = dict(in_cell, anchor=token)
+
+    assert bridge._resolve_address(doc, handed_out).getString() == "R2-D2"

@@ -41,11 +41,9 @@ class AddressMixin:
                 f"address must be an object, got {type(address).__name__}")
 
         if "anchor" in address:
-            for other in ("table", "cell", "selection"):
-                if other in address:
-                    raise AddressError(
-                        f"an anchor already says where: it takes no "
-                        f"{other!r} beside it")
+            if "selection" in address:
+                raise AddressError("an anchor already says where: it takes no "
+                                   "'selection' beside it")
             token = address["anchor"]
             entry = self._anchor_entry(doc, token)
             # The addresses the reading tools hand out carry their anchor
@@ -54,8 +52,12 @@ class AddressMixin:
             # the anchor decides, the numbers are what it said then. Only a
             # paragraph anchor takes an offset and a length of its own —
             # counted within the paragraph — since a text anchor already
-            # covers exactly its stretch.
-            handed_out = "paragraph" in address or "through" in address
+            # covers exactly its stretch. A hit inside a table cell is handed
+            # out the same way, anchor beside table and cell, and refusing
+            # that pair made every such hit unusable as an address, which the
+            # live check caught.
+            handed_out = any(key in address for key in
+                             ("paragraph", "through", "table", "cell"))
             counts = "offset" in address or "length" in address
             if counts and not handed_out:
                 if entry.get("kind") != "paragraph":

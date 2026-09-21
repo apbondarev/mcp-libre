@@ -381,3 +381,55 @@ def test_a_range_that_stops_short_of_a_formula_does_not_report_it(bridge, doc):
     runs = bridge.read_runs({"paragraph": 0, "offset": 0, "length": 5}, doc=doc)
 
     assert "formulas" not in runs
+
+
+def test_the_runs_of_a_paragraph_are_read_without_placing_every_formula(
+        bridge, doc, monkeypatch):
+    # Placing them all addresses every anchor, which walks the body: the cost
+    # read_runs was made not to pay. Answering about one paragraph must not
+    # need that sweep at all, so the sweep is made to fail here.
+    put(bridge, doc, 0, AFTER_EQUALS, FIFTH, name="доля")
+    put(bridge, doc, 1, len("Плотность 1-й части равна "), "rho", name="ро")
+
+    def refuse(*arguments, **named):
+        raise AssertionError("read_runs placed every formula in the document")
+
+    monkeypatch.setattr(bridge, "_formula_places", refuse)
+
+    runs = bridge.read_runs({"paragraph": 0}, doc=doc)
+
+    assert runs["formulas"] == [{"name": "доля", "formula": FIFTH,
+                                 "paragraph": 0, "offset": AFTER_EQUALS}]
+    assert "formulas" not in bridge.read_runs({"paragraph": 2}, doc=doc)
+
+
+def test_a_formula_that_will_not_answer_does_not_move_the_others(bridge, doc):
+    # Both the anchor and the text, or neither: keeping an anchor whose
+    # formula was not read left the two lists of different lengths, and every
+    # formula after it took another's place.
+    put(bridge, doc, 0, AFTER_EQUALS, FIFTH, name="доля")
+    put(bridge, doc, 1, len("Плотность 1-й части равна "), "rho", name="ро")
+
+    class Vanishing:
+        """A model that answers once and is gone by the next read — what a
+        formula the reader deletes mid-call looks like from here."""
+
+        def __init__(self, text):
+            self.text, self.reads = text, 0
+
+        @property
+        def Formula(self):
+            self.reads += 1
+            if self.reads > 1:
+                raise RuntimeError("SwXTextEmbeddedObject: disposed or invalid")
+            return self.text
+
+    first = doc.getText().formulas[0]
+    first.Model = Vanishing(FIFTH)
+
+    read = bridge.read_paragraphs(doc=doc)["paragraphs"]
+
+    assert "formulas" not in read[0]
+    assert read[1]["formulas"] == [
+        {"name": "ро", "formula": "rho",
+         "offset": len("Плотность 1-й части равна ")}]

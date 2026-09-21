@@ -81,11 +81,16 @@ class FormulasMixin:
             return []
         held, anchors = [], []
         for name, obj, model in formulas:
+            # Both or neither: an anchor kept while its formula was not left
+            # the two lists of different lengths, and the zip below then gave
+            # every formula after it another one's place.
             try:
-                anchors.append(obj.getAnchor())
-                held.append((name, model.Formula))
+                anchor, text = obj.getAnchor(), model.Formula
             except Exception as e:
                 logger.info(f"Could not place formula {name}: {e}")
+                continue
+            anchors.append(anchor)
+            held.append((name, text))
         placed = self._addresses_in_order(doc, anchors)
         places = []
         for (name, text), located in zip(held, placed):
@@ -96,6 +101,41 @@ class FormulasMixin:
                            "offset": located.get("offset", 0)})
         places.sort(key=lambda one: (one["paragraph"], one["offset"]))
         return places
+
+    def _formulas_in(self, doc: Any, paragraph: int, start: int, end: int,
+                     paragraph_cursor: Any) -> List[Dict[str, Any]]:
+        """The formulas standing in a stretch of one paragraph
+
+        Placing every formula of a document addresses every anchor, and that
+        walks the body — a cost no tool may pay to answer about one
+        paragraph, which is what `read_runs` asks. Each anchor is compared
+        with this paragraph first, three UNO calls apiece, exactly as
+        `_images_in` compares a picture's; the few that fall inside are then
+        measured against the paragraph they are already known to be in, so
+        `_locate_range` has its index and skips the walk.
+        """
+        if paragraph_cursor is None:
+            return [one for one in self._formula_places(doc)
+                    if one["paragraph"] == paragraph
+                    and start <= one["offset"] <= end]
+        found = []
+        for name, obj, model in (self._formulas_of(doc) or []):
+            if not self._anchored_in(doc, obj, paragraph_cursor):
+                continue
+            try:
+                address, _, _ = self._locate_range(doc, obj.getAnchor(),
+                                                   paragraph)
+                text = model.Formula
+            except Exception as e:
+                logger.info(f"Could not place formula {name}: {e}")
+                continue
+            offset = address.get("offset")
+            if offset is None or not (start <= offset <= end):
+                continue
+            found.append({"name": name, "formula": text,
+                          "paragraph": paragraph, "offset": offset})
+        found.sort(key=lambda one: one["offset"])
+        return found
 
     @staticmethod
     def _with_formulas(text: str, places: List[Dict[str, Any]]) -> str:

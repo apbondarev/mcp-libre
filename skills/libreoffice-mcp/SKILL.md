@@ -33,9 +33,26 @@ A place in a document is named in one of five ways:
 
 Paragraph numbers count body paragraphs and skip tables — and they move with
 every insertion or deletion above them. An anchor does not: it points at the
-text itself. Make anchors with `anchor`, or ask `find_text` and
-`read_paragraphs` for them with `anchors: true`, and a plan survives its own
-edits. `select` puts an address under the reader's eyes.
+text itself. **Address by anchor wherever you can.** `find_text`,
+`read_paragraphs` and `read_runs` hand out addresses that already carry one,
+so the habit costs nothing: pass the address back **as it came**, whole, and
+the anchor decides where the edit lands while the numbers beside it are only
+what was true when you read. Three measured reasons:
+
+  * your own edits move the ground. Insert a caption, a table of contents or a
+    paragraph, and every number below it is wrong — a plan made from one
+    search went stale as it was carried out;
+  * the reader moves it too, and even between the steps of a single call. A
+    batch of ten edits by number, while a reader pressed Enter above, hit
+    **none** of its ten paragraphs and overwrote others; the same batch by
+    anchor hit **ten of ten**. Reading just before the call does not help;
+  * a number that has gone stale still names *some* paragraph, so a wrong
+    write succeeds silently, where an anchor whose text was deleted refuses
+    by name and tells you what it held.
+
+`anchor` holds a place you worked out some other way, `list_anchors` says
+where they point now, and an anchor lives as long as this session.
+`select` puts an address under the reader's eyes.
 
 A caption numbers itself: `insert_caption` writes "Figure 3: …" beside a
 picture, a table or a paragraph, and a caption put in front of another
@@ -110,11 +127,11 @@ index's entries are body paragraphs**, so putting one in or updating it moves
 every paragraph number below it; the result says by how many, and a plan that
 edits by address should write the indexes last.
 
-An anchor lives as long as this session. A **bookmark** is the same handle kept
-by the document itself: it is saved in the file, comes back when the document is
-reopened, shows in the Navigator, and survives a rewrite of the very text it
-covers. `add_bookmark`, `list_bookmarks`, `rename_bookmark` and `delete_bookmark`
-work in names, and the address a bookmark reports is what the other tools take.
+A **bookmark** is an anchor the document itself keeps: it is saved in the
+file, comes back when the document is reopened, shows in the Navigator, and
+survives a rewrite of the very text it covers. `add_bookmark`,
+`list_bookmarks`, `rename_bookmark` and `delete_bookmark` work in names, and
+the address a bookmark reports is what the other tools take.
 
 A **formula is not text**. It is an object sitting in the paragraph, so a
 paragraph's `text` passes over it: a problem that says "the volume is 1/5 of
@@ -202,7 +219,12 @@ otherwise.
 Every tool is already a single undo step. `batch_live` makes a whole plan
 one: a list of `{tool, parameters}`, all checked before any of them runs,
 with `on_error: "undo"` to take the batch back if a step fails. A step cannot
-read an earlier step's result, so batch a plan already worked out.
+read an earlier step's result, so batch a plan already worked out. The
+paragraph numbers a batch's steps name are **pinned before the first step
+runs** and followed through it, so a step that adds a paragraph does not send
+the steps after it to the wrong place, and a step whose paragraph has been
+merged away is refused rather than written somewhere else. Addresses that
+already carry an anchor need none of that.
 `track_changes` has three states: omitted follows the document's own setting,
 `true` records this edit anyway, `false` refuses to record it.
 
@@ -211,11 +233,9 @@ read an earlier step's result, so batch a plan already worked out.
 The reader can type while you work, and every call you make interleaves
 with their keystrokes — measured on a real document:
 
-- **Address by `anchor`, not by paragraph number.** A batch of ten edits by
-  number, while the reader pressed Enter above, hit none of its ten
-  paragraphs and overwrote others; the same batch by anchor hit all ten.
-  Reading the document just before does not help: the typing lands between
-  the steps of your call.
+- **Address by `anchor`** — the reason is above, and this is where it bites
+  hardest: a reader pressing Enter moves the ground between the steps of one
+  call, and reading the document just before does not help.
 - **Do not move, copy or settle changes while the reader is typing.**
   `move_paragraph`, `copy_paragraphs`, `accept_tracked_changes`,
   `reject_tracked_changes` and `convert_table_to_text` work through the
