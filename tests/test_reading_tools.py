@@ -46,13 +46,36 @@ def test_includes_the_paragraph_style(bridge):
     assert result["paragraphs"][0]["style"] == "Heading 1"
 
 
-def test_caps_the_requested_count(bridge):
-    doc = writer_doc(["p"] * (MAX_PARAGRAPH_COUNT + 50), caret=(0, 0))
+def test_a_count_past_the_usual_window_is_honoured(bridge):
+    # 200 was a ceiling and is not one any more: what a caller asks for is
+    # what a caller gets, since the document is the only honest bound.
+    asked = MAX_PARAGRAPH_COUNT + 50
+    doc = writer_doc(["p"] * asked, caret=(0, 0))
 
-    result = bridge.read_paragraphs(start=0, count=MAX_PARAGRAPH_COUNT + 50, doc=doc)
+    result = bridge.read_paragraphs(start=0, count=asked, anchors=False,
+                                    doc=doc)
 
-    assert len(result["paragraphs"]) == MAX_PARAGRAPH_COUNT
-    assert result["total_paragraphs"] == MAX_PARAGRAPH_COUNT + 50
+    assert len(result["paragraphs"]) == asked
+    assert result["total_paragraphs"] == asked
+
+
+def test_a_read_too_big_to_anchor_is_refused_rather_than_half_anchored(bridge,
+                                                                       monkeypatch):
+    # Anchors are the one real bound: a read of more paragraphs than the
+    # session keeps anchors for would hand back tokens let go while the
+    # answer was still being built.
+    import uno_reading
+    monkeypatch.setattr(uno_reading, "MAX_ANCHORS", 3)
+    doc = writer_doc(["p"] * 10, caret=(0, 0))
+
+    refused = bridge.read_paragraphs(start=0, count=5, doc=doc)
+
+    assert refused["success"] is False
+    assert refused["code"] == "INVALID_PARAMETER"
+    assert "anchors: false" in refused["error"]
+    allowed = bridge.read_paragraphs(start=0, count=5, anchors=False, doc=doc)
+    assert allowed["count"] == 5
+    assert allowed["anchors"] is False
 
 
 def test_returns_nothing_when_start_is_past_the_end(bridge):

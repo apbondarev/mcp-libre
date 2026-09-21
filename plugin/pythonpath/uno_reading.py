@@ -7,7 +7,7 @@ back to a tool that edits it.
 from typing import Any, Dict, List, Optional
 import logging
 from uno_values import (AddressError, DEFAULT_PARAGRAPH_COUNT,
-    DEFAULT_SEARCH_RESULTS, 
+    DEFAULT_SEARCH_RESULTS, MAX_ANCHORS,
     DEFAULT_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
     MAX_TEXT_CHARS, WRITER_SERVICE, _get_property, _heading_level, 
     _supports, _text_payload, refusal)
@@ -64,8 +64,12 @@ class ReadingMixin:
         """
         Read a window of body paragraphs with their indices and styles
 
-        count is capped at MAX_PARAGRAPH_COUNT. total_paragraphs always
+        `count` is a window, not a limit: 50 when nobody says, and a caller
+        that asks for a whole document gets it. `total_paragraphs` always
         reflects the whole document, so the caller can page through it.
+        Anchors are the one bound — a read of more paragraphs than the
+        session can hold anchors for is refused rather than answered with
+        tokens that were let go before the answer was built.
 
         `start` is a number **or an address**: an anchor, a paragraph, or a
         block — `{"anchor": "a7f3c1"}` and the `address` a previous read
@@ -105,8 +109,17 @@ class ReadingMixin:
                         "error": f"start must be a non-negative integer or an "
                                  f"address, got {start!r}"}
 
-            window = max(1, min(int(DEFAULT_PARAGRAPH_COUNT if asked is None
-                                    else asked), MAX_PARAGRAPH_COUNT))
+            window = max(1, int(DEFAULT_PARAGRAPH_COUNT if asked is None
+                                else asked))
+            if anchors and window > MAX_ANCHORS:
+                return {"success": False, "code": "INVALID_PARAMETER",
+                        "error": f"a read of {window} paragraphs would hold "
+                                 f"more anchors than the {MAX_ANCHORS} this "
+                                 f"session keeps, and the earliest would be "
+                                 f"let go before the answer was built: ask "
+                                 f"for at most {MAX_ANCHORS} at a time, or "
+                                 f"pass anchors: false to read further in "
+                                 f"one go"}
             paragraphs = []
             total = 0
             standing: Dict[int, List[Dict[str, Any]]] = {}
@@ -148,6 +161,7 @@ class ReadingMixin:
                 "paragraphs": paragraphs,
                 "start": start,
                 "count": len(paragraphs),
+                "anchors": bool(anchors),
                 "total_paragraphs": total
             }
 

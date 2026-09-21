@@ -780,6 +780,16 @@ MAX_TEXT_CHARS = 2000
 
 # Paragraph window sizes for read_paragraphs
 DEFAULT_PARAGRAPH_COUNT = 50
+# How many anchors a session keeps. They are a way through one piece of work,
+# not a mark in the file, so the oldest is let go when a new one is made past
+# this. It also bounds what a single read may hand out: a read of more
+# paragraphs than this is refused with anchors on, rather than answered with
+# tokens that were let go while the answer was being built.
+MAX_ANCHORS = 2000
+
+# What one read carries when nobody says otherwise is DEFAULT_PARAGRAPH_COUNT
+# above; this is no longer a ceiling, only the window a caller is wise to page
+# by over a socket. A caller who asks for a whole document gets it.
 MAX_PARAGRAPH_COUNT = 200
 
 # How many paragraphs' runs one read_runs call will read. The runs of a

@@ -187,6 +187,12 @@ try:
     check("the document is as it was", bridge.read_paragraphs(
         start=0, count=1, doc=doc)["paragraphs"][0]["text"], "Chapter One")
 
+    whole = bridge.read_paragraphs(start=0, count=5000, anchors=False, doc=doc)
+    check("a read can be asked for the whole document at once",
+          (whole["count"], whole["count"] == whole["total_paragraphs"],
+           whole["anchors"]),
+          (whole["total_paragraphs"], True, False))
+
     print("\n--- find_text ---")
     found = bridge.find_text("alpha", doc=doc)
     print(found)

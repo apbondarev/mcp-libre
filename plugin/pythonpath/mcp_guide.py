@@ -59,7 +59,10 @@ what was true when you read. Three measured reasons:
 `read_paragraphs` also **takes** an address as its `start` — the one a
 previous read or a search handed back — so a long document is paged through
 without a number ever being carried from one call to the next, and a block
-address (`through`) says how many paragraphs to read. `anchor` holds a place
+address (`through`) says how many paragraphs to read. `count` is a window,
+not a limit: 50 unasked, and a whole document can be had in one call — 6981
+paragraphs came back in five seconds — though with anchors on it is refused
+past 2000, which is how many this session keeps. `anchor` holds a place
 you worked out some other way, `list_anchors` says where they point now (200
 a call, `held` counting them all), `drop_anchors` lets go of the ones whose
 work is done, and an anchor lives as long as this session.

@@ -64,7 +64,8 @@ class ReadingTools:
                     },
                     "count": {
                         "type": "integer",
-                        "description": "How many paragraphs to read (max 200, 50 by default — a block address says its own length)"
+                        "description": "How many paragraphs to read. 50 when nobody says, and a block address says its own length; it is a window rather than a limit, so a whole document can be asked for — but with `anchors` on, at most 2000, since that is how many anchors a session keeps",
+                        "default": 50
                     },
                     "anchors": {
                         "type": "boolean",

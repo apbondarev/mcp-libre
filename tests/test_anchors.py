@@ -316,3 +316,19 @@ def test_the_listing_refuses_a_start_that_is_not_a_number(bridge, doc):
 
     assert result["success"] is False
     assert result["code"] == "INVALID_PARAMETER"
+
+
+def test_the_listing_carries_more_than_a_page_when_asked(bridge):
+    # 200 is what a listing holds unasked, not what it can hold: a caller who
+    # wants every anchor of a session gets them.
+    from uno_anchors import DEFAULT_ANCHOR_REPORTS
+
+    how_many = DEFAULT_ANCHOR_REPORTS + 10
+    doc = writer_doc([f"Paragraph {i}." for i in range(how_many)], caret=(0, 0))
+    many_anchors(bridge, doc, how_many)
+
+    unasked = bridge.list_anchors(doc=doc)
+    listed = bridge.list_anchors(count=how_many, doc=doc)
+
+    assert (unasked["count"], unasked["more"]) == (DEFAULT_ANCHOR_REPORTS, True)
+    assert (listed["count"], listed["more"]) == (how_many, False)

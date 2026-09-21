@@ -49,20 +49,22 @@ from typing import Any, Dict, List, Optional
 import logging
 import secrets
 
-from uno_values import (AddressError, CELL_SERVICE, _get_property,
+from uno_values import (AddressError, CELL_SERVICE, MAX_ANCHORS,
+                        _get_property,
                         _supports, _text_payload)
 
 logger = logging.getLogger(__name__)
 
 # Held cursors are cheap — 300 held left an edit exactly as fast, measured —
 # but they are UNO proxies and they are never asked for again once a piece of
-# work is done, so the oldest are let go. The reading tools hand out an anchor
-# per paragraph by default, so the limit is set for a whole long document.
-MAX_ANCHORS = 2000
-
-# How many anchors one listing carries. Reporting a thousand of them is a
-# payload nobody reads and a placement for each; the rest are a page away.
-MAX_ANCHOR_REPORTS = 200
+# work is done, so the oldest are let go past MAX_ANCHORS, which lives with
+# the other bounds in uno_values.
+#
+# How many anchors one listing carries when nobody says. A default, not a
+# ceiling: reporting a thousand is a payload few want unasked, but a caller
+# who asks for the lot gets it — the store itself is the only bound.
+DEFAULT_ANCHOR_REPORTS = 200
+MAX_ANCHOR_REPORTS = DEFAULT_ANCHOR_REPORTS    # the old name, kept
 
 
 class AnchorsMixin:
@@ -457,8 +459,8 @@ class AnchorsMixin:
             return {"success": False, "code": "INVALID_PARAMETER",
                     "error": f"start must be a non-negative integer, "
                              f"got {start!r}"}
-        window = max(1, min(int(MAX_ANCHOR_REPORTS if count is None else count),
-                            MAX_ANCHOR_REPORTS))
+        window = max(1, int(DEFAULT_ANCHOR_REPORTS if count is None
+                            else count))
 
         key = self._document_key(doc)
         held = [(token, entry) for token, entry in self._anchor_store().items()

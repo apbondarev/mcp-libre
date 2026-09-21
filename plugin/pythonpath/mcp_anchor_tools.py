@@ -40,7 +40,8 @@ class AnchorTools:
                     },
                     "count": {
                         "type": "integer",
-                        "description": "How many anchors to report (max 200, which is also the default)"
+                        "description": "How many anchors to report. 200 when nobody says, and that is a default rather than a limit: ask for more and the rest come with it",
+                        "default": 200
                     },
                     "document": {
                         "type": "string",
