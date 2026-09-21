@@ -54,8 +54,9 @@ what was true when you read. Three measured reasons:
 previous read or a search handed back — so a long document is paged through
 without a number ever being carried from one call to the next, and a block
 address (`through`) says how many paragraphs to read. `anchor` holds a place
-you worked out some other way, `list_anchors` says where they point now, and
-an anchor lives as long as this session.
+you worked out some other way, `list_anchors` says where they point now (200
+a call, `held` counting them all), `drop_anchors` lets go of the ones whose
+work is done, and an anchor lives as long as this session.
 `select` puts an address under the reader's eyes.
 
 A caption numbers itself: `insert_caption` writes "Figure 3: …" beside a

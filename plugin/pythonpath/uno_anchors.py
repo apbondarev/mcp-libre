@@ -60,6 +60,10 @@ logger = logging.getLogger(__name__)
 # per paragraph by default, so the limit is set for a whole long document.
 MAX_ANCHORS = 2000
 
+# How many anchors one listing carries. Reporting a thousand of them is a
+# payload nobody reads and a placement for each; the rest are a page away.
+MAX_ANCHOR_REPORTS = 200
+
 
 class AnchorsMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
@@ -175,7 +179,44 @@ class AnchorsMixin:
                 f"used against this one")
         return entry
 
-    def paragraph_now(self, doc: Any, token: Any) -> int:
+    def _body_sweep(self, doc: Any) -> List[Any]:
+        """Every body paragraph in order, from one walk.
+
+        A listing places every anchor it reports, and placing one used to
+        reach its paragraph by number — a walk of the body apiece. With
+        hundreds of anchors held, which is what handing them out by default
+        means, that is thousands of walks: `list_anchors` on a 6981-paragraph
+        document did not answer in fifteen minutes, and the server takes its
+        calls one at a time, so nothing else answered either.
+        """
+        return [paragraph for paragraph, _ in self._body_paragraphs(doc)]
+
+    def _paragraph_holding(self, body: Any, sweep: List[Any],
+                           point: Any) -> Optional[int]:
+        """Which swept paragraph a position lies in, by halving the list.
+
+        The paragraphs are in document order and a region comparison says
+        which side of one a point falls, so thirteen comparisons answer where
+        a walk of seven thousand elements did. A point in a table cell cannot
+        be compared with the body at all — that throws — and is left to the
+        slow path, which knows about cells.
+        """
+        low, high = 0, len(sweep) - 1
+        while low <= high:
+            middle = (low + high) // 2
+            paragraph = sweep[middle]
+            if body.compareRegionStarts(paragraph.getStart(),
+                                        point.getStart()) < 0:
+                high = middle - 1          # this paragraph starts after it
+            elif body.compareRegionEnds(point.getEnd(),
+                                        paragraph.getEnd()) < 0:
+                low = middle + 1           # it ends after this paragraph
+            else:
+                return middle
+        return None
+
+    def paragraph_now(self, doc: Any, token: Any,
+                      sweep: Optional[List[Any]] = None) -> int:
         """Where a paragraph anchor's paragraph stands now, or AddressError.
 
         Gone — merged into the one before, or removed — is a refusal, never a
@@ -198,11 +239,17 @@ class AnchorsMixin:
         remembered = entry.get("index")
         try:
             if remembered is not None:
-                paragraph = self._paragraph_at(body, remembered)
+                paragraph = (sweep[remembered]
+                             if sweep is not None and remembered < len(sweep)
+                             else None if sweep is not None
+                             else self._paragraph_at(body, remembered))
                 if paragraph is not None and self._holds_point(
                         body, paragraph, point):
                     return remembered
-            index, _ = self._locate_paragraph(body, point.getStart())
+            if sweep is not None:
+                index = self._paragraph_holding(body, sweep, point)
+            else:
+                index, _ = self._locate_paragraph(body, point.getStart())
         except Exception as e:
             raise AddressError(f"could not place anchor {token!r}: {e}")
         if index is None:
@@ -281,20 +328,27 @@ class AnchorsMixin:
             logger.info(f"Could not place anchor {token}: {e}")
             return None
 
-    def _anchor_report(self, doc: Any, token: str,
-                       entry: Dict[str, Any]) -> Dict[str, Any]:
-        """One anchor, as a caller sees it: where it points and whether it does."""
+    def _anchor_report(self, doc: Any, token: str, entry: Dict[str, Any],
+                       sweep: Optional[List[Any]] = None) -> Dict[str, Any]:
+        """One anchor, as a caller sees it: where it points and whether it does.
+
+        `sweep` is the body walked once by the caller — see `_body_sweep`.
+        Without it every anchor reported here walked the body itself, twice:
+        once to place it and once to read the paragraph it landed in.
+        """
         report: Dict[str, Any] = {"anchor": token,
                                   "held_when_made": entry["held"],
                                   "kind": entry.get("kind", "text")}
         if entry.get("kind") == "paragraph":
             try:
-                index = self.paragraph_now(doc, token)
+                index = self.paragraph_now(doc, token, sweep)
             except AddressError as e:
                 report["alive"] = False
                 report["why"] = str(e)
                 return report
-            paragraph = self._paragraph_at(doc.getText(), index)
+            paragraph = (sweep[index] if sweep is not None and index is not None
+                         and index < len(sweep)
+                         else self._paragraph_at(doc.getText(), index))
             payload = _text_payload(paragraph.getString() if paragraph else "")
             report.update({"alive": True, "text": payload["text"],
                            "truncated": payload["truncated"],
@@ -317,7 +371,15 @@ class AnchorsMixin:
         report["text"] = payload["text"]
         report["truncated"] = payload["truncated"]
         try:
-            address, _, _ = self._locate_range(doc, cursor)
+            # The same walk the sweep already paid for: hand _locate_range the
+            # paragraph so it does not go looking for it again.
+            hint = None
+            if sweep is not None:
+                try:
+                    hint = self._paragraph_holding(doc.getText(), sweep, cursor)
+                except Exception:
+                    hint = None            # a cell: the slow path knows them
+            address, _, _ = self._locate_range(doc, cursor, hint)
             report["address"] = address
         except Exception as e:
             logger.info(f"Could not address anchor {token}: {e}")
@@ -373,25 +435,44 @@ class AnchorsMixin:
         logger.info(f"Anchored {len(made)} place(s)")
         return {"success": True, "anchors": made, "held": len(made)}
 
-    def list_anchors(self, doc: Any = None) -> Dict[str, Any]:
+    def list_anchors(self, start: int = 0, count: Optional[int] = None,
+                     doc: Any = None) -> Dict[str, Any]:
         """
         The anchors held for this document, and where each points now
 
         An anchor whose text has been replaced or whose document part is gone
         is reported with alive: false and the reason, rather than quietly
         resolving to the empty place it was left in.
+
+        A session that reads by address holds anchors in the hundreds, so the
+        listing is paged — `start` and `count` over the anchors in the order
+        they were made, `more` saying there are further ones — and `alive`
+        counts among those reported, where `held` counts them all. The body
+        is walked **once** for the whole call.
         """
         doc, error = self._writer_document(doc, "Listing anchors")
         if error:
             return error
+        if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+            return {"success": False, "code": "INVALID_PARAMETER",
+                    "error": f"start must be a non-negative integer, "
+                             f"got {start!r}"}
+        window = max(1, min(int(MAX_ANCHOR_REPORTS if count is None else count),
+                            MAX_ANCHOR_REPORTS))
 
         key = self._document_key(doc)
-        anchors = [self._anchor_report(doc, token, entry)
-                   for token, entry in self._anchor_store().items()
-                   if entry["document"] == key]
+        held = [(token, entry) for token, entry in self._anchor_store().items()
+                if entry["document"] == key]
+        showing = held[start:start + window]
+        sweep = self._body_sweep(doc) if showing else []
+        anchors = [self._anchor_report(doc, token, entry, sweep)
+                   for token, entry in showing]
         return {"success": True, "anchors": anchors,
-                "held": len(anchors),
+                "start": start,
+                "count": len(anchors),
+                "held": len(held),
                 "alive": sum(1 for one in anchors if one["alive"]),
+                "more": start + len(anchors) < len(held),
                 "held_in_all_documents": len(self._anchor_store()),
                 "limit": MAX_ANCHORS}
 

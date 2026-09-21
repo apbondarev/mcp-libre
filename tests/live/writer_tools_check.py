@@ -2108,6 +2108,33 @@ try:
     check("and is listed as dead, saying what it held",
           (dead["alive"], dead["held_when_made"]), (False, "ANCHOR-TWO"))
 
+    # The listing places every anchor it reports, and placing one used to
+    # reach its paragraph by number: a walk of the body apiece, which on a
+    # real document with hundreds held never came back at all. One walk now
+    # serves the whole call, and the paragraphs it reports have to be right
+    # after the numbers move, which is what the halving search is for.
+    read_back = bridge.read_paragraphs(start=0, count=20, doc=doc)["paragraphs"]
+    where = {entry["anchor"]: entry["paragraph"] for entry in read_back}
+    listed = bridge.list_anchors(count=200, doc=doc)
+    placed = {entry["anchor"]: (entry.get("address") or {}).get("paragraph")
+              for entry in listed["anchors"]}
+    check("every anchor a read handed out is placed where the read found it",
+          all(placed.get(token) == index for token, index in where.items()),
+          True)
+    text = doc.getText()
+    moved_up = text.createTextCursorByRange(text.getStart())
+    text.insertString(moved_up, "Pushed down.", False)
+    text.insertControlCharacter(moved_up, PARAGRAPH_BREAK, False)
+    after = {entry["anchor"]: (entry.get("address") or {}).get("paragraph")
+             for entry in bridge.list_anchors(count=200, doc=doc)["anchors"]}
+    check("and each is one further down once a paragraph is put above them",
+          all(after.get(token) == index + 1 for token, index in where.items()),
+          True)
+    text.removeTextContent(bridge._paragraph_at(text, 0))
+    paged = bridge.list_anchors(count=1, doc=doc)
+    check("the listing is paged, and says how many are held in all",
+          (paged["count"], paged["more"], paged["held"] >= 2), (1, True, True))
+
     hits = bridge.find_text("ANCHOR-REWRITTEN", anchors=True, doc=doc)
     check("a search can hand back an anchor per hit",
           bridge._resolve_address(

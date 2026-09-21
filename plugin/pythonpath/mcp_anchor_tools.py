@@ -29,10 +29,19 @@ class AnchorTools:
         }
 
         self.tools["list_anchors_live"] = {
-            "description": "List the anchors held for this document, each with the text it covers now and its address as it stands. An anchor whose text has been replaced or deleted is reported alive: false with the reason, instead of quietly resolving to the empty place it was left in",
+            "description": "List the anchors held for this document, each with the text it covers now and its address as it stands. An anchor whose text has been replaced or deleted is reported alive: false with the reason, instead of quietly resolving to the empty place it was left in. A session that reads by address holds them in the hundreds, so the listing is paged: at most 200 a call, `held` counting them all and `more` saying there are further ones",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "start": {
+                        "type": "integer",
+                        "description": "Which anchor to begin at, in the order they were made (0-based)",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many anchors to report (max 200, which is also the default)"
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -69,13 +78,13 @@ class AnchorTools:
             return error
         return self.uno_bridge.anchor(addresses, doc=doc)
 
-    def list_anchors_live(self,
+    def list_anchors_live(self, start: int = 0, count: Optional[int] = None,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Report the anchors held for a document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_anchors(doc=doc)
+        return self.uno_bridge.list_anchors(start=start, count=count, doc=doc)
 
     def drop_anchors_live(self, anchors: Optional[List[str]] = None,
                           document: Optional[str] = None) -> Dict[str, Any]:

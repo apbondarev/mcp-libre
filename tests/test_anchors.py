@@ -246,3 +246,73 @@ def test_an_address_in_a_cell_resolves_with_its_anchor_beside_it(bridge):
     handed_out = dict(in_cell, anchor=token)
 
     assert bridge._resolve_address(doc, handed_out).getString() == "R2-D2"
+
+
+# --- listing them without walking the document once per anchor -------------
+#
+# Reading by address holds anchors in the hundreds, and the listing placed
+# each of them by reaching its paragraph by number — a walk of the body
+# apiece. On a real 6981-paragraph document the call did not answer in
+# fifteen minutes, and the server takes its calls one at a time, so nothing
+# else answered either.
+
+def many_anchors(bridge, doc, how_many):
+    return [bridge.anchor({"paragraph": index}, doc=doc)["anchors"][0]["anchor"]
+            for index in range(how_many)]
+
+
+def test_listing_walks_the_body_once_however_many_anchors_are_held(bridge,
+                                                                    monkeypatch):
+    doc = writer_doc([f"Paragraph {i}." for i in range(12)], caret=(0, 0))
+    many_anchors(bridge, doc, 8)
+    walks = []
+    walked = bridge._body_paragraphs
+
+    def counted(*arguments, **named):
+        walks.append(True)
+        return walked(*arguments, **named)
+
+    monkeypatch.setattr(bridge, "_body_paragraphs", counted)
+    reached = []
+    at = bridge._paragraph_at
+    monkeypatch.setattr(bridge, "_paragraph_at",
+                        lambda *a, **k: (reached.append(True), at(*a, **k))[1])
+
+    listed = bridge.list_anchors(doc=doc)
+
+    assert listed["alive"] == 8
+    assert len(walks) == 1
+    assert reached == []
+
+
+def test_the_listing_places_anchors_after_the_numbers_have_moved(bridge):
+    doc = writer_doc([f"Paragraph {i}." for i in range(12)], caret=(0, 0))
+    held = many_anchors(bridge, doc, 4)
+    bridge.split_paragraph({"paragraph": 0, "offset": 0, "length": 0}, doc=doc)
+
+    listed = bridge.list_anchors(doc=doc)
+
+    assert [one["address"]["paragraph"] for one in listed["anchors"]] \
+        == [1, 2, 3, 4]
+    assert [one["text"] for one in listed["anchors"]] \
+        == [f"Paragraph {i}." for i in range(4)]
+    assert len(held) == 4
+
+
+def test_the_listing_is_paged(bridge):
+    doc = writer_doc([f"Paragraph {i}." for i in range(12)], caret=(0, 0))
+    many_anchors(bridge, doc, 5)
+
+    first = bridge.list_anchors(count=2, doc=doc)
+    second = bridge.list_anchors(start=2, count=2, doc=doc)
+
+    assert (first["count"], first["held"], first["more"]) == (2, 5, True)
+    assert [one["address"]["paragraph"] for one in second["anchors"]] == [2, 3]
+    assert bridge.list_anchors(start=4, doc=doc)["more"] is False
+
+
+def test_the_listing_refuses_a_start_that_is_not_a_number(bridge, doc):
+    result = bridge.list_anchors(start="first", doc=doc)
+
+    assert result["success"] is False
+    assert result["code"] == "INVALID_PARAMETER"
