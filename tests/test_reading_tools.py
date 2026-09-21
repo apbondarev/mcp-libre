@@ -166,18 +166,38 @@ def test_returns_an_empty_outline_for_a_document_without_headings(bridge):
     assert result["headings"] == []
 
 
-def test_caps_the_outline_and_flags_it(bridge):
-    from uno_bridge import MAX_OUTLINE_ENTRIES
+def test_a_window_nobody_asked_about_holds_two_hundred_headings(bridge):
+    from uno_bridge import DEFAULT_OUTLINE_ENTRIES
 
-    count = MAX_OUTLINE_ENTRIES + 10
+    count = DEFAULT_OUTLINE_ENTRIES + 10
     doc = writer_doc([f"Heading {i}" for i in range(count)], caret=(0, 0),
                      styles=["Heading 1"] * count,
                      outline_levels=[1] * count)
 
     result = bridge.get_outline(doc=doc)
 
-    assert len(result["headings"]) == MAX_OUTLINE_ENTRIES
+    assert len(result["headings"]) == DEFAULT_OUTLINE_ENTRIES
     assert result["truncated"] is True
+    assert result["total_headings"] == count
+
+
+def test_the_whole_map_comes_in_one_call_when_it_is_asked_for(bridge):
+    # 200 is what an unasked-for window holds, not what the tool can carry:
+    # a map that stops in the middle is no map, and the chapter being looked
+    # for was exactly the one past the end.
+    from uno_bridge import DEFAULT_OUTLINE_ENTRIES
+
+    count = DEFAULT_OUTLINE_ENTRIES + 10
+    doc = writer_doc([f"Heading {i}" for i in range(count)], caret=(0, 0),
+                     styles=["Heading 1"] * count,
+                     outline_levels=[1] * count)
+
+    result = bridge.get_outline(count=count, doc=doc)
+
+    assert len(result["headings"]) == count
+    assert result["more"] is False
+    assert result["truncated"] is False
+    assert result["headings"][-1]["text"] == f"Heading {count - 1}"
 
 
 def test_get_outline_rejects_a_non_writer_document(bridge):

@@ -92,7 +92,8 @@ class ReadingTools:
                     },
                     "count": {
                         "type": "integer",
-                        "description": "How many headings to return (max 200, which is also the default)"
+                        "description": "How many headings to return. 200 when nobody says, and that is a default, not a limit: ask for more and the rest come with it, so a whole map — hundreds of headings — is one call",
+                        "default": 200
                     },
                     "anchors": {
                         "type": "boolean",

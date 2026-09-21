@@ -54,7 +54,8 @@ import logging
 
 # Re-exported: callers and tests import these from here, where they have
 # always been.
-from uno_values import (AddressError, MAX_OUTLINE_ENTRIES,  # noqa: F401
+from uno_values import (AddressError,  # noqa: F401
+                        DEFAULT_OUTLINE_ENTRIES, MAX_OUTLINE_ENTRIES,
                         MAX_PARAGRAPH_COUNT, MAX_TEXT_CHARS)
 from uno_address import AddressMixin
 from uno_anchors import AnchorsMixin

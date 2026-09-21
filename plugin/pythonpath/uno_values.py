@@ -788,8 +788,12 @@ MAX_PARAGRAPH_COUNT = 200
 # without bound.
 MAX_RUN_PARAGRAPHS = 50
 
-# Cap on headings returned by get_outline
-MAX_OUTLINE_ENTRIES = 200
+# How many headings get_outline returns when nobody says. It is a default,
+# not a ceiling: an outline entry is a line, not a paragraph of text, and a
+# caller asking for a whole map — 938 headings on a real guide — should get
+# it in one call rather than being told the answer stops at 200.
+DEFAULT_OUTLINE_ENTRIES = 200
+MAX_OUTLINE_ENTRIES = DEFAULT_OUTLINE_ENTRIES   # the old name, kept
 
 # Search result caps for find_text
 DEFAULT_SEARCH_RESULTS = 50

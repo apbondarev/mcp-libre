@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 import logging
 from uno_values import (AddressError, DEFAULT_PARAGRAPH_COUNT,
     DEFAULT_SEARCH_RESULTS, 
-    MAX_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
+    DEFAULT_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
     MAX_TEXT_CHARS, WRITER_SERVICE, _get_property, _heading_level, 
     _supports, _text_payload, refusal)
 
@@ -187,8 +187,11 @@ class ReadingMixin:
                 return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"start must be a non-negative integer or an "
                                  f"address, got {start!r}"}
-            window = max(1, min(int(MAX_OUTLINE_ENTRIES if count is None
-                                    else count), MAX_OUTLINE_ENTRIES))
+            # A default, not a ceiling: ask for more and you get more, since
+            # a map of a document is what this answers and half a map is no
+            # map. 200 is only what an unasked-for window holds.
+            window = max(1, int(DEFAULT_OUTLINE_ENTRIES if count is None
+                                else count))
 
             headings = []
             total = 0

@@ -140,6 +140,12 @@ try:
           ([h["text"] for h in one_at_a_time["headings"]],
            one_at_a_time["total_headings"], one_at_a_time["more"]),
           (["Chapter One"], 2, True))
+    check("and a count past the default carries the whole map",
+          ([h["text"] for h in bridge.get_outline(count=5000, anchors=False,
+                                                  doc=doc)["headings"]],
+           bridge.get_outline(count=5000, anchors=False,
+                              doc=doc)["truncated"]),
+          (["Chapter One", "Section A"], False))
     check("and goes on from the last heading's own address",
           [h["text"] for h in bridge.get_outline(
               start=one_at_a_time["headings"][-1]["address"], count=2,
