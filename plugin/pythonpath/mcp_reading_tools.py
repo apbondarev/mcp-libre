@@ -81,10 +81,24 @@ class ReadingTools:
         }
 
         self.tools["get_outline_live"] = {
-            "description": "List the headings of the active Writer document with the paragraph index of each",
+            "description": "List the headings of the active Writer document with the paragraph index of each — the map of a long document, without reading it. One call carries at most 200 headings, so a long document is paged: `more` says there are further headings, and the last heading's own `address` is what to pass back as `start`",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "start": {
+                        "type": ["integer", "object"],
+                        "description": "Where in the document to begin: a 0-based paragraph index, or an address — an anchor, {\"paragraph\": N}, or the `address` of a heading from an earlier call, passed straight through. The headings from there on are returned",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many headings to return (max 200, which is also the default)"
+                    },
+                    "anchors": {
+                        "type": "boolean",
+                        "description": "Give every heading an `address` holding an anchor beside its index, so the map still points at the right paragraphs after edits have renumbered them. On by default",
+                        "default": True
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -185,12 +199,15 @@ class ReadingTools:
         return self.uno_bridge.read_paragraphs(start=start, count=count,
                                                anchors=anchors, doc=doc)
 
-    def get_outline_live(self, document: Optional[str] = None) -> Dict[str, Any]:
+    def get_outline_live(self, start: Any = 0, count: Optional[int] = None,
+                         anchors: bool = True,
+                         document: Optional[str] = None) -> Dict[str, Any]:
         """List the headings of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.get_outline(doc=doc)
+        return self.uno_bridge.get_outline(start=start, count=count,
+                                           anchors=anchors, doc=doc)
 
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,

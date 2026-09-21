@@ -125,20 +125,24 @@ def test_lists_headings_with_their_levels(bridge):
     doc = writer_doc(OUTLINE_PARAGRAPHS, caret=(0, 0), styles=OUTLINE_STYLES,
                      outline_levels=[1, 0, 2, 0])
 
-    result = bridge.get_outline(doc)
+    result = bridge.get_outline(doc=doc)
 
     assert result["success"] is True
-    assert result["headings"] == [
+    assert [{key: one[key] for key in ("paragraph", "level", "text")}
+            for one in result["headings"]] == [
         {"paragraph": 0, "level": 1, "text": "Chapter One"},
         {"paragraph": 2, "level": 2, "text": "Section A"},
     ]
+    # Every entry is an address to read or edit from, anchored like the rest.
+    assert all(one["address"]["anchor"] == one["anchor"]
+               for one in result["headings"])
 
 
 def test_reports_the_paragraph_count_alongside_the_outline(bridge):
     doc = writer_doc(OUTLINE_PARAGRAPHS, caret=(0, 0), styles=OUTLINE_STYLES,
                      outline_levels=[1, 0, 2, 0])
 
-    result = bridge.get_outline(doc)
+    result = bridge.get_outline(doc=doc)
 
     assert result["total_paragraphs"] == 4
 
@@ -147,7 +151,7 @@ def test_falls_back_to_style_names_when_outline_level_is_absent(bridge):
     doc = writer_doc(OUTLINE_PARAGRAPHS, caret=(0, 0), styles=OUTLINE_STYLES,
                      expose_outline_level=False)
 
-    result = bridge.get_outline(doc)
+    result = bridge.get_outline(doc=doc)
 
     assert [h["paragraph"] for h in result["headings"]] == [0, 2]
     assert [h["level"] for h in result["headings"]] == [1, 2]
@@ -156,7 +160,7 @@ def test_falls_back_to_style_names_when_outline_level_is_absent(bridge):
 def test_returns_an_empty_outline_for_a_document_without_headings(bridge):
     doc = writer_doc(["Just body.", "More body."], caret=(0, 0))
 
-    result = bridge.get_outline(doc)
+    result = bridge.get_outline(doc=doc)
 
     assert result["success"] is True
     assert result["headings"] == []
@@ -170,14 +174,14 @@ def test_caps_the_outline_and_flags_it(bridge):
                      styles=["Heading 1"] * count,
                      outline_levels=[1] * count)
 
-    result = bridge.get_outline(doc)
+    result = bridge.get_outline(doc=doc)
 
     assert len(result["headings"]) == MAX_OUTLINE_ENTRIES
     assert result["truncated"] is True
 
 
 def test_get_outline_rejects_a_non_writer_document(bridge):
-    result = bridge.get_outline(FakeCalcDoc())
+    result = bridge.get_outline(doc=FakeCalcDoc())
 
     assert result["success"] is False
     assert "writer" in result["error"].lower()
@@ -442,3 +446,62 @@ def test_a_start_that_is_neither_a_number_nor_an_address_is_refused(bridge):
 
     assert read["success"] is False
     assert read["code"] == "INVALID_PARAMETER"
+
+
+# --- paging the outline of a long document ---------------------------------
+#
+# One call carries 200 headings. A real guide has more, and the rest used to
+# be unreachable: the chapter being looked for was simply not in the answer,
+# and nothing but a text search could find it.
+
+def outline_doc(headings=6):
+    lines, styles, levels = [], [], []
+    for number in range(headings):
+        lines += [f"Heading {number}", f"Body under {number}."]
+        styles += ["Heading 1", "Standard"]
+        levels += [1, 0]
+    return writer_doc(lines, caret=(0, 0), styles=styles, outline_levels=levels)
+
+
+def test_the_outline_says_how_many_headings_there_are_in_all(bridge):
+    result = bridge.get_outline(count=2, doc=outline_doc(6))
+
+    assert [one["text"] for one in result["headings"]] == ["Heading 0",
+                                                            "Heading 1"]
+    assert (result["total_headings"], result["headings_before"],
+            result["more"]) == (6, 0, True)
+
+
+def test_the_outline_goes_on_from_a_headings_own_address(bridge):
+    doc = outline_doc(6)
+    page = bridge.get_outline(count=2, doc=doc)
+
+    carry_on = bridge.get_outline(start=page["headings"][-1]["address"],
+                                  count=2, doc=doc)
+
+    assert [one["text"] for one in carry_on["headings"]] == ["Heading 1",
+                                                             "Heading 2"]
+    assert carry_on["headings_before"] == 1
+
+
+def test_the_last_page_of_an_outline_says_there_is_no_more(bridge):
+    result = bridge.get_outline(start={"paragraph": 8}, doc=outline_doc(6))
+
+    assert [one["text"] for one in result["headings"]] == ["Heading 4",
+                                                            "Heading 5"]
+    assert result["more"] is False
+    assert result["truncated"] is False
+
+
+def test_an_outline_can_be_asked_for_without_anchors(bridge):
+    result = bridge.get_outline(anchors=False, doc=outline_doc(2))
+
+    assert all("anchor" not in one for one in result["headings"])
+    assert result["headings"][0]["address"] == {"paragraph": 0}
+
+
+def test_an_outline_refuses_a_start_that_names_no_paragraph(bridge):
+    result = bridge.get_outline(start={"paragraph": 99}, doc=outline_doc(2))
+
+    assert result["success"] is False
+    assert result["code"] == "INVALID_ADDRESS"

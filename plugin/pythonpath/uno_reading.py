@@ -155,21 +155,45 @@ class ReadingMixin:
             logger.error(f"Failed to read paragraphs: {e}")
             return refusal("FAILED", e)
 
-    def get_outline(self, doc: Any = None) -> Dict[str, Any]:
+    def get_outline(self, start: Any = 0, count: Optional[int] = None,
+                    anchors: bool = True, doc: Any = None) -> Dict[str, Any]:
         """
         List the document's headings with the paragraph index of each
 
         Gives an assistant a map of a long document without reading it, and
-        every entry doubles as an address to read or edit from.
+        every entry doubles as an address to read or edit from — with an
+        anchor beside the number unless `anchors` is false, so the map keeps
+        pointing at the right paragraphs after edits have moved them.
+
+        Long documents are paged the way `read_paragraphs` pages: `start` is
+        a place in the document — a number or an address — and the headings
+        from there on are returned, at most `count` of them. A real guide of
+        519 pages has more than the 200 one call carries, and before this the
+        rest could not be reached at all: the chapter being looked for simply
+        was not in the answer. `more` says another call is worth making, and
+        the last heading's own address is what to hand back as `start`.
         """
         try:
             doc, error = self._writer_document(doc, "An outline")
             if error:
                 return error
 
+            if isinstance(start, dict):
+                try:
+                    start, _ = self._paragraphs_from(doc, start)
+                except AddressError as e:
+                    return refusal("INVALID_ADDRESS", e)
+            if not isinstance(start, int) or isinstance(start, bool) or start < 0:
+                return {"success": False, "code": "INVALID_PARAMETER",
+                        "error": f"start must be a non-negative integer or an "
+                                 f"address, got {start!r}"}
+            window = max(1, min(int(MAX_OUTLINE_ENTRIES if count is None
+                                    else count), MAX_OUTLINE_ENTRIES))
+
             headings = []
             total = 0
-            dropped = 0
+            before = 0
+            after = 0
 
             enumeration = doc.getText().createEnumeration()
             while enumeration.hasMoreElements():
@@ -178,24 +202,41 @@ class ReadingMixin:
                     continue
                 level = _heading_level(element)
                 if level > 0:
-                    if len(headings) < MAX_OUTLINE_ENTRIES:
-                        headings.append({
+                    if total < start:
+                        before += 1
+                    elif len(headings) < window:
+                        entry = {
                             "paragraph": total,
                             "level": level,
                             "text": element.getString()[:MAX_TEXT_CHARS]
-                        })
+                        }
+                        token = self._hold_paragraph_anchor(
+                            doc, element, total) if anchors else None
+                        entry["address"] = {"paragraph": total,
+                                            "anchor": token} if token \
+                            else {"paragraph": total}
+                        if token:
+                            entry["anchor"] = token
+                        headings.append(entry)
                     else:
-                        dropped += 1
+                        after += 1
                 total += 1
 
-            if dropped:
-                logger.info(f"Outline truncated, {dropped} headings dropped")
+            if after:
+                logger.info(f"Outline paged, {after} headings after this window")
 
             return {
                 "success": True,
                 "headings": headings,
+                "start": start,
+                "count": len(headings),
+                "headings_before": before,
+                "total_headings": before + len(headings) + after,
                 "total_paragraphs": total,
-                "truncated": dropped > 0
+                "more": after > 0,
+                # What this key meant before paging existed: there are
+                # headings this answer does not carry.
+                "truncated": after > 0
             }
 
         except Exception as e:

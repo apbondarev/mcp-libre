@@ -298,6 +298,12 @@ external program — which is how to check a table or a layout.
 
 ## Spending fewer calls
 
+`get_outline` is the map of a long document: every heading with its level and
+its address, without reading a word of the body. It carries 200 headings a
+call — `more` says there are further ones, and the last heading's address is
+what to pass back as `start`, so a guide of five hundred pages is walked
+heading by heading rather than searched for by guesswork.
+
 `find_text` brings the paragraphs around each hit (`paragraphs_before`,
 `paragraphs_after`) and hands out anchors, so one call does what would
 otherwise be one per hit. `format_ranges` colours many pieces at once, and

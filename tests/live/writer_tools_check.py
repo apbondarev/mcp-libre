@@ -123,13 +123,28 @@ try:
     bridge.desktop = desktop        # for the tools that find a document themselves
 
     print("--- get_outline ---")
-    outline = bridge.get_outline(doc)
+    outline = bridge.get_outline(doc=doc)
     print(outline)
     check("outline success", outline.get("success"), True)
     check("heading texts", [h["text"] for h in outline["headings"]],
           ["Chapter One", "Section A"])
     check("heading levels", [h["level"] for h in outline["headings"]], [1, 2])
     check("heading paragraphs", [h["paragraph"] for h in outline["headings"]], [0, 2])
+    check("every heading is an address to work from",
+          all(isinstance(h["address"].get("anchor"), str)
+              for h in outline["headings"]), True)
+    # A long document has more headings than one call carries, and the rest
+    # used to be unreachable: the outline stopped and said only "truncated".
+    one_at_a_time = bridge.get_outline(count=1, doc=doc)
+    check("an outline can be asked for a page at a time",
+          ([h["text"] for h in one_at_a_time["headings"]],
+           one_at_a_time["total_headings"], one_at_a_time["more"]),
+          (["Chapter One"], 2, True))
+    check("and goes on from the last heading's own address",
+          [h["text"] for h in bridge.get_outline(
+              start=one_at_a_time["headings"][-1]["address"], count=2,
+              doc=doc)["headings"]],
+          ["Chapter One", "Section A"])
 
     print("\n--- read_paragraphs ---")
     window = bridge.read_paragraphs(start=1, count=2, doc=doc)
@@ -271,7 +286,7 @@ try:
     undo.undo()
 
     print("\n--- replace_range by address: translating a heading ---")
-    outline_before = bridge.get_outline(doc)
+    outline_before = bridge.get_outline(doc=doc)
     heading = outline_before["headings"][1]        # "Section A" at its index
     print("heading to rewrite:", heading)
     replaced = bridge.replace_range({"paragraph": heading["paragraph"]},
@@ -279,7 +294,7 @@ try:
     print(replaced)
     check("replace_range succeeded", replaced.get("success"), True)
 
-    outline_after = bridge.get_outline(doc)
+    outline_after = bridge.get_outline(doc=doc)
     check("heading text is translated",
           [h["text"] for h in outline_after["headings"]],
           ["Chapter One", "Section Two"])
