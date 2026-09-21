@@ -6,7 +6,8 @@ back to a tool that edits it.
 
 from typing import Any, Dict, List, Optional
 import logging
-from uno_values import (DEFAULT_PARAGRAPH_COUNT, DEFAULT_SEARCH_RESULTS, 
+from uno_values import (AddressError, DEFAULT_PARAGRAPH_COUNT,
+    DEFAULT_SEARCH_RESULTS, 
     MAX_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
     MAX_TEXT_CHARS, WRITER_SERVICE, _get_property, _heading_level, 
     _supports, _text_payload, refusal)
@@ -39,8 +40,25 @@ class ReadingMixin:
             logger.error(f"Failed to get text content: {e}")
             return refusal("FAILED", e)
 
-    def read_paragraphs(self, start: int = 0,
-                        count: int = DEFAULT_PARAGRAPH_COUNT,
+    def _paragraphs_from(self, doc: Any, address: Any) -> tuple:
+        """(first paragraph, how many it covers) for a read that starts at an
+        address rather than at a number.
+
+        The reading tools hand out addresses precisely so a caller need never
+        carry a number from one call to the next; the tool that pages through
+        a document has to take one back, or the habit breaks at the first
+        page. A block says its own length, which is what "read this section"
+        means.
+        """
+        first = self._paragraph_index_of(doc, address)
+        through = address.get("through")
+        if isinstance(through, int) and not isinstance(through, bool):
+            last = self._paragraph_index_of(doc, {"paragraph": through})
+            return min(first, last), abs(last - first) + 1
+        return first, None
+
+    def read_paragraphs(self, start: Any = 0,
+                        count: Optional[int] = None,
                         anchors: bool = True,
                         doc: Any = None) -> Dict[str, Any]:
         """
@@ -48,6 +66,13 @@ class ReadingMixin:
 
         count is capped at MAX_PARAGRAPH_COUNT. total_paragraphs always
         reflects the whole document, so the caller can page through it.
+
+        `start` is a number **or an address**: an anchor, a paragraph, or a
+        block — `{"anchor": "a7f3c1"}` and the `address` a previous read
+        handed back are both accepted, so a long document can be walked
+        without a number ever being carried from one call to the next. A
+        block (`through`) also says how many to read when `count` does not.
+        The `start` in the result is the number the address came to.
 
         Every paragraph comes with an `address` holding a paragraph anchor
         beside its number, so passing that address back reaches the same
@@ -67,11 +92,21 @@ class ReadingMixin:
             if error:
                 return error
 
+            asked = count
+            if isinstance(start, dict):
+                try:
+                    start, spans = self._paragraphs_from(doc, start)
+                except AddressError as e:
+                    return refusal("INVALID_ADDRESS", e)
+                if asked is None and spans is not None:
+                    asked = spans
             if not isinstance(start, int) or isinstance(start, bool) or start < 0:
                 return {"success": False, "code": "INVALID_PARAMETER",
-                        "error": f"start must be a non-negative integer, got {start!r}"}
+                        "error": f"start must be a non-negative integer or an "
+                                 f"address, got {start!r}"}
 
-            window = max(1, min(int(count), MAX_PARAGRAPH_COUNT))
+            window = max(1, min(int(DEFAULT_PARAGRAPH_COUNT if asked is None
+                                    else asked), MAX_PARAGRAPH_COUNT))
             paragraphs = []
             total = 0
             standing: Dict[int, List[Dict[str, Any]]] = {}

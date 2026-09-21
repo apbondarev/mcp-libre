@@ -58,14 +58,13 @@ class ReadingTools:
                 "type": "object",
                 "properties": {
                     "start": {
-                        "type": "integer",
-                        "description": "Index of the first paragraph to read (0-based)",
+                        "type": ["integer", "object"],
+                        "description": "Where to start: a 0-based paragraph index, or an address — {\"anchor\": \"a7f3c1\"}, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, or the `address` a previous read or a search handed back, passed straight through. Prefer the address: it still names the same paragraph after edits above it have renumbered the document, so a long document can be walked without carrying a number from one call to the next. The `start` in the result says which number it came to",
                         "default": 0
                     },
                     "count": {
                         "type": "integer",
-                        "description": "How many paragraphs to read (max 200)",
-                        "default": 50
+                        "description": "How many paragraphs to read (max 200, 50 by default — a block address says its own length)"
                     },
                     "anchors": {
                         "type": "boolean",
@@ -175,7 +174,8 @@ class ReadingTools:
             return error
         return self.uno_bridge.get_cursor_info(doc=doc)
 
-    def read_paragraphs_live(self, start: int = 0, count: int = 50,
+    def read_paragraphs_live(self, start: Any = 0,
+                             count: Optional[int] = None,
                              anchors: bool = True,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """Read a window of paragraphs from a Writer document"""

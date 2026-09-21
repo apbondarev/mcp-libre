@@ -546,8 +546,9 @@ class AddressMixin:
             doc, self._resolve_address(doc, address),
             self._paragraph_hint(address, doc))
         if located["paragraph"] is None:
-            raise AddressError("that address is outside the body text, so its "
-                               "paragraph cannot be spell checked")
+            raise AddressError("that address is outside the body text — a "
+                               "table cell, most likely — so it names no body "
+                               "paragraph")
         return located["paragraph"]
 
     def _count_body_paragraphs(self, doc: Any) -> Optional[int]:

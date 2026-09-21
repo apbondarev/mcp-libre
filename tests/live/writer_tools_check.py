@@ -139,6 +139,33 @@ try:
     check("window indices", [p["paragraph"] for p in window["paragraphs"]], [1, 2])
     check("style of a heading", window["paragraphs"][1]["style"], "Heading 2")
 
+    # Paging by number is the one place the anchor habit used to break: the
+    # reader hands out addresses and then would only take a number back.
+    handed_out = window["paragraphs"][0]["address"]
+    check("a read starts at an address it handed out",
+          [p["text"] for p in bridge.read_paragraphs(
+              start=handed_out, count=1, doc=doc)["paragraphs"]],
+          ["Alpha beta alpha."])
+    check("and a block address says its own length",
+          [p["text"] for p in bridge.read_paragraphs(
+              start={"paragraph": 1, "through": 2}, doc=doc)["paragraphs"]],
+          ["Alpha beta alpha.", "Section A"])
+    text = doc.getText()
+    above = text.createTextCursorByRange(text.getStart())
+    text.insertString(above, "Put in above.", False)
+    text.insertControlCharacter(above, PARAGRAPH_BREAK, False)
+    moved = bridge.read_paragraphs(start=handed_out, count=1, doc=doc)
+    check("an address still reads its own paragraph after the numbers moved",
+          ([p["text"] for p in moved["paragraphs"]], moved["start"]),
+          (["Alpha beta alpha."], 2))
+    check("where the number it was handed out with now reads another",
+          bridge.read_paragraphs(start=1, count=1,
+                                 doc=doc)["paragraphs"][0]["text"],
+          "Chapter One")
+    text.removeTextContent(bridge._paragraph_at(text, 0))
+    check("the document is as it was", bridge.read_paragraphs(
+        start=0, count=1, doc=doc)["paragraphs"][0]["text"], "Chapter One")
+
     print("\n--- find_text ---")
     found = bridge.find_text("alpha", doc=doc)
     print(found)

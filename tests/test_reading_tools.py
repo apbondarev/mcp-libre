@@ -377,3 +377,68 @@ def test_the_search_tool_passes_the_neighbourhood_through():
         "find_text_live", {"query": "Operation", "paragraphs_after": 1}))
 
     assert [entry["text"] for entry in found["hits"][0]["after"]] == ["{"]
+
+
+# --- reading from an address, so no number is ever carried ------------------
+#
+# The reading tools hand out addresses with an anchor precisely so a caller
+# need not carry paragraph numbers between calls. Paging through a document
+# was the one place the habit broke: `start` took a number and nothing else.
+
+def test_reading_starts_at_a_paragraph_address(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+
+    read = bridge.read_paragraphs(start={"paragraph": 2}, count=2, doc=doc)
+
+    assert [p["text"] for p in read["paragraphs"]] == ["Gamma.", "Delta."]
+    assert read["start"] == 2
+
+
+def test_reading_starts_where_an_anchor_still_points(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+    handed_out = bridge.read_paragraphs(start=2, count=1,
+                                        doc=doc)["paragraphs"][0]["address"]
+
+    # A paragraph is made above, so every number below it has moved.
+    bridge.split_paragraph({"paragraph": 0, "offset": 0, "length": 0}, doc=doc)
+
+    read = bridge.read_paragraphs(start=handed_out, count=1, doc=doc)
+
+    assert [p["text"] for p in read["paragraphs"]] == ["Gamma."]
+    assert read["start"] == 3
+
+
+def test_a_block_address_says_how_many_to_read(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+
+    read = bridge.read_paragraphs(start={"paragraph": 1, "through": 3}, doc=doc)
+
+    assert [p["text"] for p in read["paragraphs"]] == ["Beta.", "Gamma.",
+                                                        "Delta."]
+
+
+def test_a_count_beside_a_block_address_wins(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+
+    read = bridge.read_paragraphs(start={"paragraph": 1, "through": 3},
+                                  count=1, doc=doc)
+
+    assert [p["text"] for p in read["paragraphs"]] == ["Beta."]
+
+
+def test_an_address_that_names_no_body_paragraph_is_refused(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+
+    read = bridge.read_paragraphs(start={"paragraph": 99}, doc=doc)
+
+    assert read["success"] is False
+    assert read["code"] == "INVALID_ADDRESS"
+
+
+def test_a_start_that_is_neither_a_number_nor_an_address_is_refused(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(0, 0))
+
+    read = bridge.read_paragraphs(start="two", doc=doc)
+
+    assert read["success"] is False
+    assert read["code"] == "INVALID_PARAMETER"
