@@ -69,7 +69,25 @@ class ImagesMixin:
             logger.error(f"Could not enumerate the pictures: {e}")
             return []
 
-    def _describe_image(self, doc: Any, image: Any) -> Dict[str, Any]:
+    def _contents_of(self, portion: Any) -> List[Any]:
+        """What a text portion holds — a picture, a frame — or nothing.
+
+        Measured: a portion of type `Frame` hands out the object anchored
+        there through `createContentEnumeration`, so a paragraph names its own
+        pictures and nothing has to ask the document for all of them.
+        """
+        found = []
+        try:
+            contents = portion.createContentEnumeration(
+                "com.sun.star.text.TextContent")
+            while contents.hasMoreElements():
+                found.append(contents.nextElement())
+        except Exception as e:
+            logger.info(f"A portion would not say what it holds: {e}")
+        return found
+
+    def _describe_image(self, doc: Any, image: Any, address: Any = "unplaced",
+                        paragraph_text: Any = None) -> Dict[str, Any]:
         """
         A picture as a caller sees it: what it is, where it is, what it shows
 
@@ -109,6 +127,12 @@ class ImagesMixin:
 
         described["address"] = None
         described["paragraph_text"] = None
+        if address != "unplaced":
+            # The caller walked past this picture and knows where it stands;
+            # locating it again walks the body.
+            described["address"] = address
+            described["paragraph_text"] = paragraph_text
+            return described
         try:
             located, _, _ = self._locate_range(doc, image.getAnchor())
             described["address"] = located
@@ -144,7 +168,9 @@ class ImagesMixin:
                 continue
             described = self._describe_image(doc, image)
             address = described.get("address") or {}
-            if address.get("paragraph") != paragraph:
+            # A read made through an anchor knows no paragraph number — the
+            # cursor comparison above is the filter then.
+            if paragraph is not None and address.get("paragraph") != paragraph:
                 continue
             offset = address.get("offset")
             if offset is None or not (start <= offset <= end):

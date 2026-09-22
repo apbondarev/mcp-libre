@@ -358,3 +358,63 @@ def test_and_can_still_be_asked_for_knowingly(bridge, block):
 
     assert written["success"] is True
     assert block.getText().paragraphs[0] == "ОДНА СТРОКА"
+
+
+# --- reading through an anchor, without counting paragraphs ----------------
+#
+# A paragraph has no number in UNO, so working one out walks the body: 0.55 ms
+# a paragraph, which is seconds deep in a long document. A caller that already
+# holds an anchor has said where it means; the number was being counted only
+# to fill in a field of the answer.
+
+def anchored(bridge, doc, paragraph=1):
+    """The anchor get_cursor_info hands out for a paragraph."""
+    return bridge.anchor({"paragraph": paragraph}, doc=doc)["anchors"][0]["anchor"]
+
+
+def test_runs_are_read_through_an_anchor_without_counting_paragraphs(
+        bridge, doc, monkeypatch):
+    token = bridge.read_runs({"paragraph": 1}, doc=doc)["address"]["anchor"]
+
+    def refuse(*arguments, **named):
+        raise AssertionError("read_runs counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    result = bridge.read_runs({"anchor": token}, doc=doc)
+
+    assert [run["text"] for run in result["runs"]] == [
+        "Character", " is a ", "GraphQL Object type", ", meaning it has fields."]
+    assert result["paragraph"] is None
+    assert result["address"] == {"anchor": token}
+
+
+def test_the_runs_of_an_anchored_read_are_addressed_by_that_anchor(bridge, doc):
+    token = bridge.read_runs({"paragraph": 1}, doc=doc)["address"]["anchor"]
+
+    runs = bridge.read_runs({"anchor": token}, doc=doc)["runs"]
+
+    assert [run["address"]["anchor"] for run in runs] == [token] * 4
+    for run in runs:
+        assert bridge._resolve_address(doc, run["address"]).getString() \
+            == run["text"]
+
+
+def test_an_anchored_run_address_holds_after_a_paragraph_is_put_above(bridge,
+                                                                      doc):
+    token = bridge.read_runs({"paragraph": 1}, doc=doc)["address"]["anchor"]
+    third = bridge.read_runs({"anchor": token}, doc=doc)["runs"][2]
+
+    bridge.split_paragraph({"paragraph": 0, "offset": 0, "length": 0}, doc=doc)
+
+    assert bridge._resolve_address(doc, third["address"]).getString() \
+        == "GraphQL Object type"
+
+
+def test_an_address_that_names_a_number_is_still_answered_with_one(bridge, doc):
+    handed_out = bridge.read_runs({"paragraph": 1}, doc=doc)["address"]
+
+    again = bridge.read_runs(handed_out, doc=doc)
+
+    assert again["paragraph"] == 1
+    assert again["runs"][0]["address"]["paragraph"] == 1

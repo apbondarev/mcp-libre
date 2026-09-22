@@ -27,6 +27,19 @@ class FakeRange:
     def getString(self):
         return self.model.slice_text(self.start, self.end)
 
+    def createEnumeration(self):
+        """The paragraphs this cursor covers, as a real one hands them out.
+
+        Measured on a live Writer: a text cursor is itself an
+        XEnumerationAccess, and a collapsed caret yields the one paragraph it
+        stands in. That is how a paragraph object is had for two UNO calls,
+        where finding it by number walks every paragraph before it.
+        """
+        from tests.fakes_text import FakeParagraph          # own module
+        return FakeEnumeration([FakeParagraph(self.model, index)
+                                for index in range(self.start[0],
+                                                   self.end[0] + 1)])
+
     def getText(self):
         # A range inside a cell answers with the cell, not with the text
         # behind it — which is how the cell owning a range is found.
@@ -71,6 +84,12 @@ class FakeTextCursor:
 
     def getString(self):
         return self.model.slice_text(self.start, self.end)
+
+    def createEnumeration(self):
+        """The paragraphs this cursor covers — see FakeRange for why."""
+        return FakeEnumeration([FakeParagraph(self.model, index)
+                                for index in range(self.start[0],
+                                                   self.end[0] + 1)])
 
     def getText(self):
         # A range inside a cell answers with the cell, not with the text
@@ -286,6 +305,31 @@ class FakeTextPortion:
                 "CharHeight": 12.0, "CharFontName": "Liberation Serif",
                 "CharColor": -1, "CharBackColor": -1, "HyperLinkURL": "",
                 "HyperLinkTarget": "", "CharStyleName": ""}
+
+    def createContentEnumeration(self, service):
+        """What this portion holds — for a Frame portion, its picture.
+
+        Measured on a live Writer: a portion of type "Frame" hands out the
+        object anchored there through createContentEnumeration, which is how
+        a paragraph names its own pictures without the document being asked
+        for all of them.
+        """
+        if self.TextPortionType != "Frame":
+            return FakeEnumeration([])
+        document = getattr(self.model, "owner_document", None)
+        if document is None:
+            return FakeEnumeration([])
+        held = []
+        try:
+            graphics = document.getGraphicObjects()
+            for name in graphics.getElementNames():
+                image = graphics.getByName(name)
+                where = image.getAnchor()
+                if where.start == (self.paragraph, self.offset):
+                    held.append(image)
+        except Exception:
+            return FakeEnumeration([])
+        return FakeEnumeration(held)
 
     def __init__(self, text, locale, properties=None, kind="Text", field=None,
                  model=None, paragraph=0, offset=0):

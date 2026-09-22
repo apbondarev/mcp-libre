@@ -79,7 +79,8 @@ class TablesMixin:
             return False
 
     def _range_spans(self, doc: Any, span: Any,
-                     known_paragraph: Optional[int] = None) -> Dict[str, Any]:
+                     known_paragraph: Optional[int] = None,
+                     find_paragraph: bool = True) -> Dict[str, Any]:
         """
         What a range actually covers: which body paragraphs, which tables
 
@@ -103,6 +104,11 @@ class TablesMixin:
             if self._within_one_paragraph(body, span):
                 if known_paragraph is not None:
                     found["paragraphs"] = [known_paragraph]
+                elif not find_paragraph:
+                    # Asked through an anchor: the number was deliberately
+                    # not counted, and counting it here to fill in a field
+                    # nobody reads is the walk this path exists to avoid.
+                    pass
                 else:
                     index, _ = self._locate_paragraph(body, span.getStart())
                     if index is not None:
@@ -255,11 +261,13 @@ class TablesMixin:
                                    result: Dict[str, Any],
                                    known_paragraph: Optional[int] = None,
                                    known_block: Any = None,
-                                   known_tables: Any = None) -> Dict[str, Any]:
+                                   known_tables: Any = None,
+                                   find_paragraph: bool = True) -> Dict[str, Any]:
         """Say when a range reaches past the paragraph its runs come from"""
         spans = (self._spans_of_block(doc, known_block, known_tables)
                  if known_block
-                 else self._range_spans(doc, span, known_paragraph))
+                 else self._range_spans(doc, span, known_paragraph,
+                                        find_paragraph))
         if len(spans["paragraphs"]) > 1:
             result["spans_paragraphs"] = spans["paragraphs"]
         if spans["tables"]:

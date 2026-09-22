@@ -1358,6 +1358,18 @@ try:
            "note" in numbered),
           (True, True, False))
 
+    # And what the caret's anchor is for: reading there without the number
+    # ever being worked out, with the runs addressed by the same anchor.
+    through = bridge.read_runs(where["address"], doc=doc)
+    check("the runs at the caret are read through its anchor",
+          (through.get("success"), through.get("paragraph"),
+           through.get("address")),
+          (True, None, {"anchor": where["address"]["anchor"]}))
+    check("and every run of that read resolves through it too",
+          [bridge._resolve_address(doc, run["address"]).getString()
+           for run in through["runs"]],
+          [run["text"] for run in through["runs"]])
+
     print("\n   with the caret put inside a cell:")
     view = doc.getCurrentController().getViewCursor()
     was_here = view.getStart()

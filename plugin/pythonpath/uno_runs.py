@@ -8,8 +8,8 @@ pictures, styles — is counted before anything is written.
 
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (MAX_RUN_PARAGRAPHS, REDLINE_KINDS, TABLE_SERVICE,
-    AddressError, _supports,
+from uno_values import (GRAPHIC_SERVICE, MAX_RUN_PARAGRAPHS, REDLINE_KINDS,
+    TABLE_SERVICE, AddressError, _supports,
     _colour_name,
     _comment_key, _distinct_changes, 
     _describe_comment, _distinct_comments, _distinct_images, _get_property, 
@@ -37,15 +37,26 @@ class RunsMixin:
         if error:
             return error
 
+        # An address that is nothing but an anchor needs no paragraph number:
+        # working one out walks the body — 0.55 ms a paragraph, seconds deep
+        # in a long document — to fill in a field the caller did not ask for.
+        # The runs come back addressed by the same anchor instead.
+        by_anchor = (isinstance(address, dict) and "anchor" in address
+                     and not any(key in address for key in
+                                 ("paragraph", "through", "table", "cell")))
         try:
             target = self._resolve_address(doc, address)
             located, paragraph_cursor, _ = self._locate_range(
-                doc, target, self._paragraph_hint(address, doc))
+                doc, target,
+                None if by_anchor else self._paragraph_hint(address, doc),
+                find_paragraph=not by_anchor)
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
+        if by_anchor:
+            located["anchor"] = address["anchor"]
         index = located["paragraph"]
-        if index is None and not located.get("cell"):
+        if index is None and not located.get("cell") and not by_anchor:
             return {"success": False, "code": "INVALID_ADDRESS",
                     "error": "That address is outside the body text and in no "
                              "table cell, so its runs cannot be read"}
@@ -79,9 +90,14 @@ class RunsMixin:
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
+        if by_anchor:
+            # The anchor is the address these runs belong to; its number is
+            # not counted, and `number: true` on get_cursor_info is where a
+            # human-readable one comes from.
+            result["address"] = {"anchor": address["anchor"]}
         self._say_which_formulas(doc, result, index, read, located, block,
                                  paragraph_cursor, target)
-        if held:
+        if held and not by_anchor:
             result["address"] = {"paragraph": index, "anchor": held}
         if block:
             result["paragraphs"] = read
@@ -96,7 +112,8 @@ class RunsMixin:
             return self._note_what_is_out_of_reach(doc, target, result,
                                                    known_paragraph=index,
                                                    known_block=block,
-                                                   known_tables=passed)
+                                                   known_tables=passed,
+                                                   find_paragraph=not by_anchor)
         except Exception as e:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
@@ -115,7 +132,7 @@ class RunsMixin:
         (`_formulas_in`), a block from the block's range (`_formulas_across`).
         Neither places every formula in the document, which walks the body.
         """
-        if index is None:
+        if index is None and paragraph_cursor is None:
             return
         try:
             lower = located.get("offset", 0)
@@ -249,7 +266,7 @@ class RunsMixin:
                 body = portion.getString()
             except Exception:
                 continue
-            collected.append(("Text", offset, portion, body))
+            collected.append((kind, offset, portion, body))
             offset += len(body)
 
         spans = []
@@ -285,12 +302,31 @@ class RunsMixin:
         for described, at in open_changes.values():
             changes.append((described, at, at))
 
-        pictures = self._images_in(doc, index, span_start, span_end,
-                                   paragraph_cursor)
+        # The pictures of this paragraph come from its own portions: a Frame
+        # portion hands out what is anchored there (measured), so asking
+        # every picture in the document whether it belongs here — hundreds of
+        # them in a real guide, four UNO calls apiece — is not needed. The
+        # offset is the portion's own, so nothing has to be located either.
+        pictures = []
+        for kind, at, portion, _ in collected:
+            if kind != "Frame":
+                continue
+            for held in self._contents_of(portion):
+                if not _supports(held, GRAPHIC_SERVICE):
+                    continue
+                if not span_start <= at <= span_end:
+                    continue
+                pictures.append(self._describe_image(
+                    doc, held, address=self._address_in(located, at + shift, 0),
+                    paragraph_text=_text_payload(
+                        paragraph.getString())["text"]))
 
         runs = []
         for kind, start_at, portion, body in collected:
-            if kind != "Text" or not body:
+            # Anything carrying text is a run — a field carries the text it
+            # shows and a footnote's mark is a character of the paragraph,
+            # while a comment's markers and a picture's frame carry none.
+            if not body:
                 continue
             end_at = start_at + len(body)
             if end_at <= span_start or start_at >= span_end:

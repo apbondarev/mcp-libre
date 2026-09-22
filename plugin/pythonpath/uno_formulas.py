@@ -123,8 +123,12 @@ class FormulasMixin:
             if not self._anchored_in(doc, obj, paragraph_cursor):
                 continue
             try:
-                address, _, _ = self._locate_range(doc, obj.getAnchor(),
-                                                   paragraph)
+                # With no paragraph number — a read through an anchor — the
+                # offset is still measured, and finding the number is the
+                # walk this whole path exists to avoid.
+                address, _, _ = self._locate_range(
+                    doc, obj.getAnchor(), paragraph,
+                    find_paragraph=paragraph is not None)
                 text = model.Formula
             except Exception as e:
                 logger.info(f"Could not place formula {name}: {e}")

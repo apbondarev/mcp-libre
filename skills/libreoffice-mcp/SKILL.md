@@ -54,8 +54,13 @@ what was true when you read. Three measured reasons:
 paragraph back as `address` — an anchor. Its **number** is not in the answer
 unless `number: true` asks for it: a paragraph has no index in UNO, so working
 one out means counting every paragraph before it, which took three seconds
-with the caret deep in a 6981-paragraph document against 0.025s without. Act
+with the caret deep in a 6981-paragraph document against 0.013s without. Act
 on the address; ask for the number only to show a human where they are.
+`read_runs` given nothing but that anchor works the same way — no number is
+counted, `paragraph` comes back null, and every run is addressed by the
+anchor it came from, which resolves back to exactly that run. On that
+document, "where am I" and "read the runs there" came to 8s and 8–12s by
+number; by anchor they are 0.013s and 0.008s.
 
 `read_paragraphs` also **takes** an address as its `start` — the one a
 previous read or a search handed back — so a long document is paged through

@@ -259,6 +259,28 @@ class AnchorsMixin:
         entry["index"] = index
         return index
 
+    def _live_paragraph(self, doc: Any, token: Any,
+                        entry: Dict[str, Any]) -> Any:
+        """The paragraph a paragraph anchor names now, or an AddressError.
+
+        The held object says whether the paragraph is still there — it throws
+        once its paragraph has been merged away or removed — while the start
+        cursor says *which* paragraph is meant, since on a split the object
+        goes with the text after the cut. Neither needs the number.
+        """
+        try:
+            entry["paragraph"].getString()
+        except Exception:
+            raise AddressError(
+                f"the paragraph anchor {token!r} named ({entry['held'][:60]!r}) "
+                f"has been merged into the one before it, or removed")
+        paragraph = self._paragraph_from(entry["cursor"])
+        if paragraph is None:
+            raise AddressError(
+                f"anchor {token!r} no longer stands in a paragraph: it held "
+                f"{entry['held'][:60]!r}")
+        return paragraph
+
     def _holds_point(self, body: Any, paragraph: Any, point: Any) -> bool:
         """Whether a position lies inside a paragraph, ends included"""
         return (body.compareRegionStarts(paragraph.getStart(),
@@ -267,13 +289,16 @@ class AnchorsMixin:
                                            paragraph.getEnd()) >= 0)
 
     def _anchor_range(self, doc: Any, token: Any) -> Any:
-        """The range an anchor names, or an AddressError saying why not."""
+        """The range an anchor names, or an AddressError saying why not.
+
+        A paragraph anchor is answered from the paragraph its start cursor
+        stands in — two UNO calls — rather than from its number, which is a
+        walk of every paragraph above it. The number is nobody's business
+        here: what a caller wants is the range.
+        """
         entry = self._anchor_entry(doc, token)
         if entry.get("kind") == "paragraph":
-            index = self.paragraph_now(doc, token)
-            paragraph = self._paragraph_at(doc.getText(), index)
-            if paragraph is None:
-                raise AddressError(f"anchor {token!r}: no body paragraph {index}")
+            paragraph = self._live_paragraph(doc, token, entry)
             return paragraph.getText().createTextCursorByRange(paragraph)
 
         cursor = entry["cursor"]

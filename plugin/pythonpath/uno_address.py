@@ -64,11 +64,12 @@ class AddressMixin:
                     raise AddressError(
                         "a text anchor already covers exactly its stretch: it "
                         "takes no 'offset' or 'length' beside it")
-                within = {"paragraph": self.paragraph_now(doc, token)}
-                for key in ("offset", "length"):
-                    if key in address:
-                        within[key] = address[key]
-                return self._resolve_address(doc, within)
+                # Counted inside the anchor's own paragraph, which it names
+                # without its number — the number is a walk of the body.
+                return self._within_paragraph(
+                    self._live_paragraph(doc, token, entry),
+                    address.get("offset", 0), address.get("length"),
+                    f"anchor {token!r}")
             return self._anchor_range(doc, token)
 
         if address.get("selection"):
@@ -106,14 +107,19 @@ class AddressMixin:
         if paragraph is None:
             raise AddressError(f"no body paragraph {address['paragraph']}")
 
+        return self._within_paragraph(paragraph, address.get("offset", 0),
+                                      address.get("length"),
+                                      f"paragraph {address['paragraph']}")
+
+    def _within_paragraph(self, paragraph: Any, offset: Any, length: Any,
+                          named: str) -> Any:
+        """A range inside one paragraph, whatever named that paragraph"""
         paragraph_length = len(paragraph.getString())
-        offset = address.get("offset", 0)
-        length = address.get("length")
 
         if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0 \
                 or offset > paragraph_length:
             raise AddressError(
-                f"offset {offset!r} is outside paragraph {address['paragraph']}, "
+                f"offset {offset!r} is outside {named}, "
                 f"which holds {paragraph_length} characters")
 
         cursor = self._position_in(paragraph, offset)
@@ -125,7 +131,7 @@ class AddressMixin:
                     or offset + length > paragraph_length:
                 raise AddressError(
                     f"length {length!r} from offset {offset} runs past the end of "
-                    f"paragraph {address['paragraph']}")
+                    f"{named}")
             if length:
                 cursor.gotoRange(self._position_in(paragraph, offset + length),
                                  True)
@@ -466,14 +472,39 @@ class AddressMixin:
 
         A run of a cell has to come back addressed to that cell, or it cannot
         be handed to anything: a body address with paragraph None resolves to
-        nothing at all.
+        nothing at all. A read made through an anchor has no number either —
+        working one out is a walk of the body — so its pieces are addressed
+        by that anchor, which counts offsets inside its own paragraph.
         """
+        if located.get("anchor") and located.get("paragraph") is None \
+                and not located.get("cell"):
+            return {"anchor": located["anchor"], "offset": offset,
+                    "length": length}
         if located.get("cell"):
             address = {"table": located.get("table"), "cell": located["cell"],
                        "offset": offset, "length": length}
             return address
         return {"paragraph": located.get("paragraph"), "offset": offset,
                 "length": length}
+
+    def _paragraph_from(self, text_range: Any) -> Any:
+        """The paragraph a range starts in, without walking the body.
+
+        Measured on a live Writer: a text cursor is itself an
+        `XEnumerationAccess` and hands out the paragraphs it covers — a
+        collapsed caret yields the one it stands in. So the object costs two
+        UNO calls, where reaching it by number costs one call per paragraph
+        before it: 0.55 ms each, three seconds at paragraph 4072.
+        """
+        try:
+            enumeration = text_range.createEnumeration()
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if hasattr(element, "getStart"):
+                    return element
+        except Exception as e:
+            logger.info(f"A range would not name its paragraph: {e}")
+        return None
 
     def _paragraph_of(self, doc: Any, located: Dict[str, Any],
                       paragraph_cursor: Any = None) -> Any:
@@ -482,7 +513,13 @@ class AddressMixin:
 
         A cell's paragraphs are its own, so the body enumeration does not
         hold them; the offset is spent across them the way it is anywhere.
+        The cursor, when a caller has one, names its paragraph for two calls
+        and is asked first.
         """
+        if paragraph_cursor is not None:
+            paragraph = self._paragraph_from(paragraph_cursor)
+            if paragraph is not None:
+                return paragraph
         if located.get("paragraph") is not None:
             return self._paragraph_at(doc.getText(), located["paragraph"])
         if located.get("cell"):

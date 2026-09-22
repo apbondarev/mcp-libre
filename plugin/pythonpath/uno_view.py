@@ -123,7 +123,9 @@ class ViewMixin:
             # An anchor on the paragraph the caret stands in: two UNO calls,
             # where its number is a walk of the body. It is what the next
             # call should be given.
-            held = self._hold_anchor(doc, paragraph_cursor)
+            standing = self._paragraph_from(paragraph_cursor)
+            held = (self._hold_paragraph_anchor(doc, standing, index)
+                    if standing is not None else None)
             if held:
                 info["address"] = ({"paragraph": index, "anchor": held}
                                    if index is not None else {"anchor": held})
