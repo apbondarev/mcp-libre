@@ -274,7 +274,9 @@ class AddressMixin:
         return None
 
     def _locate_range(self, doc: Any, text_range: Any,
-                      known_paragraph: Optional[int] = None) -> tuple:
+                      known_paragraph: Optional[int] = None,
+                      count_characters: bool = False,
+                      find_paragraph: bool = True) -> tuple:
         """
         Locate a range within the document
 
@@ -305,13 +307,15 @@ class AddressMixin:
         # walks the whole document to find nothing — measured at half a
         # second on five hundred paragraphs, paid for every hit in a table.
         in_a_cell = _supports(owner, CELL_SERVICE)
-        if in_a_cell:
+        if in_a_cell or not find_paragraph:
+            # Not asked for: a paragraph has no number in UNO, so finding one
+            # means counting every paragraph before it.
             index, chars_before = None, None
         elif known_paragraph is not None:
             index, chars_before = known_paragraph, None
         else:
             index, chars_before = self._locate_paragraph(
-                doc.getText(), paragraph_cursor.getStart())
+                doc.getText(), paragraph_cursor.getStart(), count_characters)
 
         address = {
             "paragraph": index,
@@ -495,13 +499,22 @@ class AddressMixin:
             return None
         return None
 
-    def _locate_paragraph(self, text: Any, paragraph_start: Any) -> tuple:
+    def _locate_paragraph(self, text: Any, paragraph_start: Any,
+                          count_characters: bool = False) -> tuple:
         """
         Find the caret's paragraph in the body text
 
         Returns (index, characters before it) or (None, None) when the
         paragraph is not part of the body enumeration. Tables are skipped, so
         their content does not count towards the character total.
+
+        UNO gives a paragraph no number, so the only way to one is to count
+        the paragraphs before it — measured at 0.55 ms each over a socket, so
+        a caret at paragraph 4072 of a real guide cost three seconds and one
+        at 6900 nearly four. `count_characters` adds `getString()` to every
+        one of those paragraphs, which is 437 KB of text pulled over the
+        bridge and thrown away for a caret that deep; only the character
+        offset of `get_cursor_info` ever wanted it, so it is off unless asked.
         """
         try:
             enumeration = text.createEnumeration()
@@ -514,8 +527,9 @@ class AddressMixin:
                 # Only equality matters here, so the sign convention of
                 # compareRegionStarts is irrelevant
                 if text.compareRegionStarts(element.getStart(), paragraph_start) == 0:
-                    return index, chars_before
-                chars_before += len(element.getString()) + 1  # + paragraph break
+                    return index, (chars_before if count_characters else None)
+                if count_characters:
+                    chars_before += len(element.getString()) + 1   # + the break
                 index += 1
             return None, None
         except Exception as e:

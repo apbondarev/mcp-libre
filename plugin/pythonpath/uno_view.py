@@ -51,15 +51,27 @@ class ViewMixin:
                 "paragraphs": spans["paragraphs"],
                 "tables": [table["name"] for table in spans["tables"]]}
 
-    def get_cursor_info(self, doc: Any = None) -> Dict[str, Any]:
+    def get_cursor_info(self, number: bool = False,
+                        character_offset: bool = False,
+                        doc: Any = None) -> Dict[str, Any]:
         """
         Report where the caret is and what is selected in a Writer document
 
-        Covers the caret offset inside its paragraph, that paragraph's text and
-        the selected text. paragraph_index and document_offset additionally
-        require walking the body paragraphs, so they cost one UNO call per
-        paragraph up to the caret and are None when the caret sits outside the
-        body text, e.g. in a table cell or a frame.
+        Covers the caret's offset inside its paragraph, that paragraph's text,
+        the page, and what is selected — all of which the view cursor knows,
+        so they cost nothing.
+
+        **A paragraph has no number in UNO.** The only way to one is to count
+        the paragraphs before it, and that is a walk of the body: measured at
+        0.55 ms a paragraph over a socket, so a caret at paragraph 4072 of a
+        real guide cost three seconds and one at 6900 nearly four — for a
+        question the caller usually asks only in order to act there. So the
+        number is counted only when `number` says to, and what comes back
+        instead is `address`, an **anchor** on the caret's paragraph: it costs
+        two UNO calls, every tool takes it, and it goes on naming that
+        paragraph after the numbers around it have moved. `character_offset`
+        adds `document_offset`, which counts the characters as well and pulls
+        every paragraph's text over the bridge on the way.
         """
         try:
             doc, error = self._writer_document(doc, "Cursor info")
@@ -89,7 +101,10 @@ class ViewMixin:
                 }
 
             caret = view_cursor.getStart()
-            address, paragraph_cursor, chars_before = self._locate_range(doc, caret)
+            counting = bool(number or character_offset)
+            address, paragraph_cursor, chars_before = self._locate_range(
+                doc, caret, count_characters=bool(character_offset),
+                find_paragraph=counting)
             index = address["paragraph"]
             offset_in_paragraph = address["offset"]
 
@@ -105,6 +120,19 @@ class ViewMixin:
                 "paragraph": _text_payload(paragraph_cursor.getString()),
                 "selection": self._get_selection_info(controller)
             }
+            # An anchor on the paragraph the caret stands in: two UNO calls,
+            # where its number is a walk of the body. It is what the next
+            # call should be given.
+            held = self._hold_anchor(doc, paragraph_cursor)
+            if held:
+                info["address"] = ({"paragraph": index, "anchor": held}
+                                   if index is not None else {"anchor": held})
+                info["anchor"] = held
+            if not counting:
+                info["note"] = ("the paragraph's number is not counted unless "
+                                "number: true asks for it — UNO gives none, so "
+                                "it is a walk of the body; `address` names the "
+                                "same paragraph without one")
             # A caret in a table cell belongs to no body paragraph, which is
             # why paragraph_index is None there; saying which table and which
             # cell beats leaving the caller to wonder where it is.

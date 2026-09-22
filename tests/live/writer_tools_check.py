@@ -1340,6 +1340,24 @@ try:
           isinstance(described["after_paragraph"], int), True)
     check("no invented millimetres", "width_mm" in described, False)
 
+    # A paragraph has no number in UNO, so counting one is a walk of the
+    # body — three seconds with the caret deep in a real guide. The caret
+    # comes back as an anchor instead, and the number only when asked.
+    where = bridge.get_cursor_info(doc=doc)
+    check("the caret is reported without a number",
+          (where["cursor"]["paragraph_index"],
+           where["cursor"]["document_offset"]), (None, None))
+    check("and with an anchor that names the paragraph it reported",
+          bridge._resolve_address(doc, where["address"]).getString(),
+          where["paragraph"]["text"])
+    numbered = bridge.get_cursor_info(number=True, character_offset=True,
+                                      doc=doc)
+    check("the number and the character offset come when they are asked for",
+          (isinstance(numbered["cursor"]["paragraph_index"], int),
+           isinstance(numbered["cursor"]["document_offset"], int),
+           "note" in numbered),
+          (True, True, False))
+
     print("\n   with the caret put inside a cell:")
     view = doc.getCurrentController().getViewCursor()
     was_here = view.getStart()

@@ -50,6 +50,13 @@ what was true when you read. Three measured reasons:
     write succeeds silently, where an anchor whose text was deleted refuses
     by name and tells you what it held.
 
+`get_cursor_info` says where the reader is standing, and hands the caret's
+paragraph back as `address` — an anchor. Its **number** is not in the answer
+unless `number: true` asks for it: a paragraph has no index in UNO, so working
+one out means counting every paragraph before it, which took three seconds
+with the caret deep in a 6981-paragraph document against 0.025s without. Act
+on the address; ask for the number only to show a human where they are.
+
 `read_paragraphs` also **takes** an address as its `start` — the one a
 previous read or a search handed back — so a long document is paged through
 without a number ever being carried from one call to the next, and a block

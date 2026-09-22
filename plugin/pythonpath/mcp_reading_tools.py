@@ -38,10 +38,20 @@ class ReadingTools:
         }
         
         self.tools["get_cursor_info_live"] = {
-            "description": "Get the cursor position, the paragraph containing the cursor, and the selected text of a Writer document — where the reader is standing and what they have picked out",
+            "description": "Get the cursor position, the paragraph containing the cursor, and the selected text of a Writer document — where the reader is standing and what they have picked out. The paragraph comes back as `address`, an anchor: pass it straight to the next tool. Its **number** is not counted unless `number` asks — a paragraph has no index in UNO, so working one out means counting every paragraph before it, which took three seconds with the caret deep in a real 6981-paragraph document",
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "number": {
+                        "type": "boolean",
+                        "description": "Count the caret's paragraph number as well, for showing a human where they are. It walks the body — 0.55 ms a paragraph — and `address` names the same paragraph without it",
+                        "default": False
+                    },
+                    "character_offset": {
+                        "type": "boolean",
+                        "description": "Add `document_offset`, the caret's place in characters from the start of the body. It counts the number too and pulls every paragraph's text over the bridge on the way",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -182,13 +192,15 @@ class ReadingTools:
             return error
         return self.uno_bridge.select(address, doc=doc)
 
-    def get_cursor_info_live(self,
+    def get_cursor_info_live(self, number: bool = False,
+                             character_offset: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """Get cursor position, current paragraph and selected text"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.get_cursor_info(doc=doc)
+        return self.uno_bridge.get_cursor_info(
+            number=number, character_offset=character_offset, doc=doc)
 
     def read_paragraphs_live(self, start: Any = 0,
                              count: Optional[int] = None,
