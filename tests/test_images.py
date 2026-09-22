@@ -60,9 +60,12 @@ def test_says_that_the_text_holds_a_picture(bridge, doc):
 
 
 def test_says_where_the_picture_is_and_what_it_is_anchored_to(bridge, doc):
+    # An anchor on what it is anchored to: a number is a walk of the body per
+    # picture, and a real guide holds hundreds of them.
     image, = bridge.list_images(doc=doc)["images"]
 
-    assert image["address"] == {"paragraph": 1, "offset": 6, "length": 0}
+    assert image["address"]["anchor"]["type"] == "text"
+    assert "paragraph" not in image["address"]
     assert image["paragraph_text"] == BODY
     assert image["width_mm"] == 24.3
     assert image["height_mm"] == 24.5
@@ -329,3 +332,47 @@ def test_the_tool_takes_no_name_at_all(tmp_path):
         "export_image_live", {"path": str(tmp_path / "sel.png")}))
     assert written["name"] == "Image2"
     assert written["was_selected"] is True
+
+
+def test_a_picture_can_be_placed_by_number_when_that_is_wanted(bridge, doc):
+    image, = bridge.list_images(number=True, doc=doc)["images"]
+
+    assert image["address"]["paragraph"] == 1
+    assert image["address"]["offset"] == 6
+    assert image["address"]["anchor"]["type"] == "text"
+
+
+def test_the_pictures_of_a_paragraph_are_found_without_counting_paragraphs(
+        bridge, doc, monkeypatch):
+    def refuse(*arguments, **named):
+        raise AssertionError("list_images counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_images(address={"paragraph": 1}, doc=doc)
+
+    assert listed["count"] == 1
+    assert bridge._resolve_address(
+        doc, listed["images"][0]["address"]).getString() == ""
+
+
+def test_a_picture_in_no_paragraph_does_not_break_the_numbered_listing(bridge):
+    # One anchored to the page has no body paragraph, so its number is None:
+    # sorting compared that with an int and the call died — after two minutes
+    # of walking the body to work the other numbers out.
+    from tests.fake_writer import FakeLocale, writer_doc
+
+    doc = writer_doc(["query is the entry point"], caret=(0, 0),
+                     portions={0: WITH_PICTURE},
+                     images=[{"name": "Schema", "paragraph": 0, "offset": 6},
+                             {"name": "Floating", "paragraph": 0, "offset": 6,
+                              "inline": False}])
+    graphics = doc.getGraphicObjects()
+    for name in graphics.getElementNames():
+        if name == "Floating":
+            graphics.getByName(name)._anchor = None   # to the page: nowhere
+
+    listed = bridge.list_images(number=True, doc=doc)
+
+    assert listed["success"] is True
+    assert "Schema" in [one["name"] for one in listed["images"]]

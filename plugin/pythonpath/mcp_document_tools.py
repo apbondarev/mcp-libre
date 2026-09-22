@@ -25,6 +25,31 @@ class DocumentTools:
             "handler": self.create_document_live
         }
 
+        self.tools["open_document_live"] = {
+            "description": "Open a document from a file, so the other tools can work on it. A file nobody has opened is invisible to this server — every tool works on the documents LibreOffice holds. Opening one that is already open changes nothing and answers with it, saying `already_open`, so it is safe to call before any piece of work",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Where the file is: an absolute path, or a file:// URL"
+                    },
+                    "hidden": {
+                        "type": "boolean",
+                        "description": "Open it without a window, for work the reader is not meant to watch. It is still a document every tool can act on",
+                        "default": False
+                    },
+                    "read_only": {
+                        "type": "boolean",
+                        "description": "Open it read-only; the editing tools then refuse it with READ_ONLY",
+                        "default": False
+                    }
+                },
+                "required": ["path"]
+            },
+            "handler": self.open_document_live
+        }
+
         # Document info tools
         self.tools["get_document_info_live"] = {
             "description": "Get information about a document, including whether changes are being recorded (track_changes) and how many recorded changes await acceptance (tracked_changes)",
@@ -166,6 +191,12 @@ class DocumentTools:
             }
         except Exception as e:
             return {"success": False, "code": "FAILED", "error": str(e)}
+
+    def open_document_live(self, path: str, hidden: bool = False,
+                           read_only: bool = False) -> Dict[str, Any]:
+        """Open a document from a file, or answer with the one already open"""
+        return self.uno_bridge.open_document(path=path, hidden=hidden,
+                                             read_only=read_only)
 
     def get_document_info_live(self,
                                document: Optional[str] = None) -> Dict[str, Any]:

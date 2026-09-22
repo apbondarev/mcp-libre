@@ -53,9 +53,15 @@ def test_they_are_listed_in_the_order_they_sit_in(bridge, doc):
     bridge.add_bookmark({"paragraph": 2}, "конец", doc=doc)
     bridge.add_bookmark({"paragraph": 0}, "начало", doc=doc)
 
-    listed = bridge.list_bookmarks(doc=doc)
+    # Reading order is what numbers give, and numbering is a sweep of the
+    # body: 195 bookmarks of a real guide cost 20s to number and 0.4s to
+    # anchor. So the fast listing is in the document's own order and says so.
+    listed = bridge.list_bookmarks(number=True, doc=doc)
 
     assert [one["name"] for one in listed["bookmarks"]] == ["начало", "конец"]
+    assert listed["order"] == "reading"
+    assert bridge.list_bookmarks(doc=doc)["order"] \
+        == "as the document names them"
     assert listed["count"] == 2
 
 
@@ -123,3 +129,54 @@ def test_a_bookmark_that_is_not_there(bridge, doc):
                  lambda: bridge.rename_bookmark("нет", "да", doc=doc)):
         refused = call()
         assert (refused["success"], refused["code"]) == (False, "NOT_FOUND")
+
+
+# --- placed by anchors, not by numbers -------------------------------------
+#
+# Working out a paragraph number is a sweep of the body — two UNO calls for
+# every paragraph of the document — so listing 195 bookmarks of a real guide
+# cost 20 seconds. An anchor is two calls for each bookmark.
+
+def test_bookmarks_are_placed_by_anchors_without_counting_paragraphs(
+        bridge, doc, monkeypatch):
+    bridge.add_bookmark({"paragraph": 1}, "середина", doc=doc)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("list_bookmarks counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+    monkeypatch.setattr(bridge, "_locate_matches", refuse)
+
+    listed = bridge.list_bookmarks(doc=doc)
+
+    one, = [item for item in listed["bookmarks"] if item["name"] == "середина"]
+    assert one["address"]["anchor"]["type"] == "text"
+    assert "paragraph" not in one["address"]
+    assert bridge._resolve_address(doc, one["address"]).getString() \
+        == one["text"]
+
+
+def test_the_numbers_come_when_they_are_asked_for(bridge, doc):
+    bridge.add_bookmark({"paragraph": 1}, "середина", doc=doc)
+
+    one, = [item for item in bridge.list_bookmarks(number=True,
+                                                   doc=doc)["bookmarks"]
+            if item["name"] == "середина"]
+
+    assert one["address"]["paragraph"] == 1
+    assert one["address"]["anchor"]["type"] == "text"
+
+
+def test_a_scoped_listing_needs_no_numbers_either(bridge, doc,
+                                                   monkeypatch):
+    bridge.add_bookmark({"paragraph": 0}, "первая", doc=doc)
+    bridge.add_bookmark({"paragraph": 2}, "третья", doc=doc)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_matches", refuse)
+
+    listed = bridge.list_bookmarks(address={"paragraph": 2}, doc=doc)
+
+    assert [one["name"] for one in listed["bookmarks"]] == ["третья"]

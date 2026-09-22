@@ -169,6 +169,59 @@ class DocumentsMixin:
             logger.debug(f"Could not count tracked changes: {e}")
             return None
 
+    def open_document(self, path: str, hidden: bool = False,
+                      read_only: bool = False) -> Dict[str, Any]:
+        """
+        Open a document from a file, or answer with the one already open
+
+        The server could make a document and could close one, but not open
+        one, so a caller with a file in hand had nothing to say — and a
+        document nobody has opened is invisible to every other tool here.
+
+        Opening the same file twice is not what a caller means by "open
+        this": LibreOffice would answer with the document it already holds
+        anyway, so the one that is open is found first and reported with
+        `already_open`, leaving the reader's own view alone.
+        """
+        try:
+            wanted = path if str(path).startswith("file://") \
+                else _file_url(str(path))
+        except Exception as e:
+            return refusal("INVALID_PARAMETER", f"{path!r} is no path: {e}")
+
+        for doc in self.open_documents():
+            if _get_document_url(doc) == wanted:
+                answered = self.get_document_info(doc=doc)
+                info = answered.get("document_info", answered)
+                return {"success": True, "already_open": True,
+                        "document_info": info}
+
+        if not str(path).startswith("file://") \
+                and not os.path.exists(str(path)):
+            return refusal("NOT_FOUND", f"there is no file at {path}")
+
+        try:
+            properties = []
+            for name, value in (("Hidden", bool(hidden)),
+                                ("ReadOnly", bool(read_only))):
+                if value:
+                    option = PropertyValue()
+                    option.Name, option.Value = name, value
+                    properties.append(option)
+            doc = self.desktop.loadComponentFromURL(wanted, "_blank", 0,
+                                                    tuple(properties))
+        except Exception as e:
+            logger.error(f"Could not open {wanted}: {e}")
+            return refusal("FAILED", e)
+        if doc is None:
+            return refusal("FAILED", f"LibreOffice opened nothing for {path}")
+
+        answered = self.get_document_info(doc=doc)
+        info = answered.get("document_info", answered)
+        logger.info(f"Opened {wanted}")
+        return {"success": True, "already_open": False,
+                "document_info": info}
+
     def get_document_info(self, doc: Any = None) -> Dict[str, Any]:
         """Get information about a document"""
         try:

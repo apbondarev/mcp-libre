@@ -152,8 +152,10 @@ def test_every_tool_that_acts_on_a_document_can_be_told_which():
     server.tools = {}
     server._register_tools()
     # These are about the session, not about a document: making a new one,
-    # and listing what is open.
-    session = {"create_document_live", "list_open_documents"}
+    # opening one from a file — which is what *gives* a caller a document to
+    # name — and listing what is open.
+    session = {"create_document_live", "open_document_live",
+               "list_open_documents"}
 
     without = {name for name, tool in server.tools.items()
                if "document" not in inspect.signature(tool["handler"]).parameters}

@@ -32,6 +32,11 @@ class BookmarkTools:
                 "properties": {
                     "address": {"type": "object", "description": SCOPE,
                                 "properties": ADDRESS_PARTS},
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each bookmark's paragraph number as well. It is a sweep of the body — 195 bookmarks of a real guide cost 20s to number and 0.4s to anchor — so it is off unless a human needs to be shown where things are",
+                        "default": False
+                    },
                     "document": {"type": "string", "description": DOCUMENT}
                 }
             },
@@ -88,13 +93,14 @@ class BookmarkTools:
             "handler": self.delete_bookmark_live
         }
 
-    def list_bookmarks_live(self, address: Any = None,
+    def list_bookmarks_live(self, address: Any = None, number: bool = False,
                             document: Optional[str] = None) -> Dict[str, Any]:
         """The bookmarks of a document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_bookmarks(address=address, doc=doc)
+        return self.uno_bridge.list_bookmarks(address=address, number=number,
+                                              doc=doc)
 
     def add_bookmark_live(self, address: Any, name: str,
                           track_changes: Optional[bool] = None,

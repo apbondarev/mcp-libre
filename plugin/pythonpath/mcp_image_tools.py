@@ -25,6 +25,11 @@ class ImageTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each picture's paragraph number too. That is a walk of the body per picture — asking about one paragraph of a real guide took 142s — so it is off unless a human needs to be shown where things are",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -109,13 +114,14 @@ class ImageTools:
             "handler": self.render_page_live
         }
 
-    def list_images_live(self, address: Any = None,
+    def list_images_live(self, address: Any = None, number: bool = False,
                          document: Optional[str] = None) -> Dict[str, Any]:
         """List the pictures of a Writer document with their anchors"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_images(address=address, doc=doc)
+        return self.uno_bridge.list_images(address=address, number=number,
+                                           doc=doc)
 
     def export_image_live(self, name: Optional[str] = None,
                           path: Optional[str] = None,

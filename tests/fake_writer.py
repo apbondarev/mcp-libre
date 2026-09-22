@@ -881,8 +881,9 @@ class FakeDrawDoc:
 
 
 class FakeDesktop:
-    def __init__(self, documents, current=None):
+    def __init__(self, documents, current=None, to_open=None):
         self._documents = list(documents)
+        self.to_open = dict(to_open or {})
         self._current = current if current is not None else (
             documents[0] if documents else None)
         self.loaded = []
@@ -895,9 +896,19 @@ class FakeDesktop:
                                if not getattr(document, "closed", False)])
 
     def loadComponentFromURL(self, url, target, flags, arguments):
-        """Only the PDF-into-Draw import is modelled, which is all that uses it."""
+        """A document opened from a file, or the PDF-into-Draw import.
+
+        `to_open` maps a URL to the document a real LibreOffice would hand
+        back; without one this is the PDF import, which is what used to be
+        the only caller.
+        """
         settings = {argument.Name: argument.Value for argument in arguments}
         self.loaded.append((url, settings.get("FilterName")))
+        opened = getattr(self, "to_open", {}).get(url)
+        if opened is not None:
+            self._documents.append(opened)
+            self._current = opened
+            return opened
         drawing = FakeDrawDoc()
         self.drawings = getattr(self, "drawings", [])
         self.drawings.append(drawing)

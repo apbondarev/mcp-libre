@@ -64,13 +64,19 @@ class BookmarksMixin:
         described["is_a_point"] = not described.get("text")
         return described
 
-    def list_bookmarks(self, address: Any = None,
+    def list_bookmarks(self, address: Any = None, number: bool = False,
                        doc: Any = None) -> Dict[str, Any]:
         """
         The bookmarks of a document, each with the text it covers and where
 
         A bookmark over a range reports that text; one set at a caret reports
         nothing and says so in `is_a_point`. Scoped like the comments.
+
+        Each is placed by an **anchor** it is held with, not by a paragraph
+        number: a number is a sweep of the body — two UNO calls for every
+        paragraph of the document — and 195 bookmarks of a real guide cost
+        20 seconds to number and 0.4 to anchor. `number: true` works them out
+        as well, for showing a human where things are.
         """
         doc, error = self._writer_document(doc, "Listing bookmarks")
         if error:
@@ -80,31 +86,41 @@ class BookmarksMixin:
             return refusal("UNSUPPORTED", "this document keeps no bookmarks")
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        # Addressing each bookmark on its own walks the body once per
-        # bookmark: a real document with 21 of them spent 6.4s in here. One
-        # sweep places them all, as list_comments does with its anchors.
         names, marked, anchors = [], [], []
         for name in marks.getElementNames():
             try:
                 mark = marks.getByName(name)
-                anchors.append(mark.getAnchor())
+                anchor = mark.getAnchor()
             except Exception as e:
                 logger.info(f"Could not read bookmark {name}: {e}")
                 continue
+            if not number and not covers(anchor):
+                continue
             names.append(name)
             marked.append(mark)
-        placed = self._addresses_in_order(doc, anchors)
+            anchors.append(anchor)
+
+        # Numbering them means one sweep of the body; anchoring them is two
+        # UNO calls each and says the same thing to every tool.
+        placed = self._addresses_in_order(doc, anchors) if number \
+            else [None] * len(anchors)
 
         found = []
-        for name, mark, located in zip(names, marked, placed):
+        for name, mark, located, anchor in zip(names, marked, placed, anchors):
+            held = self._anchor_handle(self._hold_anchor(doc, anchor), "text")
+            if number:
+                if not covers(located):
+                    continue
+                located = dict(located or {}, anchor=held)
+            else:
+                located = {"anchor": held}
             described = self._describe_bookmark(doc, name, mark,
                                                 address=located)
-            if not covers(described["address"]):
-                continue
             found.append(described)
         # A bookmark in a table cell has no body paragraph, so it sorts
         # after the ones that do, by table and cell — as the comments do.
@@ -115,8 +131,10 @@ class BookmarksMixin:
                     address.get("table") or "", address.get("cell") or "",
                     address.get("offset") or 0)
 
-        found.sort(key=where)
+        if number:
+            found.sort(key=where)      # in reading order, which numbers give
         return {"success": True, "bookmarks": found, "count": len(found),
+                "order": "reading" if number else "as the document names them",
                 "scope": scope}
 
     def add_bookmark(self, address: Any, name: str,

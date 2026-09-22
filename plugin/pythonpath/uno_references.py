@@ -186,7 +186,8 @@ class ReferencesMixin:
     def _bookmarks_by_paragraph(self, doc: Any) -> Dict[int, List[Dict]]:
         """The bookmarks of the document, gathered by the paragraph they are in"""
         gathered: Dict[int, List[Dict]] = {}
-        for one in self.list_bookmarks(doc=doc).get("bookmarks", []):
+        for one in self.list_bookmarks(number=True,
+                                       doc=doc).get("bookmarks", []):
             address = one.get("address") or {}
             if address.get("paragraph") is None:
                 continue
@@ -258,7 +259,9 @@ class ReferencesMixin:
             targets.extend({key: value for key, value in one.items()
                             if key != "field"} for one in self._captions(doc))
         if "bookmark" in wanted:
-            listed = self.list_bookmarks(doc=doc)
+            # Targets are listed in reading order and scoped by paragraph,
+            # so here the numbers are what is wanted.
+            listed = self.list_bookmarks(number=True, doc=doc)
             for one in listed.get("bookmarks", []):
                 targets.append({"kind": "bookmark", "name": one["name"],
                                 "text": one["text"], "address": one["address"],

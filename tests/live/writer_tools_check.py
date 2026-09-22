@@ -1183,13 +1183,18 @@ try:
 
     put_picture(6, "Schema", title="GraphQL schema",
                 description="a query diagram")
-    listed = bridge.list_images(doc=doc)
+    listed = bridge.list_images(number=True, doc=doc)
     print(listed)
     check("the document holds one picture", listed.get("count"), 1)
+    check("and the fast listing places it by anchor alone",
+          bridge.list_images(doc=doc)["images"][0]["address"]["anchor"]["type"],
+          "text")
     picture = listed["images"][0]
     check("named", picture["name"], "Schema")
     check("inline in the text", picture["inline"], True)
-    check("with the address of its anchor", picture["address"],
+    check("with the address of its anchor",
+          {key: value for key, value in picture["address"].items()
+           if key != "anchor"},
           {"paragraph": 1, "offset": 6, "length": 0})
     check("the text it is anchored to", picture["paragraph_text"],
           "query is the entry point")
@@ -1271,11 +1276,12 @@ try:
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"],
           "запрос is the entry point")
-    after = bridge.list_images(doc=doc)
+    after = bridge.list_images(number=True, doc=doc)
     check("the picture is there", after.get("count"), 1)
     check("with its anchor where the text put it",
-          after["images"][0]["address"], {"paragraph": 1, "offset": 7,
-                                          "length": 0})
+          {key: value for key, value in after["images"][0]["address"].items()
+           if key != "anchor"},
+          {"paragraph": 1, "offset": 7, "length": 0})
     check("and its own name", after["images"][0]["name"], "Schema")
 
     print("\n--- flatten=true destroys it, and says so ---")
@@ -2277,11 +2283,22 @@ try:
           bridge.add_bookmark({"paragraph": where}, "Метка",
                               doc=doc).get("code"), "INVALID_PARAMETER")
 
-    listed = bridge.list_bookmarks({"paragraph": where}, doc=doc)
+    listed = bridge.list_bookmarks({"paragraph": where}, number=True, doc=doc)
     check("both are listed, in the order they sit in",
           [one["name"] for one in listed["bookmarks"]], ["Метка", "Точка"])
     check("each with the address of what it covers",
           listed["bookmarks"][0]["address"]["length"], 12)
+    # Placing them by number is a sweep of the body; the anchors are not.
+    fast = bridge.list_bookmarks({"paragraph": where}, doc=doc)
+    check("and the fast listing places them by anchor alone",
+          ([one["address"]["anchor"]["type"] for one in fast["bookmarks"]],
+           all("paragraph" not in one["address"]
+               for one in fast["bookmarks"])),
+          (["text", "text"], True))
+    check("each anchor resolving to what its bookmark covers",
+          [bridge._resolve_address(doc, one["address"]).getString()
+           for one in fast["bookmarks"]],
+          [one["text"] for one in fast["bookmarks"]])
 
     check("renaming leaves it where it is",
           bridge.rename_bookmark("Метка", "Метка-2", doc=doc).get("success"),

@@ -317,3 +317,51 @@ def test_the_tools_are_registered_and_dispatch(tmp_path):
                                              {"unsaved": "discard"}))
     assert closed["success"] is True
     assert doc.closed is True
+
+
+# --- opening one ------------------------------------------------------------
+#
+# The server could make a document and could close one, but not open one: a
+# file nobody had opened was invisible to every tool here, and a caller with
+# a path in hand had nothing to say.
+
+def test_a_file_is_opened_and_reported(bridge, tmp_path):
+    from tests.fake_writer import FakeDesktop, writer_doc
+
+    made = tmp_path / "Guide.odt"
+    made.write_bytes(b"not really an odt, the fake opens by name")
+    doc = writer_doc(["Opened"], caret=(0, 0))
+    doc.url = made.as_uri()
+    bridge.desktop = FakeDesktop([], to_open={made.as_uri(): doc})
+
+    opened = bridge.open_document(str(made))
+
+    assert opened["success"] is True
+    assert opened["already_open"] is False
+    assert opened["document_info"]["url"] == made.as_uri()
+
+
+def test_opening_one_that_is_open_answers_with_it(bridge, tmp_path):
+    from tests.fake_writer import FakeDesktop, writer_doc
+
+    made = tmp_path / "Guide.odt"
+    made.write_bytes(b"x")
+    doc = writer_doc(["Already"], caret=(0, 0))
+    doc.url = made.as_uri()
+    bridge.desktop = FakeDesktop([doc])
+
+    opened = bridge.open_document(str(made))
+
+    assert opened["already_open"] is True
+    assert opened["document_info"]["url"] == made.as_uri()
+
+
+def test_a_file_that_is_not_there_is_refused(bridge, tmp_path):
+    from tests.fake_writer import FakeDesktop
+
+    bridge.desktop = FakeDesktop([])
+
+    refused = bridge.open_document(str(tmp_path / "nothing.odt"))
+
+    assert refused["success"] is False
+    assert refused["code"] == "NOT_FOUND"

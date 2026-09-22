@@ -195,7 +195,7 @@ class ImagesMixin:
             logger.info(f"Could not place a picture: {e}")
             return True
 
-    def list_images(self, address: Any = None,
+    def list_images(self, address: Any = None, number: bool = False,
                     doc: Any = None) -> Dict[str, Any]:
         """
         The pictures of a document, a section, a paragraph, a range or the
@@ -204,6 +204,12 @@ class ImagesMixin:
         Each carries the address of its anchor, the text it is anchored to and
         its own size, so a caller can tell that a selection holds a picture,
         say where it is, and ask for the file with export_image.
+
+        The address is an **anchor** on what the picture is anchored to.
+        Working out a paragraph number instead means a walk of the body per
+        picture, and a real guide holds hundreds: asking which pictures stand
+        in **one** paragraph took 142 seconds. `number: true` works them out
+        for showing a human where things are, and pays that walk.
         """
         doc, error = self._writer_document(doc, "Listing pictures")
         if error:
@@ -218,21 +224,51 @@ class ImagesMixin:
                     "scope": {"selection": "picture"}}
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
         images = []
         for image in self._graphics(doc):
-            described = self._describe_image(doc, image)
-            if not covers(described["address"]):
+            if number:
+                described = self._describe_image(doc, image)
+                if not covers(described["address"]):
+                    continue
+                described["address"] = dict(
+                    described["address"] or {},
+                    anchor=self._anchor_handle(
+                        self._hold_anchor(doc, image.getAnchor()), "text"))
+                images.append(described)
                 continue
-            images.append(described)
+            try:
+                anchor = image.getAnchor()
+            except Exception as e:
+                logger.info(f"A picture would not say where it is: {e}")
+                continue
+            if not covers(anchor):
+                continue
+            held = self._anchor_handle(self._hold_anchor(doc, anchor), "text")
+            images.append(self._describe_image(
+                doc, image, address={"anchor": held},
+                paragraph_text=_text_payload(
+                    self._paragraph_from(anchor).getString())["text"]
+                if self._paragraph_from(anchor) is not None else None))
 
-        images.sort(key=lambda i: (
-            (i["address"] or {}).get("paragraph", 10 ** 9),
-            (i["address"] or {}).get("offset", 0)))
+        def where(one):
+            # A picture anchored to the page, or living in a header, is in no
+            # body paragraph and its number is None — which the sort used to
+            # compare with an int and die on, after two minutes of walking.
+            address = one["address"] or {}
+            paragraph = address.get("paragraph")
+            return (10 ** 9 if paragraph is None else paragraph,
+                    address.get("offset") or 0)
+
+        if number:
+            images.sort(key=where)
         return {"success": True, "images": images, "count": len(images),
+                "order": "reading" if number
+                         else "as the document names them",
                 "scope": scope}
 
     def export_image(self, name: Optional[str] = None,

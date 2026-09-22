@@ -104,6 +104,42 @@ class CommentsMixin:
                 break
         return index, last
 
+    def _scope_over(self, doc: Any, address: Any) -> tuple:
+        """(predicate on a *range*, description of the scope)
+
+        The scope of `_comment_scope` is a predicate on an address — on
+        paragraph **numbers** — and working one out for every item of a list
+        is a sweep of the body: two UNO calls for each of 6981 paragraphs,
+        which is why listing 195 bookmarks took 20 seconds. A range can be
+        compared with the scope directly, four calls apiece and no numbers,
+        which is what a listing needs when it reports anchors.
+        """
+        if address is None:
+            return (lambda item: True), {"document": True}
+        if not isinstance(address, dict):
+            raise AddressError(f"address must be an object, got {address!r}")
+
+        body = doc.getText()
+        if "heading" in address:
+            first, last = self._section_bounds(doc, address["heading"])
+            span = self._resolve_address(doc, {"paragraph": first,
+                                               "through": last})
+            described = {"heading": address["heading"],
+                         "paragraphs": [first, last]}
+        else:
+            span = self._resolve_address(doc, address)
+            described = dict(address)
+
+        def covers(item: Any) -> bool:
+            try:
+                return self._covers(body, span, item)
+            except Exception:
+                # A range in a table cell cannot be compared with the body,
+                # and a scope of body paragraphs does not hold it anyway.
+                return False
+
+        return covers, described
+
     def _comment_scope(self, doc: Any, address: Any) -> tuple:
         """
         (predicate on a comment's address, description of the scope)
