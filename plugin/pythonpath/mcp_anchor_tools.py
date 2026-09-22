@@ -43,6 +43,11 @@ class AnchorTools:
                         "description": "How many anchors to report. 200 when nobody says, and that is a default rather than a limit: ask for more and the rest come with it",
                         "default": 200
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say where each anchor points now, as a paragraph number. Whether it is alive and what it holds cost nothing; the number is a walk of the body, made once for the whole call",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -80,12 +85,14 @@ class AnchorTools:
         return self.uno_bridge.anchor(addresses, doc=doc)
 
     def list_anchors_live(self, start: int = 0, count: Optional[int] = None,
+                          number: bool = False,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """Report the anchors held for a document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_anchors(start=start, count=count, doc=doc)
+        return self.uno_bridge.list_anchors(start=start, count=count,
+                                            number=number, doc=doc)
 
     def drop_anchors_live(self, anchors: Optional[List[str]] = None,
                           document: Optional[str] = None) -> Dict[str, Any]:

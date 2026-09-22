@@ -171,26 +171,50 @@ class FieldsMixin:
             logger.info(f"A field would not say what it shows: {e}")
             return None
 
-    def list_fields(self, address: Any = None, doc: Any = None) -> Dict[str, Any]:
+    def list_fields(self, address: Any = None, number: bool = False,
+                    doc: Any = None) -> Dict[str, Any]:
         """
         The fields of a document, with what each one shows and where it sits
 
         Scoped like the comments — the whole document, a section, a
         paragraph, a range or the selection. Comments are fields too and are
         left out; list_comments is for those.
+
+        A field's **offset** can only come from walking the portions of every
+        paragraph: a zero-width cursor standing at a field hands back the
+        text the field shows, so string arithmetic around one lies. That walk
+        is what `number: true` pays for — 14 seconds for the 1536 fields of a
+        real guide. An anchor needs no offset: the document hands out its
+        fields directly, and each is held where it stands.
         """
         doc, error = self._writer_document(doc, "Listing fields")
         if error:
             return error
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        fields = [described for _field, described
-                  in self._fields_with_addresses(doc)
-                  if covers(described["address"])]
+        if number:
+            fields = [described for _field, described
+                      in self._fields_with_addresses(doc)
+                      if covers(described["address"])]
+        else:
+            fields = []
+            for field in self._text_fields(doc):
+                try:
+                    anchor = field.getAnchor()
+                except Exception as e:
+                    logger.info(f"A field would not say where it is: {e}")
+                    continue
+                if not covers(anchor):
+                    continue
+                held = self._anchor_handle(self._hold_anchor(doc, anchor),
+                                           "text")
+                fields.append(self._describe_field(
+                    doc, field, address={"anchor": held}))
 
         return {"success": True, "fields": fields, "count": len(fields),
                 "kinds": sorted({one["kind"] for one in fields if one["kind"]}),
@@ -301,8 +325,23 @@ class FieldsMixin:
             # a field that shows nothing — a title the document has not got —
             # is an empty range that every neighbouring address overlaps. So
             # an address that matches one of them *exactly* names that one.
+            # Compared against what the address *resolves to*, not against
+            # the way it was written: an anchor names the same stretch as a
+            # paragraph and an offset, and could never match one as a dict.
+            try:
+                wanted, _, _ = self._locate_range(
+                    doc, self._resolve_address(doc, address))
+            except Exception as e:
+                logger.info(f"Could not place the address given: {e}")
+                wanted = address if isinstance(address, dict) else {}
+
+            def same_place(one):
+                return all(one.get(key) == wanted.get(key)
+                           for key in ("paragraph", "offset", "length",
+                                       "table", "cell"))
+
             exact = [(field, one) for field, one in held
-                     if one["address"] == address]
+                     if same_place(one["address"] or {})]
             if len(exact) != 1:
                 return refusal(
                     "INVALID_PARAMETER",

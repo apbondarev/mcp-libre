@@ -33,6 +33,11 @@ class FieldTools:
                 "properties": {
                     "address": {"type": "object", "description": SCOPE,
                                 "properties": ADDRESS_PARTS},
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each field's paragraph and offset as well. A field's offset can only come from walking the portions of every paragraph — 14s for the 1536 fields of a real guide — so it is off unless a human needs to be shown where things are",
+                        "default": False
+                    },
                     "document": {"type": "string", "description": DOCUMENT}
                 }
             },
@@ -99,13 +104,14 @@ class FieldTools:
             "handler": self.delete_field_live
         }
 
-    def list_fields_live(self, address: Any = None,
+    def list_fields_live(self, address: Any = None, number: bool = False,
                          document: Optional[str] = None) -> Dict[str, Any]:
         """The fields of a document, with what each one shows"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_fields(address=address, doc=doc)
+        return self.uno_bridge.list_fields(address=address, number=number,
+                                           doc=doc)
 
     def insert_field_live(self, address: Any, kind: str, fixed: bool = False,
                           track_changes: Optional[bool] = None,

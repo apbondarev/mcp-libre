@@ -83,6 +83,7 @@ class SectionsMixin:
         return described
 
     def list_sections(self, address: Any = None,
+                      number: bool = False,
                       doc: Any = None) -> Dict[str, Any]:
         """
         The named sections of a document, with what each one is for
@@ -100,7 +101,8 @@ class SectionsMixin:
             return refusal("UNSUPPORTED", "this document keeps no sections")
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
@@ -114,7 +116,7 @@ class SectionsMixin:
                 continue
             names.append(name)
             held.append(section)
-        placed = self._addresses_in_order(doc, anchors)
+        placed = self._place_all(doc, anchors, number)
 
         # A section covers whole paragraphs and usually several of them, so
         # "which sections is paragraph 2 in?" is a question about overlap,
@@ -127,14 +129,18 @@ class SectionsMixin:
             if overlaps is not None:
                 if not overlaps(anchor):
                     continue
-            elif not covers(described["address"]):
+            elif not covers(described["address"] if number else anchor):
                 continue
             found.append(described)
-        found.sort(key=lambda one: ((one["address"] or {}).get("paragraph")
-                                    if (one["address"] or {}).get("paragraph")
-                                    is not None else 10 ** 9,
-                                    (one["address"] or {}).get("offset") or 0))
+        if number:
+            found.sort(key=lambda one:
+                       ((one["address"] or {}).get("paragraph")
+                        if (one["address"] or {}).get("paragraph") is not None
+                        else 10 ** 9,
+                        (one["address"] or {}).get("offset") or 0))
         return {"success": True, "sections": found, "count": len(found),
+                "order": "reading" if number
+                         else "as the document names them",
                 "protected": sum(1 for one in found if one["protected"]),
                 "hidden": sum(1 for one in found if not one["visible"]),
                 "scope": scope}

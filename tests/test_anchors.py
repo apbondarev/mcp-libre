@@ -131,7 +131,7 @@ def test_an_anchor_takes_nothing_beside_it(bridge, doc):
 def test_listing_says_where_each_anchor_points_now(bridge, doc):
     bridge.anchor([{"paragraph": 1}, {"paragraph": 3}], doc=doc)
 
-    listed = bridge.list_anchors(doc=doc)
+    listed = bridge.list_anchors(number=True, doc=doc)
 
     assert listed["held"] == 2
     assert listed["alive"] == 2
@@ -281,7 +281,7 @@ def test_listing_walks_the_body_once_however_many_anchors_are_held(bridge,
     monkeypatch.setattr(bridge, "_paragraph_at",
                         lambda *a, **k: (reached.append(True), at(*a, **k))[1])
 
-    listed = bridge.list_anchors(doc=doc)
+    listed = bridge.list_anchors(number=True, doc=doc)
 
     assert listed["alive"] == 8
     assert len(walks) == 1
@@ -293,7 +293,7 @@ def test_the_listing_places_anchors_after_the_numbers_have_moved(bridge):
     held = many_anchors(bridge, doc, 4)
     bridge.split_paragraph({"paragraph": 0, "offset": 0, "length": 0}, doc=doc)
 
-    listed = bridge.list_anchors(doc=doc)
+    listed = bridge.list_anchors(number=True, doc=doc)
 
     assert [one["address"]["paragraph"] for one in listed["anchors"]] \
         == [1, 2, 3, 4]
@@ -307,7 +307,7 @@ def test_the_listing_is_paged(bridge):
     many_anchors(bridge, doc, 5)
 
     first = bridge.list_anchors(count=2, doc=doc)
-    second = bridge.list_anchors(start=2, count=2, doc=doc)
+    second = bridge.list_anchors(start=2, count=2, number=True, doc=doc)
 
     assert (first["count"], first["held"], first["more"]) == (2, 5, True)
     assert [one["address"]["paragraph"] for one in second["anchors"]] == [2, 3]

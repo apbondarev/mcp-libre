@@ -46,7 +46,10 @@ def test_a_field_is_reported_with_what_it_shows(bridge, doc):
     assert field["text"] == SHOWN
     assert field["command"] == "Date"
     assert field["kind"] == "date"
-    assert field["address"]["paragraph"] == 1
+    # An anchor on where it stands: a field's offset can only come from
+    # walking every paragraph's portions, which `number: true` pays for.
+    assert field["address"]["anchor"]["type"] == "text"
+    assert "paragraph" not in field["address"]
 
 
 def test_the_run_that_is_a_field_says_so(bridge, doc):
@@ -128,3 +131,22 @@ def test_a_field_showing_nothing_does_not_hide_its_neighbour(bridge):
 
     assert gone["success"] is True
     assert gone["deleted"] == "page_number"
+
+
+def test_a_field_is_numbered_when_that_is_asked_for(bridge, doc):
+    field, = bridge.list_fields(number=True, doc=doc)["fields"]
+
+    assert field["address"]["paragraph"] == 1
+    assert isinstance(field["address"]["offset"], int)
+
+
+def test_a_field_is_deleted_by_the_anchored_address_it_was_listed_with(bridge,
+                                                                       doc):
+    # The address is compared by the place it resolves to, not by the way it
+    # is written, or an anchor could never name the field it holds.
+    at = bridge.list_fields(doc=doc)["fields"][0]["address"]
+
+    gone = bridge.delete_field(at, doc=doc)
+
+    assert gone["success"] is True
+    assert bridge.list_fields(doc=doc)["count"] == 0

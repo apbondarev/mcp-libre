@@ -16,6 +16,11 @@ class IndexTools:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each index's paragraph number as well, which is a sweep of the body where its anchor is two UNO calls",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -170,13 +175,13 @@ class IndexTools:
             "handler": self.add_index_mark_live
         }
 
-    def list_indexes_live(self,
+    def list_indexes_live(self, number: bool = False,
                           document: Optional[str] = None) -> Dict[str, Any]:
         """List the indexes of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_indexes(doc=doc)
+        return self.uno_bridge.list_indexes(number=number, doc=doc)
 
     def insert_index_live(self, address: Any, kind: str = "contents",
                           title: Optional[str] = None,

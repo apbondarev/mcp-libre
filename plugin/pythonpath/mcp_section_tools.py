@@ -31,6 +31,11 @@ class SectionTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each section's paragraph number as well. That is a sweep of the body, where an anchor is two UNO calls, so it is off unless a human needs to be shown where things are",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -155,13 +160,14 @@ class SectionTools:
             "handler": self.delete_section_live
         }
 
-    def list_sections_live(self, address: Any = None,
+    def list_sections_live(self, address: Any = None, number: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """List the sections of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_sections(address=address, doc=doc)
+        return self.uno_bridge.list_sections(address=address, number=number,
+                                             doc=doc)
 
     def create_section_live(self, address: Any, name: str,
                             protected: bool = False, visible: bool = True,

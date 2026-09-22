@@ -101,7 +101,7 @@ def test_an_index_is_picked_in_exactly_one_way(bridge, doc):
 def test_listing_says_what_each_index_is(bridge, doc):
     bridge.insert_index({"paragraph": 0}, title="Содержание", doc=doc)
 
-    listed = bridge.list_indexes(doc=doc)
+    listed = bridge.list_indexes(number=True, doc=doc)
 
     assert listed["count"] == 1
     only = listed["indexes"][0]
@@ -137,7 +137,7 @@ def test_removing_an_index_takes_its_paragraphs(bridge, doc):
 
     assert (gone["success"], gone["paragraphs_removed"]) == (True, 4)
     assert lines(doc)[0] == "Introduction"
-    assert bridge.list_indexes(doc=doc)["count"] == 0
+    assert bridge.list_indexes(number=True, doc=doc)["count"] == 0
 
 
 def test_what_the_index_tools_refuse(bridge, doc):
@@ -159,7 +159,7 @@ def test_two_indexes_keep_their_places(bridge, doc):
     total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
     bridge.insert_index({"paragraph": total - 1}, kind="alphabetical", doc=doc)
 
-    listed = bridge.list_indexes(doc=doc)
+    listed = bridge.list_indexes(number=True, doc=doc)
 
     assert [one["kind"] for one in listed["indexes"]] == ["contents",
                                                           "alphabetical"]

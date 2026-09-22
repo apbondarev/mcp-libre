@@ -193,6 +193,14 @@ def check(client, name, named, ground, resolve):
 
     row = {"tool": name, "seconds": round(spent, 3),
            "elapsed_ms": answer.get("elapsed_ms")}
+    if not answer.get("success") and "no anchor" in str(answer.get("error")):
+        # The listings above held thousands of anchors and the store let the
+        # oldest go — including the one this check was handed. Stand where it
+        # stood again and ask once more; the summary counts it.
+        row["re_anchored"] = True
+        ground.update(ground_truth(client, named))
+        arguments = arguments_for(name, ground)
+        answer = client.call(name + "_live", dict(named, **(arguments or {})))
     if not answer.get("success"):
         code = answer.get("code")
         row["state"] = "refused" if code in ERROR_CODES else "broken"
@@ -348,6 +356,11 @@ def main():
                if row.get("anchors") not in ("all", "—", None)]
     print(f"addresses: {len(anchored)} tool(s) anchor them all, "
           f"{len(numbers)} still hand out some without an anchor")
+    let_go = [row for row in rows if row.get("re_anchored")]
+    if let_go:
+        print(f"the anchor store let go of this check's own anchor before "
+              f"{len(let_go)} call(s) — the listings above hold one per item, "
+              f"and the store keeps 2000")
     if broken:
         print("\nbroken:")
         for row in broken:

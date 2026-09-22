@@ -2161,7 +2161,7 @@ try:
     check("the anchor still holds its own text",
           bridge._resolve_address(doc, {"anchor": one}).getString(),
           "ANCHOR-ONE")
-    listed = bridge.list_anchors(doc=doc)
+    listed = bridge.list_anchors(number=True, doc=doc)
     moved = [entry for entry in listed["anchors"]
              if entry["anchor"]["anchorId"] == one][0]
     check("and reports where it has moved to",
@@ -2195,7 +2195,7 @@ try:
     read_back = bridge.read_paragraphs(start=0, count=20, doc=doc)["paragraphs"]
     where = {entry["address"]["anchor"]["anchorId"]: entry["paragraph"]
              for entry in read_back}
-    listed = bridge.list_anchors(count=200, doc=doc)
+    listed = bridge.list_anchors(count=200, number=True, doc=doc)
     placed = {entry["anchor"]["anchorId"]:
               (entry.get("address") or {}).get("paragraph")
               for entry in listed["anchors"]}
@@ -2208,7 +2208,8 @@ try:
     text.insertControlCharacter(moved_up, PARAGRAPH_BREAK, False)
     after = {entry["anchor"]["anchorId"]:
              (entry.get("address") or {}).get("paragraph")
-             for entry in bridge.list_anchors(count=200, doc=doc)["anchors"]}
+             for entry in bridge.list_anchors(count=200, number=True,
+                                              doc=doc)["anchors"]}
     check("and each is one further down once a paragraph is put above them",
           all(after.get(token) == index + 1 for token, index in where.items()),
           True)
@@ -2250,7 +2251,8 @@ try:
     check("an anchor in a table that is gone refuses rather than throwing",
           refused is not None and "is gone" in refused, True)
     check("and list_anchors says the same without raising",
-          [entry["alive"] for entry in bridge.list_anchors(doc=doc)["anchors"]
+          [entry["alive"] for entry in bridge.list_anchors(number=True,
+                                                           doc=doc)["anchors"]
            if entry["anchor"]["anchorId"] == gone], [False])
 
     check("anchors are let go when asked",
@@ -2351,7 +2353,7 @@ try:
                          "length": 1}, "date", doc=doc)
     refreshed_first = bridge.update_fields(doc=doc)
     check("fields can be made to redraw", refreshed_first.get("success"), True)
-    listed = bridge.list_fields({"paragraph": page}, doc=doc)
+    listed = bridge.list_fields({"paragraph": page}, number=True, doc=doc)
     print("   ", [(one["kind"], one["text"], one["address"]["offset"])
                   for one in listed["fields"]])
     check("all three are listed", listed["count"], 3)

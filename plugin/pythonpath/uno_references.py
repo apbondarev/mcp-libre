@@ -99,8 +99,13 @@ class ReferencesMixin:
             return full[len(MASTER_PREFIX):]
         return None
 
-    def _captions(self, doc: Any) -> List[Dict[str, Any]]:
-        """Every caption number in the document, placed in one walk"""
+    def _captions(self, doc: Any, place: bool = True) -> List[Dict[str, Any]]:
+        """Every caption number in the document, placed in one walk
+
+        `place` off leaves the addresses out — what `_known_targets` wants is
+        the categories and the sequence ids, and placing them is the sweep of
+        the body this module exists to stop paying for twice.
+        """
         fields = self._fields_of_service(doc, SEQUENCE_SERVICE)
         anchors, kept = [], []
         for field in fields:
@@ -110,16 +115,29 @@ class ReferencesMixin:
                 logger.info(f"A caption would not say where it is: {e}")
                 continue
             kept.append(field)
-        placed = self._addresses_in_order(doc, anchors)
+        placed = (self._addresses_in_order(doc, anchors) if place
+                  else [None] * len(anchors))
 
         # A range's own text is the whole body, so the caption's line comes
         # from the paragraph its address names — gathered in one walk, since
         # reaching a paragraph by index is a walk of its own.
         lines = self._paragraph_texts(
-            doc, {(one or {}).get("paragraph") for one in placed})
+            doc, {(one or {}).get("paragraph") for one in placed}) if place \
+            else {}
+        if not place:
+            # No numbers to gather the lines by, but a caption's anchor names
+            # its own paragraph for two UNO calls — and the line is the
+            # caption, which is the point of listing them at all.
+            unplaced = {}
+            for position, anchor in enumerate(anchors):
+                paragraph = self._paragraph_from(anchor)
+                unplaced[position] = (paragraph.getString()
+                                      if paragraph is not None else "")
+            lines = unplaced
 
         found = []
-        for field, anchor, address in zip(kept, anchors, placed):
+        for position, (field, anchor, address) in enumerate(
+                zip(kept, anchors, placed)):
             category = self._master_category(field)
             number = None
             try:
@@ -127,7 +145,8 @@ class ReferencesMixin:
             except Exception as e:
                 logger.info(f"A caption would not say its number: {e}")
             paragraph = _text_payload(
-                lines.get((address or {}).get("paragraph"), ""))["text"]
+                lines.get((address or {}).get("paragraph") if place
+                          else position, ""))["text"]
             found.append({
                 "kind": "caption",
                 "category": category,
@@ -161,7 +180,8 @@ class ReferencesMixin:
                     break
         return found
 
-    def _reference_marks(self, doc: Any) -> List[Dict[str, Any]]:
+    def _reference_marks(self, doc: Any,
+                         number: bool = True) -> List[Dict[str, Any]]:
         """The reference marks — Writer's "Set Reference" targets"""
         try:
             marks = doc.getReferenceMarks()
@@ -176,7 +196,7 @@ class ReferencesMixin:
                 logger.info(f"Could not read reference mark {name}: {e}")
                 continue
             names.append(name)
-        placed = self._addresses_in_order(doc, anchors)
+        placed = self._place_all(doc, anchors, number)
         return [{"kind": "reference_mark", "name": name,
                  "text": _text_payload(anchor.getString())["text"],
                  "address": address,
@@ -201,11 +221,18 @@ class ReferencesMixin:
                 return one["name"]
         return None
 
-    def _headings_as_targets(self, doc: Any) -> List[Dict[str, Any]]:
-        """Every heading, with the bookmark a reference to it would use"""
+    def _headings_as_targets(self, doc: Any,
+                             bookmarks: bool = True) -> List[Dict[str, Any]]:
+        """Every heading, with the bookmark a reference to it would use
+
+        A heading's number comes free with the walk that finds it, and a
+        reference to one is made by that number. Saying which bookmark
+        already covers it does not: that is the sweep which places every
+        bookmark of the document, so it waits to be asked for.
+        """
         from uno_values import _heading_level
 
-        by_paragraph = self._bookmarks_by_paragraph(doc)
+        by_paragraph = self._bookmarks_by_paragraph(doc) if bookmarks else {}
         found = []
         for paragraph, index in self._body_paragraphs(doc):
             level = _heading_level(paragraph)
@@ -225,7 +252,7 @@ class ReferencesMixin:
     # ---- listing -----------------------------------------------------
 
     def list_reference_targets(self, kinds: Optional[List[str]] = None,
-                               address: Any = None,
+                               address: Any = None, number: bool = False,
                                doc: Any = None) -> Dict[str, Any]:
         """
         What a cross-reference can point at: headings, captions, bookmarks,
@@ -247,6 +274,10 @@ class ReferencesMixin:
                            f"a target is a heading, a caption, a bookmark or "
                            f"a reference_mark; got {unknown[0]!r}")
 
+        # A scope is a stretch of paragraphs, so narrowing to one means
+        # knowing where each target is — which is what the numbers are.
+        if address is not None:
+            number = True
         try:
             covers, scope = self._comment_scope(doc, address)
         except Exception as e:
@@ -254,26 +285,30 @@ class ReferencesMixin:
 
         targets: List[Dict[str, Any]] = []
         if "heading" in wanted:
-            targets.extend(self._headings_as_targets(doc))
+            targets.extend(self._headings_as_targets(doc, bookmarks=number))
         if "caption" in wanted:
             targets.extend({key: value for key, value in one.items()
-                            if key != "field"} for one in self._captions(doc))
+                            if key != "field"}
+                           for one in self._captions(doc, place=number))
         if "bookmark" in wanted:
-            # Targets are listed in reading order and scoped by paragraph,
-            # so here the numbers are what is wanted.
-            listed = self.list_bookmarks(number=True, doc=doc)
+            listed = self.list_bookmarks(number=number, doc=doc)
             for one in listed.get("bookmarks", []):
                 targets.append({"kind": "bookmark", "name": one["name"],
                                 "text": one["text"], "address": one["address"],
                                 "reference": {"bookmark": one["name"]}})
         if "reference_mark" in wanted:
-            targets.extend(self._reference_marks(doc))
+            targets.extend(self._reference_marks(doc, number=number))
 
-        targets = [one for one in targets if covers(one["address"])]
-        targets.sort(key=lambda one: ((one["address"] or {}).get("paragraph")
-                                      if (one["address"] or {}).get("paragraph")
-                                      is not None else 10 ** 9,
-                                      (one["address"] or {}).get("offset") or 0))
+        # A scope is a stretch of paragraphs, so narrowing to one means
+        # knowing where things are — which is what `number` pays for.
+        if address is not None:
+            targets = [one for one in targets if covers(one["address"])]
+        if number:
+            targets.sort(key=lambda one:
+                         ((one["address"] or {}).get("paragraph")
+                          if (one["address"] or {}).get("paragraph") is not None
+                          else 10 ** 9,
+                          (one["address"] or {}).get("offset") or 0))
         counted: Dict[str, int] = {}
         for one in targets:
             counted[one["kind"]] = counted.get(one["kind"], 0) + 1
@@ -290,7 +325,7 @@ class ReferencesMixin:
                                                      None)
         return described
 
-    def list_references(self, address: Any = None,
+    def list_references(self, address: Any = None, number: bool = False,
                         doc: Any = None) -> Dict[str, Any]:
         """
         The cross-references of a document, each with what it points at
@@ -305,7 +340,8 @@ class ReferencesMixin:
             return error
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
@@ -318,11 +354,13 @@ class ReferencesMixin:
                 logger.info(f"A reference would not say where it is: {e}")
                 continue
             kept.append(field)
-        placed = self._addresses_in_order(doc, anchors)
+        # 926 references of a real guide were placed by one sweep of the body
+        # at a cost of 12 seconds; an anchor apiece is two UNO calls.
+        placed = self._place_all(doc, anchors, number)
 
         known = self._known_targets(doc)
         references = []
-        for field, located in zip(kept, placed):
+        for field, anchor, located in zip(kept, anchors, placed):
             target = self._target_of_reference(field)
             part = _get_property(field, "ReferenceFieldPart", None)
             shows = None
@@ -337,13 +375,15 @@ class ReferencesMixin:
                 "address": located,
                 "broken": not self._target_is_there(target, known),
             }
-            if not covers(described["address"]):
+            if not covers(described["address"] if number else anchor):
                 continue
             references.append(described)
 
         return {"success": True, "references": references,
                 "count": len(references),
                 "broken": sum(1 for one in references if one["broken"]),
+                "order": "reading" if number
+                         else "as the document names them",
                 "scope": scope}
 
     def _known_targets(self, doc: Any) -> Dict[str, Any]:
@@ -355,7 +395,7 @@ class ReferencesMixin:
             logger.info(f"This document keeps no reference marks: {e}")
             reference_marks = set()
         captions = {}
-        for one in self._captions(doc):
+        for one in self._captions(doc, place=False):
             captions.setdefault(one["category"], set()).add(one["sequence_id"])
         return {
             "bookmark": set(marks.getElementNames()) if marks else set(),

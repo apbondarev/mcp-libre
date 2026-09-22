@@ -106,7 +106,8 @@ class IndexesMixin:
             described["levels"] = _get_property(index, "Level", None)
         return described
 
-    def list_indexes(self, doc: Any = None) -> Dict[str, Any]:
+    def list_indexes(self, number: bool = False,
+                     doc: Any = None) -> Dict[str, Any]:
         """
         The tables of contents and other indexes a document has
 
@@ -130,7 +131,7 @@ class IndexesMixin:
                 continue
             names.append(name)
             held.append(index)
-        placed = self._addresses_in_order(doc, anchors)
+        placed = self._place_all(doc, anchors, number)
 
         found = [self._describe_index(index, name, address)
                  for name, index, address in zip(names, held, placed)]

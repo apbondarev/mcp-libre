@@ -45,6 +45,11 @@ class ReferenceTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Place every target by paragraph number, in reading order, and say which bookmark each heading already has. Those are two sweeps of the body — 79s on a real guide of 1689 targets against 9s without — and naming a scope turns them on, since narrowing to a stretch means knowing where things are",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -71,6 +76,11 @@ class ReferenceTools:
                             "length": {"type": "integer"},
                             "selection": {"type": "boolean"}
                         }
+                    },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each reference's paragraph number as well — a sweep of the body, 12s for the 926 references of a real guide, where the anchors cost two UNO calls apiece",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -202,6 +212,7 @@ class ReferenceTools:
 
     def list_reference_targets_live(self, kinds: Optional[List[str]] = None,
                                     address: Any = None,
+                                    number: bool = False,
                                     document: Optional[str] = None
                                     ) -> Dict[str, Any]:
         """List what a cross-reference can point at"""
@@ -209,15 +220,17 @@ class ReferenceTools:
         if error:
             return error
         return self.uno_bridge.list_reference_targets(kinds=kinds,
-                                                      address=address, doc=doc)
+                                                      address=address,
+                                                      number=number, doc=doc)
 
-    def list_references_live(self, address: Any = None,
+    def list_references_live(self, address: Any = None, number: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """List the cross-reference fields and say which are broken"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_references(address=address, doc=doc)
+        return self.uno_bridge.list_references(address=address,
+                                               number=number, doc=doc)
 
     def insert_caption_live(self, text: str, image: Optional[str] = None,
                             table: Optional[str] = None, address: Any = None,
