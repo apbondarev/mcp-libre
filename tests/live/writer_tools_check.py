@@ -19,6 +19,13 @@ import tempfile
 import time
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    # The output is Cyrillic and the odd StarMath bracket (U+27E6/7); a
+    # Windows console's legacy codepage cannot encode either and raises
+    # instead of printing.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "plugin", "pythonpath"))
 
@@ -118,6 +125,35 @@ def _refused(bridge, doc, address):
         return True
 
 
+def force_en_us_locale(ctx):
+    """Make this headless profile behave like an English install.
+
+    The checks assume an en-US install throughout (default document
+    language, "Table1", "Table of Contents1"...). A LibreOffice whose UI
+    language is something else — ru-RU here — creates documents in that
+    locale and names things in it instead, which is a property of the
+    install, not of the tools under test. Setting these two config nodes
+    on this run's own throwaway profile pins it to en-US regardless of
+    the host machine's LibreOffice language, without touching anything
+    the developer's own LibreOffice would ever load.
+    """
+    from com.sun.star.beans import PropertyValue
+
+    provider = ctx.ServiceManager.createInstanceWithContext(
+        "com.sun.star.configuration.ConfigurationProvider", ctx)
+
+    def _set(nodepath, name, value):
+        arg = PropertyValue()
+        arg.Name, arg.Value = "nodepath", nodepath
+        access = provider.createInstanceWithArguments(
+            "com.sun.star.configuration.ConfigurationUpdateAccess", (arg,))
+        access.setPropertyValue(name, value)
+        access.commitChanges()
+
+    _set("/org.openoffice.Setup/L10N", "ooLocale", "en-US")
+    _set("/org.openoffice.Office.Linguistic/General", "DefaultLocale", "en-US")
+
+
 soffice = subprocess.Popen([
     "soffice", f"-env:UserInstallation={file_uri(PROFILE)}",
     "--headless", "--norestore", "--nologo", "--nodefault",
@@ -126,6 +162,7 @@ soffice = subprocess.Popen([
 
 try:
     ctx = connect()
+    force_en_us_locale(ctx)
     desktop = ctx.ServiceManager.createInstanceWithContext(
         "com.sun.star.frame.Desktop", ctx)
     doc = build_document(desktop)
@@ -2432,9 +2469,9 @@ try:
     pages = numbered.getText()
     writing = pages.createTextCursor()
     for style, line in (("Heading 1", "Scalar types"),
-                        ("Default Paragraph Style", "A picture sits here"),
-                        ("Default Paragraph Style", "Body text"),
-                        ("Default Paragraph Style", "See also")):
+                        ("Standard", "A picture sits here"),
+                        ("Standard", "Body text"),
+                        ("Standard", "See also")):
         writing.ParaStyleName = style
         pages.insertString(writing, line, False)
         pages.insertControlCharacter(writing, PARAGRAPH_BREAK, False)
@@ -2665,7 +2702,7 @@ try:
     nib = booked_text.createTextCursor()
     for style, line in (("Heading 1", "Заголовок"),
                         ("Preformatted Text", "query { hero }"),
-                        ("Default Paragraph Style", "Обычный"),
+                        ("Standard", "Обычный"),
                         ("Preformatted Text", "mutation { }")):
         nib.ParaStyleName = style
         booked_text.insertString(nib, line, False)
@@ -2763,9 +2800,9 @@ try:
     styled_text = styled.getText()
     quill = styled_text.createTextCursor()
     for style, line in (("Heading 1", "Заголовок"),
-                        ("Default Paragraph Style", "Обычный абзац тут"),
+                        ("Standard", "Обычный абзац тут"),
                         ("Preformatted Text", "query { hero }"),
-                        ("Default Paragraph Style", "Ещё обычный"),
+                        ("Standard", "Ещё обычный"),
                         ("Preformatted Text", "mutation { }")):
         quill.ParaStyleName = style
         styled_text.insertString(quill, line, False)
@@ -3011,9 +3048,9 @@ try:
     linked_text = linked.getText()
     nib = linked_text.createTextCursor()
     for style, line in (("Heading 1", "Scalar types"),
-                        ("Default Paragraph Style",
+                        ("Standard",
                          "See the GraphQL specification for more."),
-                        ("Default Paragraph Style",
+                        ("Standard",
                          "And the section above, and a dead end.")):
         nib.ParaStyleName = style
         linked_text.insertString(nib, line, False)
@@ -3292,7 +3329,7 @@ try:
     print("   ", {key: made.get(key) for key in
                   ("success", "name", "address", "columns", "text")})
     check("a section covers the paragraphs it was given",
-          (made.get("success"), made.get("text")),
+          (made.get("success"), (made.get("text") or "").replace("\r\n", "\n")),
           (True, "Inside one\nInside two"))
     check("and moves nothing: the numbering is what it was",
           bridge.read_paragraphs(start=0, count=1,
@@ -3498,11 +3535,11 @@ try:
     written = indexed.getText()
     pen = written.createTextCursor()
     for style, line in (("Heading 1", "Introduction"),
-                        ("Default Paragraph Style", "Intro body with GraphQL"),
+                        ("Standard", "Intro body with GraphQL"),
                         ("Heading 2", "Scalar types"),
-                        ("Default Paragraph Style", "Scalars body"),
+                        ("Standard", "Scalars body"),
                         ("Heading 1", "Conclusion"),
-                        ("Default Paragraph Style", "The end")):
+                        ("Standard", "The end")):
         pen.ParaStyleName = style
         written.insertString(pen, line, False)
         written.insertControlCharacter(pen, PARAGRAPH_BREAK, False)
@@ -3655,7 +3692,7 @@ try:
     print("   ", {key: merged.get(key) for key in
                   ("success", "into", "text", "cells_left")})
     check("two cells became one", merged.get("success"), True)
-    check("keeping both texts", merged.get("text"), "c\n1")
+    check("keeping both texts", merged.get("text", "").replace("\r\n", "\n"), "c\n1")
     check("a table with merged cells will not be sorted",
           bridge.sort_table(column=1, name="Форма", doc=doc).get("code"),
           "UNSUPPORTED")
