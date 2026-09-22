@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Say where the caret is, then read the runs of the paragraph it stands in.
+"""Say where the caret is, then read the runs of what the reader has in hand.
 
-Two questions an assistant asks constantly while working on a document, and
-the pair most awkward to ask by hand: the reply to a tool call arrives on the
-SSE stream rather than in the answer to the POST that made it, so curl needs
-two terminals. This is that dance, done once.
+That is the paragraph the caret stands in, and every paragraph the selection
+covers when there is one. Two questions an assistant asks constantly while
+working on a document, and the pair most awkward to ask by hand: the reply to
+a tool call arrives on the SSE stream rather than in the answer to the POST
+that made it, so curl needs two terminals. This is that dance, done once.
 
     python3 scripts/cursor_runs.py
     python3 scripts/cursor_runs.py --document file:///home/me/Doc.odt
@@ -124,21 +125,26 @@ def show(title, answer):
 
 
 def address_of(cursor):
-    """Where to read the runs: the anchor the cursor came back with.
+    """What to read: everything the reader has in hand, and never a number.
 
-    The paragraph's *number* is not in the answer unless it was asked for —
-    a paragraph has none in UNO, so counting one is a walk of the body — and
-    the anchor names the same place for two UNO calls. A caret inside a table
-    cell belongs to the cell's own text, which a cell address reaches.
+    A selection comes back as an anchor over itself, and `read_runs` given
+    that anchor reads every paragraph the selection covers — the range names
+    its own paragraphs, so nothing counts them. Without a selection the
+    caret's own paragraph anchor is the address. A caret inside a table cell
+    belongs to the cell's own text, which a cell address reaches.
     """
+    selected = cursor.get("selection") or {}
+    if selected.get("has_selection") and selected.get("address"):
+        return selected["address"]
+
     address = cursor.get("address")
     if address:
         return address
     in_table = cursor.get("in_table") or {}
     if in_table.get("cell"):
         return {"table": in_table.get("table"), "cell": in_table["cell"]}
-    index = (cursor.get("cursor") or {}).get("paragraph_index")
-    return {"paragraph": index} if isinstance(index, int) else None
+    here = (cursor.get("cursor") or {}).get("paragraph_index")
+    return {"paragraph": here} if isinstance(here, int) else None
 
 
 def main():
@@ -169,6 +175,9 @@ def main():
 
     runs = client.call("read_runs_live", dict(named, address=address))
     show(f"read_runs_live {json.dumps(address, ensure_ascii=False)}", runs)
+    if runs.get("truncated"):
+        print(f"\nOnly the first {runs['truncated_at']} paragraphs of the "
+              f"selection were read; ask again from further down.")
     return 0 if runs.get("success") else 1
 
 

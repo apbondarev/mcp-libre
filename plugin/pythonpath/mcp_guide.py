@@ -68,6 +68,13 @@ anchor it came from, which resolves back to exactly that run. On that
 document, "where am I" and "read the runs there" came to 8s and 8–12s by
 number; by anchor they are 0.013s and 0.008s.
 
+A **selection** is handed over the same way: `selection.address` is an anchor
+over the whole of it, `paragraphs_selected` says how many paragraphs it
+holds and `contains_table` whether a table is in there — all from the range
+itself, no numbers. Give that anchor to `read_runs` and every paragraph the
+selection covers comes back, each with an anchor of its own. Nine selected
+paragraphs of a 519-page guide: 0.025s to ask, 0.135s to read.
+
 `read_paragraphs` also **takes** an address as its `start` — the one a
 previous read or a search handed back — so a long document is paged through
 without a number ever being carried from one call to the next, and a block

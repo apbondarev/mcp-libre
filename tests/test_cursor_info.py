@@ -304,3 +304,49 @@ def test_the_number_comes_with_the_anchor_when_it_is_asked_for(bridge):
     assert result["address"] == {"paragraph": 2,
                                  "anchor": result["anchor"]}
     assert "note" not in result
+
+
+def test_a_selection_in_one_paragraph_is_not_counted_either(bridge,
+                                                            monkeypatch):
+    doc = writer_doc(PARAGRAPHS, caret=(2, 0),
+                     selection_spans=[((2, 0), (2, 5))])
+
+    def refuse(*arguments, **named):
+        raise AssertionError("get_cursor_info counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    result = bridge.get_cursor_info(doc=doc)
+
+    assert result["selection"]["has_selection"] is True
+    assert result["selection"]["paragraphs_selected"] == 1
+    assert "paragraphs" not in result["selection"]
+
+
+def test_a_selection_across_paragraphs_is_answered_by_an_anchor(bridge,
+                                                                monkeypatch):
+    # How much it covers and whether a table is in there come from the
+    # selection's own enumeration; the numbers would be a walk of the body.
+    doc = writer_doc(PARAGRAPHS, caret=(1, 0),
+                     selection_spans=[((1, 0), (2, 6))])
+
+    def refuse(*arguments, **named):
+        raise AssertionError("get_cursor_info counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    selected = bridge.get_cursor_info(doc=doc)["selection"]
+
+    assert selected["paragraphs_selected"] == 2
+    assert selected["contains_table"] is False
+    assert bridge._resolve_address(doc, selected["address"]).getString() \
+        == selected["text"]
+
+
+def test_the_numbers_of_a_selection_come_when_they_are_asked_for(bridge):
+    doc = writer_doc(PARAGRAPHS, caret=(1, 0),
+                     selection_spans=[((1, 0), (2, 6))])
+
+    selected = bridge.get_cursor_info(number=True, doc=doc)["selection"]
+
+    assert selected["paragraphs"] == [1, 2]

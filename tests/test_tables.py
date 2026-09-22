@@ -222,19 +222,27 @@ def test_the_selection_says_it_holds_a_table(bridge, selection_over_a_table):
 
 def test_the_selection_says_how_big_that_table_is(bridge,
                                                   selection_over_a_table):
+    # Name and size, which the range's own enumeration hands over. Placing
+    # the table — what read_table and list_tables report — is a walk, and a
+    # cursor report is not the place to pay for one.
     table, = bridge.get_cursor_info(doc=selection_over_a_table)["selection"]["tables"]
 
     assert (table["rows"], table["columns"]) == (2, 2)
-    assert table["cells"] == 4
-    assert table["column_widths_percent"] == [50.0, 50.0]
+    assert table["name"] == "Table1"
 
 
-def test_the_selection_also_says_which_paragraphs_it_covers(
+def test_the_selection_says_how_much_it_covers_and_hands_out_an_anchor(
         bridge, selection_over_a_table):
     selected = bridge.get_cursor_info(doc=selection_over_a_table)["selection"]
 
-    assert selected["paragraphs"] == [1, 2]
     assert selected["has_selection"] is True
+    assert selected["paragraphs_selected"] == 2
+    # No numbers: working one out walks the body. The anchor reads them all.
+    assert "paragraphs" not in selected
+    assert selected["address"] == {"anchor": selected["anchor"]}
+    runs = bridge.read_runs(selected["address"], doc=selection_over_a_table)
+    assert [run["text"] for run in runs["runs"]] == ["Попробуйте запрос:",
+                                                      "После таблицы"]
 
 
 def test_a_selection_of_plain_text_holds_no_table(bridge, doc):
@@ -274,15 +282,34 @@ def test_flatten_goes_ahead_and_counts_the_table_it_destroyed(
     assert flattened["tables_dropped"] == 1
 
 
-def test_reading_runs_of_such_a_range_says_what_it_cannot_reach(
+def test_reading_runs_of_such_a_range_reads_them_all_and_names_the_table(
         bridge, selection_over_a_table):
+    # A selection across paragraphs is read whole now, from the range's own
+    # enumeration — which also hands out the table standing between them, so
+    # no paragraph number is worked out and none is reported.
     runs = bridge.read_runs({"selection": True}, doc=selection_over_a_table)
 
     assert runs["success"] is True
+    assert [run["text"] for run in runs["runs"]] == ["Попробуйте запрос:",
+                                                      "После таблицы"]
+    assert runs["paragraphs_read"] == 2
+    assert len(runs["anchors"]) == 2
     assert runs["spans_tables"] == [{"name": "Table1", "rows": 2,
                                      "columns": 2}]
-    assert runs["spans_paragraphs"] == [1, 2]
     assert "read_table" in runs["note"]
+    assert "spans_paragraphs" not in runs
+
+
+def test_the_runs_of_such_a_range_are_addressed_by_their_own_anchors(
+        bridge, selection_over_a_table):
+    runs = bridge.read_runs({"selection": True},
+                            doc=selection_over_a_table)["runs"]
+
+    for run in runs:
+        assert set(run["address"]) == {"anchor", "offset", "length"}
+        assert bridge._resolve_address(
+            doc=selection_over_a_table, address=run["address"]).getString() \
+            == run["text"]
 
 
 # --- giving a table a look ---------------------------------------------------

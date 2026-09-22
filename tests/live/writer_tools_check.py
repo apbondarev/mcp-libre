@@ -1875,8 +1875,33 @@ try:
     check("with its size",
           (selected["tables"][0]["rows"], selected["tables"][0]["columns"]),
           (2, 2))
-    check("and the paragraphs it covers",
-          selected["paragraphs"][0], 3)
+    check("and how many body paragraphs it covers, with an anchor over it all",
+          (selected["paragraphs_selected"],
+           isinstance(selected.get("anchor"), str),
+           "paragraphs" in selected),
+          (1, True, False))          # one paragraph, then the table
+    check("the numbers still come when they are asked for",
+          bridge.get_cursor_info(number=True,
+                                 doc=doc)["selection"]["paragraphs"][0], 3)
+
+    # A selection over two plain paragraphs: read through its anchor, both
+    # come back, each held by an anchor of its own and no number counted.
+    two = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
+    two.gotoRange(bridge._paragraph_at(body, 2).getEnd(), True)
+    doc.getCurrentController().select(two)
+    spread = bridge.get_cursor_info(doc=doc)["selection"]
+    check("a selection of two paragraphs says so", 
+          (spread["paragraphs_selected"], spread["contains_table"]), (2, False))
+    read = bridge.read_runs(spread["address"], doc=doc)
+    check("and its anchor reads them both, each with an anchor of its own",
+          (read.get("paragraphs_read"), len(read.get("anchors") or []),
+           read.get("paragraph")),
+          (2, 2, None))
+    check("every run of it resolves through the anchor it came with",
+          [bridge._resolve_address(doc, run["address"]).getString()
+           for run in read["runs"]],
+          [run["text"] for run in read["runs"]])
+    doc.getCurrentController().select(across)
     check("the listing agrees", bridge.list_tables(doc=doc).get("in_selection"),
           [table_name])
 

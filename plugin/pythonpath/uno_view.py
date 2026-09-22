@@ -6,7 +6,8 @@ is no text selection at all — both are reported rather than left as silence.
 
 from typing import Any, Optional, Dict
 import logging
-from uno_values import (_text_payload, AddressError, refusal)
+from uno_values import (TABLE_SERVICE, AddressError, _get_property,
+                        _supports, _table_size, _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -146,16 +147,33 @@ class ViewMixin:
             # it: the cells arrive folded in with newlines.
             selected = info.get("selection") or {}
             if selected.get("has_selection"):
+                # What the selection covers comes from the selection itself:
+                # a range enumerates its own paragraphs and the tables between
+                # them (measured), so neither the count nor the table question
+                # costs the walk of the body this used to make. The selection
+                # is handed back as an anchor, and `read_runs` given that
+                # anchor reads every paragraph it covers.
                 try:
                     span = self._resolve_address(doc, {"selection": True})
-                    spans = self._range_spans(doc, span)
+                    covered = self._contents_in(span)
+                    tables = [one for one in covered
+                              if _supports(one, TABLE_SERVICE)]
+                    selected["paragraphs_selected"] = len(
+                        [one for one in covered if hasattr(one, "getStart")])
+                    selected["tables"] = [
+                        {"name": _get_property(one, "Name", "") or "",
+                         "rows": _table_size(one)[0],
+                         "columns": _table_size(one)[1]} for one in tables]
+                    selected["contains_table"] = bool(tables)
+                    token = self._hold_anchor(doc, span)
+                    if token:
+                        selected["address"] = {"anchor": token}
+                        selected["anchor"] = token
+                    if counting:
+                        selected["paragraphs"] = self._range_spans(
+                            doc, span)["paragraphs"]
                 except Exception as e:
                     logger.info(f"Could not read what the selection spans: {e}")
-                    spans = None
-                if spans is not None:
-                    selected["paragraphs"] = spans["paragraphs"]
-                    selected["tables"] = spans["tables"]
-                    selected["contains_table"] = bool(spans["tables"])
             logger.info("Retrieved cursor info")
             return info
 

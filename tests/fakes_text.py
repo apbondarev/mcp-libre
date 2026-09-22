@@ -28,17 +28,17 @@ class FakeRange:
         return self.model.slice_text(self.start, self.end)
 
     def createEnumeration(self):
-        """The paragraphs this cursor covers, as a real one hands them out.
+        """What this range covers, as a real one hands it out.
 
         Measured on a live Writer: a text cursor is itself an
-        XEnumerationAccess, and a collapsed caret yields the one paragraph it
-        stands in. That is how a paragraph object is had for two UNO calls,
-        where finding it by number walks every paragraph before it.
+        XEnumerationAccess. A collapsed caret yields the one paragraph it
+        stands in; a cursor over three paragraphs with a table between them
+        yielded ['Two', <table>, 'Three', 'Four'] — so a range says which
+        paragraphs it holds and whether a table is in there, without the
+        document being walked and without a number.
         """
-        from tests.fakes_text import FakeParagraph          # own module
-        return FakeEnumeration([FakeParagraph(self.model, index)
-                                for index in range(self.start[0],
-                                                   self.end[0] + 1)])
+        return FakeEnumeration(self.model.covered_by(self.start[0],
+                                                      self.end[0]))
 
     def getText(self):
         # A range inside a cell answers with the cell, not with the text
@@ -87,9 +87,8 @@ class FakeTextCursor:
 
     def createEnumeration(self):
         """The paragraphs this cursor covers — see FakeRange for why."""
-        return FakeEnumeration([FakeParagraph(self.model, index)
-                                for index in range(self.start[0],
-                                                   self.end[0] + 1)])
+        return FakeEnumeration(self.model.covered_by(self.start[0],
+                                                      self.end[0]))
 
     def getText(self):
         # A range inside a cell answers with the cell, not with the text
@@ -1450,6 +1449,30 @@ class FakeText:
             else:
                 items.append(FakeParagraph(self, item))
         return FakeEnumeration(items)
+
+    def covered_by(self, first, last):
+        """The paragraphs from `first` to `last` and the tables between them.
+
+        What a range's own enumeration hands out on a live Writer: a cursor
+        over three paragraphs with a table between them yielded the table in
+        its place among them.
+        """
+        from tests.fakes_tables import FakeTextTable
+
+        covered = []
+        index = 0
+        for item in self.enumeration_items:
+            if item == "table" or isinstance(item, FakeTextTable):
+                table = FakeTextTable() if item == "table" else item
+                # A table stands between paragraphs: it is inside the range
+                # when paragraphs of the range are on both sides of it.
+                if first < index <= last:
+                    covered.append(table)
+                continue
+            if first <= index <= last:
+                covered.append(FakeParagraph(self, item))
+            index += 1
+        return covered
 
     def compareRegionStarts(self, range1, range2):
         """0 when both start at the same spot; the sign convention is unused."""

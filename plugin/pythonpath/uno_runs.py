@@ -9,10 +9,10 @@ pictures, styles — is counted before anything is written.
 from typing import Any, Optional, Dict, List
 import logging
 from uno_values import (GRAPHIC_SERVICE, MAX_RUN_PARAGRAPHS, REDLINE_KINDS,
-    TABLE_SERVICE, AddressError, _supports,
+    TABLE_SERVICE, AddressError, _get_property, _supports, _table_size,
     _colour_name,
     _comment_key, _distinct_changes, 
-    _describe_comment, _distinct_comments, _distinct_images, _get_property, 
+    _describe_comment, _distinct_comments, _distinct_images, 
     _is_italic, _locale, _locale_name, _same_paragraph, _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
@@ -66,11 +66,27 @@ class RunsMixin:
         # first paragraph's while saying the range spans fifteen reads as a
         # promise not kept — and it cost a caller a call per paragraph to
         # find out.
+        # A selection or an anchor covering several paragraphs is read whole:
+        # the range names its own paragraphs, so this needs no numbers and no
+        # walk. One paragraph keeps the old path, which clips to the range —
+        # a search hit is an anchor over part of a paragraph.
+        spread = None
+        if by_anchor or (isinstance(address, dict) and address.get("selection")):
+            covering = [element for element in self._contents_in(target)
+                        if hasattr(element, "getStart")
+                        or _supports(element, TABLE_SERVICE)]
+            if len([one for one in covering
+                    if not _supports(one, TABLE_SERVICE)]) > 1:
+                spread = True
+
         block = self._block_of(address, located)
         held = None
         passed = None
         try:
-            if block:
+            if spread:
+                runs, tokens, crossed, stopped = self._runs_over(doc, target)
+                read = None
+            elif block:
                 runs, read, stopped, passed = self._runs_across(doc, block)
             else:
                 paragraph = self._paragraph_of(doc, located, paragraph_cursor)
@@ -90,6 +106,20 @@ class RunsMixin:
 
         result = {"success": True, "runs": runs, "count": len(runs),
                   "paragraph": index}
+        if spread:
+            # Every paragraph read is held, and its runs are addressed by that
+            # anchor; the numbers were never worked out.
+            result["paragraphs_read"] = len(tokens)
+            result["anchors"] = tokens
+            if crossed:
+                result["spans_tables"] = crossed
+                result["note"] = ("this range runs through a table, whose "
+                                  "cells are not runs of these paragraphs; "
+                                  "read_table reads them")
+            if stopped:
+                result["truncated"] = True
+                result["truncated_at"] = MAX_RUN_PARAGRAPHS
+            return result
         if by_anchor:
             # The anchor is the address these runs belong to; its number is
             # not counted, and `number: true` on get_cursor_info is where a
@@ -117,6 +147,40 @@ class RunsMixin:
         except Exception as e:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
+
+    def _runs_over(self, doc: Any, target: Any) -> tuple:
+        """The runs of every paragraph a range covers, and no numbers at all
+
+        A selection or an anchor covering several paragraphs used to be read
+        as one — the first paragraph's runs, with a note that the range went
+        further. The range names its own paragraphs (`_contents_in`), so each
+        is read whole and held with an anchor of its own, which is what its
+        runs are addressed by.
+        """
+        runs: List[Dict[str, Any]] = []
+        held: List[str] = []
+        tables: List[Dict[str, Any]] = []
+        stopped = False
+        for element in self._contents_in(target):
+            if _supports(element, TABLE_SERVICE):
+                rows, columns = _table_size(element)
+                tables.append({
+                    "name": _get_property(element, "Name", "") or "",
+                    "rows": rows, "columns": columns})
+                continue
+            if not hasattr(element, "getStart"):
+                continue
+            if len(held) >= MAX_RUN_PARAGRAPHS:
+                stopped = True
+                break
+            token = self._hold_paragraph_anchor(doc, element)
+            cursor = element.getText().createTextCursorByRange(element)
+            located = {"paragraph": None, "anchor": token, "offset": 0,
+                       "length": len(element.getString())}
+            runs.extend(self._runs_in(doc, located, cursor,
+                                      paragraph=element))
+            held.append(token)
+        return runs, held, tables, stopped
 
     def _say_which_formulas(self, doc: Any, result: Dict[str, Any],
                             index: Optional[int], read: Any,

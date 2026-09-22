@@ -506,6 +506,31 @@ class AddressMixin:
             logger.info(f"A range would not name its paragraph: {e}")
         return None
 
+    def _contents_in(self, text_range: Any) -> List[Any]:
+        """Everything a range covers, from the range itself.
+
+        Measured on a live Writer: a cursor spanning three paragraphs with a
+        table between them enumerates ['Two', <table>, 'Three', 'Four'] — so
+        which paragraphs a selection holds, and whether a table is in there,
+        are answered without the walk of the body `_range_spans` makes, and
+        without a paragraph number entering into it.
+        """
+        found = []
+        try:
+            # A *cursor* enumerates everything it covers; the range the
+            # selection hands out answered with one paragraph for a selection
+            # that plainly ran through a table and out the other side — so a
+            # cursor is made over it first, which costs two calls.
+            owner = text_range.getText()
+            over = owner.createTextCursorByRange(text_range.getStart())
+            over.gotoRange(text_range.getEnd(), True)
+            enumeration = over.createEnumeration()
+            while enumeration.hasMoreElements():
+                found.append(enumeration.nextElement())
+        except Exception as e:
+            logger.info(f"A range would not say what it covers: {e}")
+        return found
+
     def _paragraph_of(self, doc: Any, located: Dict[str, Any],
                       paragraph_cursor: Any = None) -> Any:
         """
