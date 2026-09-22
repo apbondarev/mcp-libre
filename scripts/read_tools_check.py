@@ -151,10 +151,22 @@ def addresses_in(answer, key):
     return found
 
 
-def ground_truth(client, named):
-    """What the document says about itself, to build calls from."""
+def ground_truth(client, named, say=False):
+    """What the document says about itself, to build calls from.
+
+    Three calls, and on a long document each of them can take seconds, so
+    they are announced: a silent minute reads as a hang.
+    """
     ground = {}
-    here = client.call("get_cursor_info_live", dict(named))
+    def step(label, tool, arguments):
+        if say:
+            print(f"   asking: {label}", end="", flush=True)
+        mark = time.time()
+        answer = client.call(tool, arguments)
+        if say:
+            print(f" — {time.time() - mark:.1f}s")
+        return answer
+    here = step("where the caret is", "get_cursor_info_live", dict(named))
     if here.get("success"):
         # What the reader has in hand: the selection when there is one, so
         # the scoped tools are asked about a stretch and not one paragraph.
@@ -168,12 +180,12 @@ def ground_truth(client, named):
         text = (here.get("paragraph") or {}).get("text") or ""
         words = [word for word in text.split() if len(word) > 3]
         ground["word"] = words[0] if words else None
-    tables = client.call("list_tables_live", dict(named))
+    tables = step("what tables it holds", "list_tables_live", dict(named))
     if tables.get("success") and tables.get("tables"):
         ground["table"] = tables["tables"][0]["name"]
-    read = client.call("read_paragraphs_live",
-                       dict(named, start=ground.get("address") or 0, count=1,
-                            anchors=False))
+    read = step("which style is in use there", "read_paragraphs_live",
+                dict(named, start=ground.get("address") or 0, count=1,
+                     anchors=False))
     if read.get("success") and read.get("paragraphs"):
         ground["style"] = read["paragraphs"][0].get("style")
     return ground
@@ -255,8 +267,11 @@ def select_section(client, named, wanted, paragraphs):
     """
     # Anchors on 938 headings cost seconds and none of them is used here:
     # what this wants is the one heading's number.
+    print(f"   reading the outline to find {wanted!r}", end="", flush=True)
+    mark = time.time()
     outline = client.call("get_outline_live", dict(named, count=10000,
                                                    anchors=False))
+    print(f" — {time.time() - mark:.1f}s")
     if not outline.get("success"):
         raise SystemExit(f"Could not read the outline: {outline.get('error')}")
     headings = [one for one in outline["headings"]
@@ -271,7 +286,10 @@ def select_section(client, named, wanted, paragraphs):
     picked = ({"paragraph": first, "through": first + paragraphs}
               if isinstance(first, int)
               else dict(heading["address"], offset=0, length=0))
+    print(f"   selecting {paragraphs} paragraphs there", end="", flush=True)
+    mark = time.time()
     chosen = client.call("select_live", dict(named, address=picked))
+    print(f" — {time.time() - mark:.1f}s")
     if not chosen.get("success"):
         print(f"could not select in {wanted!r}: {chosen.get('error')}")
         return None
@@ -333,7 +351,7 @@ def main():
 
     if args.section:
         select_section(client, named, args.section, args.paragraphs)
-    ground = ground_truth(client, named)
+    ground = ground_truth(client, named, say=True)
     print(f"the document says: {json.dumps(ground, ensure_ascii=False)}\n")
 
     rows = []

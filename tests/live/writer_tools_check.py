@@ -1334,9 +1334,12 @@ try:
     table.getCellByName("A2").setString("{\n  hero {\n    name\n  }\n}")
     table.getCellByName("B2").setString("R2-D2")
 
-    listed = bridge.list_tables(doc=doc)
+    listed = bridge.list_tables(number=True, doc=doc)
     print("   ", listed)
     check("the table is listed", listed.get("count"), 1)
+    fast = bridge.list_tables(doc=doc)["tables"][0]
+    check("the fast listing skips the walk that places it",
+          (fast["after_paragraph"], fast["name"]), (None, "Table1"))
     described = listed["tables"][0]
     check("with its size", (described["rows"], described["columns"]), (2, 2))
     check("its cells", described["cells"], 4)
@@ -1462,7 +1465,8 @@ try:
           _refused(bridge, doc, {"paragraph": first, "through": last,
                                  "offset": 2}), True)
 
-    selected = bridge.select({"paragraph": first, "through": last}, doc=doc)
+    selected = bridge.select({"paragraph": first, "through": last},
+                             number=True, doc=doc)
     print("   ", {k: v for k, v in selected.items() if k != "selected"})
     check("selecting it works", selected.get("success"), True)
     check("over all its paragraphs", selected.get("paragraphs"),

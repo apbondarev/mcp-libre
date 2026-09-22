@@ -40,6 +40,26 @@ class ReadingMixin:
             logger.error(f"Failed to get text content: {e}")
             return refusal("FAILED", e)
 
+    def _window_from(self, doc: Any, address: Any) -> tuple:
+        """(paragraphs of the body, where this address is among them).
+
+        A read that starts at an address used to walk the body **twice**:
+        once to work the number out and once to reach it. The sweep is one
+        walk of two UNO calls a paragraph, the place inside it is found by
+        halving, and the window is read from the sweep itself.
+        """
+        sweep = self._body_sweep(doc)
+        target = self._resolve_address(doc, address)
+        # The start, not the whole range: a block covers several paragraphs
+        # and none of them holds it.
+        index = self._paragraph_holding(doc.getText(), sweep,
+                                        target.getStart())
+        if index is None:
+            raise AddressError("that address is outside the body text — a "
+                               "table cell, most likely — so it names no "
+                               "body paragraph")
+        return sweep, index
+
     def _paragraphs_from(self, doc: Any, address: Any) -> tuple:
         """(first paragraph, how many it covers) for a read that starts at an
         address rather than at a number.
@@ -97,13 +117,19 @@ class ReadingMixin:
                 return error
 
             asked = count
+            sweep = None
             if isinstance(start, dict):
                 try:
-                    start, spans = self._paragraphs_from(doc, start)
+                    through = start.get("through")
+                    sweep, start = self._window_from(doc, start)
+                    if asked is None and isinstance(through, int) \
+                            and not isinstance(through, bool):
+                        last = self._paragraph_index_of(doc,
+                                                        {"paragraph": through})
+                        asked = abs(last - start) + 1
+                        start = min(start, last)
                 except AddressError as e:
                     return refusal("INVALID_ADDRESS", e)
-                if asked is None and spans is not None:
-                    asked = spans
             if not isinstance(start, int) or isinstance(start, bool) or start < 0:
                 return {"success": False, "code": "INVALID_PARAMETER",
                         "error": f"start must be a non-negative integer or an "
@@ -131,11 +157,23 @@ class ReadingMixin:
             # paragraph dearer than fifty.
             standing: Dict[int, List[Dict[str, Any]]] = {}
 
-            enumeration = doc.getText().createEnumeration()
-            while enumeration.hasMoreElements():
-                element = enumeration.nextElement()
-                if not hasattr(element, "getStart"):
-                    continue
+            # The sweep, when an address was resolved against it, is the
+            # body already walked: reading the window from it saves the
+            # second walk that reaching a number costs.
+            walked = iter(sweep) if sweep is not None else None
+            enumeration = (None if walked is not None
+                           else doc.getText().createEnumeration())
+            while True:
+                if walked is not None:
+                    element = next(walked, None)
+                    if element is None:
+                        break
+                else:
+                    if not enumeration.hasMoreElements():
+                        break
+                    element = enumeration.nextElement()
+                    if not hasattr(element, "getStart"):
+                        continue
                 if start <= total < start + window:
                     raw = element.getString()
                     entry = _text_payload(raw)

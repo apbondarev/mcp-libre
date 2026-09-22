@@ -83,7 +83,10 @@ def test_selecting_a_block(bridge, doc):
     selected = bridge.select({"paragraph": 1, "through": 6}, doc=doc)
 
     assert selected["success"] is True
-    assert selected["paragraphs"] == [1, 2, 3, 4, 5, 6]
+    # From the range itself: how many, not which — naming them is a walk.
+    assert selected["paragraphs_selected"] == 6
+    assert bridge.select({"paragraph": 1, "through": 6}, number=True,
+                         doc=doc)["paragraphs"] == [1, 2, 3, 4, 5, 6]
     assert selected["selected"].startswith("Operation")
     # and the document's own selection is now that range
     assert bridge._resolve_address(doc, {"selection": True}).getString() \
@@ -115,4 +118,8 @@ def test_the_selecting_tool_is_registered_and_dispatches():
         "select_live", {"address": {"paragraph": 1, "through": 3}}))
 
     assert selected["success"] is True
-    assert selected["paragraphs"] == [1, 2, 3]
+    assert selected["paragraphs_selected"] == 3
+    numbered = asyncio.run(server.execute_tool(
+        "select_live", {"address": {"paragraph": 1, "through": 3},
+                        "number": True}))
+    assert numbered["paragraphs"] == [1, 2, 3]

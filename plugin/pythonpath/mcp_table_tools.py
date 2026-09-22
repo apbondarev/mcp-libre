@@ -96,6 +96,11 @@ class TableTools:
             "parameters": {
                 "type": "object",
                 "properties": {
+                    "number": {
+                        "type": "boolean",
+                        "description": "Add `after_paragraph` to each table — how many body paragraphs come before it, which is what an address counts in. That is a walk of the body; the anchor each table comes with is two UNO calls",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -300,12 +305,13 @@ class TableTools:
                                             track_changes=track_changes,
                                             doc=doc)
 
-    def list_tables_live(self, document: Optional[str] = None) -> Dict[str, Any]:
+    def list_tables_live(self, number: bool = False,
+                         document: Optional[str] = None) -> Dict[str, Any]:
         """List the tables of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_tables(doc=doc)
+        return self.uno_bridge.list_tables(number=number, doc=doc)
 
     def describe_table_live(self, name: Optional[str] = None,
                             cells: bool = True, runs: bool = False,

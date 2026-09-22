@@ -191,12 +191,14 @@ class TablesMixin:
         return None
 
     def _describe_table(self, doc: Any, table: Any,
-                        positions: Optional[Dict[str, int]] = None
-                        ) -> Dict[str, Any]:
+                        positions: Optional[Dict[str, int]] = None,
+                        place: bool = True) -> Dict[str, Any]:
         """A table as a caller sees it, without its contents
 
         `positions` is the map _table_positions makes in one walk; without
-        it, this table's place is found by a walk of its own.
+        it, this table's place is found by a walk of its own — and with
+        `place` off it is not worked out at all, which is what a listing
+        that hands out anchors wants.
         """
         rows, columns = _table_size(table)
         try:
@@ -218,7 +220,8 @@ class TablesMixin:
                 "after_paragraph": (
                     positions.get(_get_property(table, "Name", "") or "")
                     if positions is not None
-                    else self._paragraphs_before_table(doc, table))}
+                    else self._paragraphs_before_table(doc, table)
+                    if place else None)}
 
     def _spans_of_block(self, doc: Any, block,
                         tables: Any = None) -> Dict[str, Any]:
@@ -497,20 +500,37 @@ class TablesMixin:
 
         return self._guarded_edit(doc, "MCP: delete table", track_changes, edit)
 
-    def list_tables(self, doc: Any = None) -> Dict[str, Any]:
+    def list_tables(self, number: bool = False,
+                    doc: Any = None) -> Dict[str, Any]:
         """
         Every table in the document: its name, its size and where it sits
 
-        `after_paragraph` says how many body paragraphs come before it, since
-        addresses count paragraphs and skip tables.
+        Each is placed by an anchor on itself. `number: true` adds
+        `after_paragraph`, how many body paragraphs come before it — that is
+        a walk of the body, and it is what addresses count in.
         """
         doc, error = self._writer_document(doc, "Listing tables")
         if error:
             return error
 
-        positions = self._table_positions(doc)
-        tables = [self._describe_table(doc, table, positions)
-                  for table in self._tables(doc)]
+        positions = self._table_positions(doc) if number else None
+        tables = []
+        for table in self._tables(doc):
+            described = self._describe_table(doc, table, positions,
+                                             place=number)
+            # A table is named, and every table tool takes that name, so an
+            # address is a convenience rather than the way in. Writer will
+            # not hand out a cursor over a table's anchor — measured, the
+            # hold comes back empty — so the key is left out rather than
+            # filled with nothing.
+            try:
+                held = self._anchor_handle(
+                    self._hold_anchor(doc, table.getAnchor()), "text")
+                if held:
+                    described["address"] = {"anchor": held}
+            except Exception as e:
+                logger.info(f"A table would not say where it is: {e}")
+            tables.append(described)
         result = {"success": True, "tables": tables, "count": len(tables)}
         caret = self._caret_in_table(doc)
         if caret is not None:
@@ -518,7 +538,12 @@ class TablesMixin:
                                      "cell": caret["cell"]}
         try:
             span = self._resolve_address(doc, {"selection": True})
-            selected = [table["name"] for table in self._tables_in(doc, span)]
+            # The selection enumerates the tables inside it (measured), so
+            # comparing it with every paragraph of the document — which is
+            # what _range_spans does — is a walk nobody has to pay here.
+            selected = [_get_property(one, "Name", "") or ""
+                        for one in self._contents_in(span)
+                        if _supports(one, TABLE_SERVICE)]
             if selected:
                 result["in_selection"] = selected
         except Exception:

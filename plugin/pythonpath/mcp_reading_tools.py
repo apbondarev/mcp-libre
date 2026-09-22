@@ -27,6 +27,11 @@ class ReadingTools:
                             "cell": {"type": "string"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph numbers were selected. That means comparing the range with every paragraph of the document — 15 to 23 seconds on a real guide — where the count, the tables and the anchor come from the range itself",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -184,13 +189,13 @@ class ReadingTools:
             "handler": self.get_text_content_live
         }
 
-    def select_live(self, address: Any,
+    def select_live(self, address: Any, number: bool = False,
                     document: Optional[str] = None) -> Dict[str, Any]:
         """Select the text at an address"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.select(address, doc=doc)
+        return self.uno_bridge.select(address, number=number, doc=doc)
 
     def get_cursor_info_live(self, number: bool = False,
                              character_offset: bool = False,

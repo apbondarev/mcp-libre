@@ -15,13 +15,21 @@ logger = logging.getLogger(__name__)
 class ViewMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
-    def select(self, address: Any, doc: Any = None) -> Dict[str, Any]:
+    def select(self, address: Any, number: bool = False,
+               doc: Any = None) -> Dict[str, Any]:
         """
         Select the text at an address, as a reader would with the mouse
 
         Nothing here could set a selection, so anything that works on one —
         and a human watching the screen — was out of reach without driving
         UNO by hand. Selecting changes no text; it moves the view.
+
+        What was selected is reported from the **range itself**, which
+        enumerates the paragraphs and tables it covers: how many paragraphs,
+        which tables, and an anchor over the lot. Comparing the range with
+        every paragraph of the document — which is what saying their numbers
+        costs — took 15 to 23 seconds on a real guide, for a call whose work
+        is done the moment the view moves. `number: true` asks for them.
         """
         doc, error = self._writer_document(doc, "Selecting text")
         if error:
@@ -45,12 +53,23 @@ class ViewMixin:
             return refusal("FAILED", e)
 
         payload = _text_payload(target.getString())
-        spans = self._range_spans(doc, target)
-        return {"success": True, "selected": payload["text"],
-                "truncated": payload["truncated"],
-                "length": len(target.getString()),
-                "paragraphs": spans["paragraphs"],
-                "tables": [table["name"] for table in spans["tables"]]}
+        covered = self._contents_in(target)
+        tables = [one for one in covered if _supports(one, TABLE_SERVICE)]
+        answer = {"success": True, "selected": payload["text"],
+                  "truncated": payload["truncated"],
+                  "length": len(target.getString()),
+                  "paragraphs_selected": len(
+                      [one for one in covered if hasattr(one, "getStart")]),
+                  "tables": [_get_property(one, "Name", "") or ""
+                             for one in tables],
+                  "contains_table": bool(tables)}
+        token = self._hold_anchor(doc, target)
+        if token:
+            answer["address"] = {"anchor": self._anchor_handle(token, "text")}
+        if number:
+            spans = self._range_spans(doc, target)
+            answer["paragraphs"] = spans["paragraphs"]
+        return answer
 
     def get_cursor_info(self, number: bool = False,
                         character_offset: bool = False,
