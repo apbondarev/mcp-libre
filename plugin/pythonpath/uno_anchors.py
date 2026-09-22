@@ -316,7 +316,11 @@ class AnchorsMixin:
             raise AddressError(
                 f"anchor {token!r} no longer stands in a paragraph: it held "
                 f"{entry['held'][:60]!r}")
-        return paragraph
+        # The cursor is collapsed, and a paragraph enumerated out of a
+        # collapsed cursor carries none of its text portions — see
+        # `_whole_paragraph`. Everything that counts an offset inside a
+        # paragraph anchor walks those portions.
+        return self._whole_paragraph(paragraph)
 
     def _holds_point(self, body: Any, paragraph: Any, point: Any) -> bool:
         """Whether a position lies inside a paragraph, ends included"""

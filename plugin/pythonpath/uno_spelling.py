@@ -20,6 +20,7 @@ class SpellingMixin:
 
     def check_spelling(self, address: Any = None,
                        max_results: int = DEFAULT_SPELLING_RESULTS,
+                       number: bool = False,
                        doc: Any = None) -> Dict[str, Any]:
         """
         Report misspelled words with an address for each
@@ -32,6 +33,18 @@ class SpellingMixin:
 
         A language with no dictionary installed is skipped and named rather
         than having all of its words called misspellings.
+
+        **A scoped check does not walk the document.** It used to: the address
+        was turned into a paragraph *number* — one walk of the body — and then
+        every paragraph in the document was enumerated to find the one with
+        that number, another walk. Measured on the 519-page guide, checking a
+        single paragraph cost 4.0s by number and 5.4–6.2s by anchor, for an
+        answer that says `checked_paragraphs: 1`; reading the same paragraph's
+        runs through the same anchor was 0.05s. The range an address resolves
+        to names its own paragraphs, so that is where they come from now, and
+        a hit is addressed by its paragraph's **anchor**. A number is reported
+        beside it only when it is free — the address named one — or when
+        `number` asks for the walk that works it out.
         """
         doc, error = self._writer_document(doc, "Spell checking")
         if error:
@@ -43,34 +56,51 @@ class SpellingMixin:
             logger.error(f"No spell checker available: {e}")
             return {"success": False, "code": "UNSUPPORTED", "error": f"No spell checker available: {e}"}
 
-        if address is not None:
-            try:
-                index = self._paragraph_index_of(doc, address)
-            except AddressError as e:
-                return refusal("INVALID_ADDRESS", e)
+        try:
+            paragraphs, scope, first = self._paragraphs_over(doc, address)
+            if paragraphs is not None and first is None and number:
+                first = self._paragraph_index_of(doc, address)
+        except AddressError as e:
+            return refusal("INVALID_ADDRESS", e)
+
+        if paragraphs is None:
+            # The whole document: the walk numbers every paragraph as it goes,
+            # so the numbers cost nothing here.
+            walk = self._body_paragraphs(doc)
         else:
-            index = None
+            walk = ((paragraph, None if first is None else first + step)
+                    for step, paragraph in enumerate(paragraphs))
 
         limit = max(1, min(int(max_results), MAX_SPELLING_RESULTS))
         misspelled = []
         total = 0
         checked_paragraphs = 0
         skipped = []
+        held = {}
 
-        for paragraph, position in self._body_paragraphs(doc):
-            if index is not None and position != index:
-                continue
+        for paragraph, position in walk:
             checked_paragraphs += 1
-            for word, offset, locale in self._words_of(paragraph, speller, skipped):
+            for word, offset, locale in self._words_of(paragraph, speller,
+                                                       skipped):
                 if speller.isValid(word, locale, ()):
                     continue
                 total += 1
                 if len(misspelled) >= limit:
                     continue
+                spot = {"offset": offset, "length": len(word)}
+                if position is not None:
+                    spot["paragraph"] = position
+                if id(paragraph) not in held:
+                    # One anchor per paragraph, and only for the paragraphs a
+                    # hit is actually reported in.
+                    held[id(paragraph)] = self._anchor_handle(
+                        self._hold_paragraph_anchor(doc, paragraph, position),
+                        "paragraph")
+                if held[id(paragraph)]:
+                    spot["anchor"] = held[id(paragraph)]
                 misspelled.append({
                     "word": word,
-                    "address": {"paragraph": position, "offset": offset,
-                                "length": len(word)},
+                    "address": spot,
                     "suggestions": self._suggestions(speller, word, locale),
                     "language": _locale_name(locale)
                 })
@@ -83,6 +113,7 @@ class SpellingMixin:
             "total_misspelled": total,
             "truncated": total > len(misspelled),
             "checked_paragraphs": checked_paragraphs,
+            "scope": scope,
             "skipped_languages": skipped
         }
 

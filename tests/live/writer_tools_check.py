@@ -276,6 +276,33 @@ try:
           bridge._resolve_address(
               doc, {"paragraph": 1, "offset": 6, "length": 4}).getString(), "beta")
 
+    print("\n--- an offset counted inside a paragraph anchor ---")
+    # A paragraph enumerated out of a cursor carries only the portions that
+    # cursor covers, and a paragraph anchor's cursor is collapsed: it carried
+    # none. The walk of the portions then found nothing to count in and
+    # clamped to the end of the paragraph, so this address — six characters —
+    # resolved to the whole paragraph, and a replacement through it rewrote
+    # everything. The fakes could not see it: theirs enumerate the lot.
+    paragraph_anchor = bridge.read_paragraphs(start=1, count=1,
+                                              doc=doc)["paragraphs"][0]
+    check("the paragraph is anchored",
+          paragraph_anchor["address"]["anchor"]["type"], "paragraph")
+    within = dict(paragraph_anchor["address"], offset=0, length=5)
+    check("an offset inside it covers exactly that stretch",
+          bridge._resolve_address(doc, within).getString(), "Alpha")
+    check("and so does one further in",
+          bridge._resolve_address(
+              doc, dict(paragraph_anchor["address"], offset=6,
+                        length=4)).getString(), "beta")
+    check("while the anchor alone is the whole paragraph",
+          bridge._resolve_address(
+              doc, {"anchor": paragraph_anchor["address"]["anchor"]
+                    ["anchorId"]}).getString(), "Alpha beta alpha.")
+    check("and its runs are read through it",
+          [run["text"] for run in bridge.read_runs(
+              paragraph_anchor["address"], doc=doc)["runs"]],
+          ["Alpha beta alpha."])
+
     print("\n--- resolver rejects what it cannot address ---")
     from uno_bridge import AddressError
     for label, address in [("paragraph past the end", {"paragraph": 99}),

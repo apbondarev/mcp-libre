@@ -21,7 +21,7 @@ from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
 
-from uno_bridge import UNOBridge  # noqa: E402
+from uno_bridge import AddressError, UNOBridge  # noqa: E402
 
 RU = FakeLocale("ru", "RU")
 EN = FakeLocale("en", "US")
@@ -52,7 +52,11 @@ def test_reports_a_misspelled_word_with_its_address(bridge):
     assert len(result["misspelled"]) == 1
     hit = result["misspelled"][0]
     assert hit["word"] == "Схеммы"
-    assert hit["address"] == {"paragraph": 0, "offset": 0, "length": 6}
+    assert hit["address"]["offset"] == 0
+    assert hit["address"]["length"] == 6
+    # The whole document is swept, so the paragraph's number is free here.
+    assert hit["address"]["paragraph"] == 0
+    assert hit["address"]["anchor"]["type"] == "paragraph"
     assert hit["suggestions"] == ["Схемы", "Схем"]
     assert hit["language"] == "ru-RU"
 
@@ -96,6 +100,77 @@ def test_checks_only_the_addressed_paragraph_when_asked(bridge):
     result = bridge.check_spelling(address={"paragraph": 1}, doc=doc)
 
     assert [hit["address"]["paragraph"] for hit in result["misspelled"]] == [1]
+
+
+# Scoping used to cost two walks of the body — one to turn the address into a
+# paragraph number, one to find the paragraph carrying that number — so a
+# check of a single paragraph of a 519-page guide took 4 to 6 seconds while
+# reading the same paragraph's runs took 0.05s. The range an address resolves
+# to names its own paragraphs.
+
+def test_a_scoped_check_does_not_walk_the_body(bridge, monkeypatch):
+    doc = writer_doc(["Схеммы", "Схеммы", "Схеммы"], caret=(0, 0),
+                     default_locale=("ru", "RU"))
+
+    def refuse(*arguments, **named):
+        raise AssertionError("check_spelling swept the body for one paragraph")
+
+    monkeypatch.setattr(bridge, "_body_paragraphs", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    result = bridge.check_spelling(address={"paragraph": 1}, doc=doc)
+
+    assert result["checked_paragraphs"] == 1
+    assert result["scope"] == {"paragraph": 1}
+    assert [hit["address"]["paragraph"] for hit in result["misspelled"]] == [1]
+
+
+def test_a_check_through_an_anchor_names_no_number(bridge, monkeypatch):
+    doc = writer_doc(["Первый", "Схеммы и типы", "Третий"], caret=(0, 0),
+                     default_locale=("ru", "RU"))
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a check through an anchor counted a number")
+
+    monkeypatch.setattr(bridge, "_body_paragraphs", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    hit, = bridge.check_spelling(address=token, doc=doc)["misspelled"]
+
+    assert hit["word"] == "Схеммы"
+    assert "paragraph" not in hit["address"]
+    assert hit["address"]["anchor"]["type"] == "paragraph"
+
+
+def test_a_hit_is_found_again_after_the_paragraphs_move(bridge):
+    doc = writer_doc(["Первый", "Все Схеммы и типы", "Третий"], caret=(0, 0),
+                     default_locale=("ru", "RU"))
+
+    hit = [one for one in bridge.check_spelling(address={"paragraph": 1},
+                                                doc=doc)["misspelled"]
+           if one["word"] == "Схеммы"][0]
+    text = doc.getText()
+    text.removeTextContent(text.createEnumeration().nextElement())
+
+    # The number the hit was reported with now names another paragraph; the
+    # anchor beside it still names the word.
+    plain = {key: value for key, value in hit["address"].items()
+             if key != "anchor"}
+    with pytest.raises(AddressError):
+        bridge._resolve_address(doc, plain)
+    assert bridge._resolve_address(doc, hit["address"]).getString() == "Схеммы"
+
+
+def test_the_numbers_of_a_scoped_check_come_when_asked_for(bridge):
+    doc = writer_doc(["Первый", "Схеммы и типы"], caret=(0, 0),
+                     default_locale=("ru", "RU"))
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]
+
+    hit, = bridge.check_spelling(address=token, number=True,
+                                 doc=doc)["misspelled"]
+
+    assert hit["address"]["paragraph"] == 1
 
 
 def test_caps_the_report_but_states_the_true_count(bridge):

@@ -59,17 +59,20 @@ class AddressMixin:
             handed_out = any(key in address for key in
                              ("paragraph", "through", "table", "cell"))
             counts = "offset" in address or "length" in address
-            if counts and not handed_out:
-                if entry.get("kind") != "paragraph":
-                    raise AddressError(
-                        "a text anchor already covers exactly its stretch: it "
-                        "takes no 'offset' or 'length' beside it")
+            if counts and entry.get("kind") == "paragraph":
                 # Counted inside the anchor's own paragraph, which it names
-                # without its number — the number is a walk of the body.
+                # without its number — the number is a walk of the body. A
+                # number standing beside the anchor changes nothing: the
+                # anchor decides, so the stretch is measured in the paragraph
+                # it names now, not in the one that number holds today.
                 return self._within_paragraph(
                     self._live_paragraph(doc, token, entry),
                     address.get("offset", 0), address.get("length"),
                     f"anchor {token!r}")
+            if counts and not handed_out:
+                raise AddressError(
+                    "a text anchor already covers exactly its stretch: it "
+                    "takes no 'offset' or 'length' beside it")
             return self._anchor_range(doc, token)
 
         if address.get("selection"):
@@ -428,10 +431,12 @@ class AddressMixin:
             return text.createTextCursorByRange(paragraph.getStart())
 
         seen = 0
+        saw_a_portion = False
         try:
             portions = paragraph.createEnumeration()
             while portions.hasMoreElements():
                 portion = portions.nextElement()
+                saw_a_portion = True
                 kind = _get_property(portion, "TextPortionType", "Text")
                 if kind in ("TextField", "Footnote"):
                     # A field is the other way round from a comment: it costs
@@ -466,6 +471,19 @@ class AddressMixin:
         except Exception as e:
             # Better a possibly drifted cursor than no edit at all, but say so.
             logger.info(f"Could not walk the portions of a paragraph: {e}")
+            cursor = text.createTextCursorByRange(paragraph.getStart())
+            cursor.goRight(offset, False)
+            return cursor
+
+        if not saw_a_portion and offset:
+            # A paragraph enumerated out of a cursor hands out only the
+            # portions that cursor covers — **none at all** for a collapsed
+            # one — while still answering getString() with the whole
+            # paragraph. Measured. Clamping to the end of the paragraph there,
+            # as a walk that really saw every portion should, sent every
+            # offset counted inside a paragraph anchor to the end of its
+            # paragraph, so a six-character address covered the whole of it
+            # and a replacement through one rewrote everything.
             cursor = text.createTextCursorByRange(paragraph.getStart())
             cursor.goRight(offset, False)
             return cursor
@@ -515,6 +533,30 @@ class AddressMixin:
             logger.info(f"A range would not name its paragraph: {e}")
         return None
 
+    def _whole_paragraph(self, place: Any) -> Any:
+        """The paragraph a place stands in, carrying all of its portions.
+
+        Measured on a live Writer: a paragraph enumerated out of a **cursor**
+        answers `getString()` with the whole paragraph, but its own
+        enumeration hands out only the text portions that cursor covers — the
+        first six characters for a cursor over six, and *nothing at all* for a
+        collapsed one. A paragraph reached by walking the body has all of
+        them. So a paragraph that came from a cursor is asked again through a
+        cursor over the whole paragraph, four UNO calls and no walk; without
+        it every offset counted inside such a paragraph was lost, since the
+        walk of the portions found none to count in.
+        """
+        try:
+            text = place.getText()
+            over = text.createTextCursorByRange(place.getStart())
+            over.gotoStartOfParagraph(False)
+            over.gotoEndOfParagraph(True)
+            whole = self._paragraph_from(over)
+            return place if whole is None else whole
+        except Exception as e:
+            logger.info(f"Could not take a paragraph whole: {e}")
+            return place
+
     def _contents_in(self, text_range: Any) -> List[Any]:
         """Everything a range covers, from the range itself.
 
@@ -539,6 +581,51 @@ class AddressMixin:
         except Exception as e:
             logger.info(f"A range would not say what it covers: {e}")
         return found
+
+    def _paragraphs_over(self, doc: Any, address: Any) -> tuple:
+        """(the paragraphs an address covers, the scope described, the first
+        one's number when it is free)
+
+        A tool scoped to a paragraph must not walk the body to find it. The
+        range an address resolves to **names its own paragraphs** — that is
+        what `_contents_in` reads out of it — so a check over one paragraph
+        costs the resolve and nothing else, where filtering a walk of every
+        paragraph in the document cost 4 seconds on a 519-page guide.
+
+        `None` for the paragraphs means the whole document, which the caller
+        sweeps. The third value is the number of the first paragraph when the
+        address itself names one and no anchor overrides it, since then the
+        numbers are known without counting anything; otherwise it is None and
+        the places are named by anchor.
+        """
+        if address is None:
+            return None, {"document": True}, None
+        if not isinstance(address, dict):
+            raise AddressError(f"address must be an object, got {address!r}")
+
+        number = None
+        if "heading" in address:
+            first, last = self._section_bounds(doc, address["heading"])
+            span = self._resolve_address(doc, {"paragraph": first,
+                                               "through": last})
+            described = {"heading": address["heading"],
+                         "paragraphs": [first, last]}
+            number = first
+        else:
+            span = self._resolve_address(doc, address)
+            described = dict(address)
+            named = address.get("paragraph")
+            if "anchor" not in address and isinstance(named, int) \
+                    and not isinstance(named, bool):
+                number = named
+
+        # A table between two paragraphs is enumerated with them and is not a
+        # paragraph; it takes no number either, so the ones that are left stay
+        # consecutive.
+        paragraphs = [self._whole_paragraph(one)
+                      for one in self._contents_in(span)
+                      if hasattr(one, "getStart")]
+        return paragraphs, described, number
 
     def _paragraph_of(self, doc: Any, located: Dict[str, Any],
                       paragraph_cursor: Any = None) -> Any:

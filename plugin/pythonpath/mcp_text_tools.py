@@ -155,7 +155,7 @@ class TextTools:
                 "properties": {
                     "address": {
                         "type": "object",
-                        "description": "Limit the check to one paragraph — {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell. Omit to check the whole document. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
+                        "description": "Which part of the document to check: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"heading\": N} for a section, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"selection\": true}, or an anchor as {\"anchor\": \"a7f3c1\"} — the address get_cursor_info, find_text or read_paragraphs handed back, which goes on naming the same text after edits have renumbered the paragraphs. A scoped check costs the paragraphs it reads and no walk of the document. Omit to check the whole document, which on a 519-page guide is 45 seconds",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
@@ -168,6 +168,11 @@ class TextTools:
                         "type": "integer",
                         "description": "How many misspellings to report (max 200)",
                         "default": 50
+                    },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Report each hit's paragraph number as well. A paragraph has none in UNO, so working one out for a scope that did not name it is a walk of the body — 4s on a real guide. Without it a hit is named by its paragraph's anchor, which every tool takes",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -340,10 +345,12 @@ class TextTools:
         return self.uno_bridge.set_language(address, language, doc=doc)
 
     def check_spelling_live(self, address: Any = None, max_results: int = 50,
+                            number: bool = False,
                             document: Optional[str] = None) -> Dict[str, Any]:
         """Report misspelled words with an address and suggestions for each"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.check_spelling(address=address,
-                                              max_results=max_results, doc=doc)
+                                              max_results=max_results,
+                                              number=number, doc=doc)
