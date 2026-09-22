@@ -1,10 +1,12 @@
 """Check the Writer tools against a real LibreOffice.
 
 Runs its own headless instance with a separate user profile, so a developer's
-session is untouched. Must run under /usr/bin/python3, which carries the
-python3-uno bindings; the repo venv has no uno module:
+session is untouched. Must run under a Python that carries the uno bindings;
+the repo venv has none. On Linux/macOS that is the system Python
+(python3-uno); on Windows it is LibreOffice's own bundled interpreter:
 
-    /usr/bin/python3 tests/live/writer_tools_check.py
+    /usr/bin/python3 tests/live/writer_tools_check.py                              # Linux/macOS
+    "C:\\Program Files\\LibreOffice\\program\\python.exe" tests\\live\\writer_tools_check.py   # Windows
 
 The fakes in tests/fake_writer.py encode assumptions about UNO. This checks
 them. Anything unverified here is not known to work.
@@ -13,7 +15,9 @@ them. Anything unverified here is not known to work.
 import os
 import subprocess
 import sys
+import tempfile
 import time
+from pathlib import Path
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "plugin", "pythonpath"))
@@ -23,8 +27,18 @@ from com.sun.star.text.ControlCharacter import PARAGRAPH_BREAK  # noqa: E402
 
 PORT = 2010
 FIFTH = "{ frac { 1 } { 5 } }"
-PROFILE = "/tmp/mcp_live_check_profile"
+TMP = tempfile.gettempdir()
+PROFILE = os.path.join(TMP, "mcp_live_check_profile")
 failures = []
+
+
+def tmp_path(name):
+    return os.path.join(TMP, name)
+
+
+def file_uri(path):
+    """A file:// URL built the way that survives a Windows drive letter."""
+    return Path(path).as_uri()
 
 
 def check(label, actual, expected):
@@ -105,7 +119,7 @@ def _refused(bridge, doc, address):
 
 
 soffice = subprocess.Popen([
-    "soffice", f"-env:UserInstallation=file://{PROFILE}",
+    "soffice", f"-env:UserInstallation={file_uri(PROFILE)}",
     "--headless", "--norestore", "--nologo", "--nodefault",
     f"--accept=socket,host=127.0.0.1,port={PORT};urp;",
 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -985,9 +999,9 @@ try:
            bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]], [[]])
 
     print("\n--- an id survives saving and reopening ---")
-    saved_at = "/tmp/mcp_live_comment_ids.odt"
-    doc.storeToURL(f"file://{saved_at}", ())
-    reopened = desktop.loadComponentFromURL(f"file://{saved_at}", "_blank", 0, ())
+    saved_at = tmp_path("mcp_live_comment_ids.odt")
+    doc.storeToURL(file_uri(saved_at), ())
+    reopened = desktop.loadComponentFromURL(file_uri(saved_at), "_blank", 0, ())
     reloaded = bridge.list_comments(doc=reopened)
     print(reloaded)
     check("the comment came back", reloaded.get("count"), 1)
@@ -1166,9 +1180,9 @@ try:
                                                          AT_CHARACTER)
     provider = ctx.ServiceManager.createInstanceWithContext(
         "com.sun.star.graphic.GraphicProvider", ctx)
-    picture_file = write_test_png("/tmp/mcp_live_source.png")
+    picture_file = write_test_png(tmp_path("mcp_live_source.png"))
     source = uno.createUnoStruct("com.sun.star.beans.PropertyValue")
-    source.Name, source.Value = "URL", f"file://{picture_file}"
+    source.Name, source.Value = "URL", file_uri(picture_file)
 
     def put_picture(offset, name, inline=True, title="", description=""):
         picture = doc.createInstance("com.sun.star.text.TextGraphicObject")
@@ -1225,17 +1239,17 @@ try:
           sum(r["length"] for r in runs), len("query is the entry point"))
 
     print("\n--- the file, and the picture itself ---")
-    written = bridge.export_image("Schema", path="/tmp/mcp_live_export.png",
+    written = bridge.export_image("Schema", path=tmp_path("mcp_live_export.png"),
                                   doc=doc)
     print({k: v for k, v in written.items() if k != "_image_content"})
     check("written", written.get("success"), True)
-    check("as a PNG", open("/tmp/mcp_live_export.png", "rb").read(8),
+    check("as a PNG", open(tmp_path("mcp_live_export.png"), "rb").read(8),
           b"\x89PNG\r\n\x1a\x0a")
     check("of the size it reports", written.get("bytes"),
-          os.path.getsize("/tmp/mcp_live_export.png"))
+          os.path.getsize(tmp_path("mcp_live_export.png")))
     check("carrying the address of the picture", written.get("address"),
           {"paragraph": 1, "offset": 6, "length": 0})
-    inline_result = bridge.export_image("Schema", path="/tmp/mcp_live_inline.png",
+    inline_result = bridge.export_image("Schema", path=tmp_path("mcp_live_inline.png"),
                                         inline=True, doc=doc)
     check("handed back for looking at", inline_result.get("inline"), True)
     check("as base64 of a PNG",
@@ -1243,7 +1257,7 @@ try:
           True)
     check("an unknown picture is refused",
           bridge.export_image("Nope", doc=doc).get("success"), False)
-    for leftover in ("/tmp/mcp_live_export.png", "/tmp/mcp_live_inline.png"):
+    for leftover in (tmp_path("mcp_live_export.png"), tmp_path("mcp_live_inline.png")):
         os.unlink(leftover)
 
     print("\n--- a rewrite that would destroy it is refused ---")
@@ -2020,7 +2034,7 @@ try:
                                 doc=doc).get("success"), True)
 
     print("\n--- a selected picture is not a text selection ---")
-    picture_file = write_test_png("/tmp/mcp_live_source.png")   # the earlier
+    picture_file = write_test_png(tmp_path("mcp_live_source.png"))   # the earlier
     plain = body.createTextCursorByRange(bridge._paragraph_at(body, 1).getStart())
     plain.gotoEndOfParagraph(True)
     plain.setString("query is the entry point")
@@ -2051,7 +2065,7 @@ try:
     check("with the text it is anchored to",
           reported["images"][0]["paragraph_text"], "query is the entry point")
 
-    saved = bridge.export_image(path="/tmp/mcp_live_selected.png", doc=doc)
+    saved = bridge.export_image(path=tmp_path("mcp_live_selected.png"), doc=doc)
     print({k: v for k, v in saved.items() if k != "_image_content"})
     check("the selected picture writes out without being named",
           (saved.get("success"), saved.get("name"), saved.get("was_selected")),
@@ -2086,7 +2100,7 @@ try:
     print("   pages:", pages)
     check("the document has more than one page", pages > 1, True)
 
-    first = bridge.render_page(page=1, dpi=90, path="/tmp/mcp_live_page1.png",
+    first = bridge.render_page(page=1, dpi=90, path=tmp_path("mcp_live_page1.png"),
                                inline=False, doc=doc)
     print({k: v for k, v in first.items() if k != "_image_content"})
     check("rendered", first.get("success"), True)
@@ -2100,16 +2114,16 @@ try:
     check("saying what it does not show",
           "spell checker" in first["shows"], True)
 
-    second = bridge.render_page(page=2, dpi=90, path="/tmp/mcp_live_page2.png",
+    second = bridge.render_page(page=2, dpi=90, path=tmp_path("mcp_live_page2.png"),
                                 inline=False, doc=doc)
     check("the second page rendered too", second.get("success"), True)
     check("and it is a different page",
-          open("/tmp/mcp_live_page1.png", "rb").read()
-          != open("/tmp/mcp_live_page2.png", "rb").read(), True)
+          open(tmp_path("mcp_live_page1.png"), "rb").read()
+          != open(tmp_path("mcp_live_page2.png"), "rb").read(), True)
     check("the reader's cursor is back on page 1", view.getPage(), 1)
 
     by_address = bridge.render_page(address={"paragraph": 3}, dpi=60,
-                                    path="/tmp/mcp_live_addr.png",
+                                    path=tmp_path("mcp_live_addr.png"),
                                     inline=False, doc=doc)
     print({k: v for k, v in by_address.items() if k != "_image_content"})
     check("a page found from an address", by_address.get("success"), True)
@@ -2128,15 +2142,15 @@ try:
           bridge.render_page(page=1, dpi=5000, doc=doc).get("success"), False)
 
     print("\n--- and the same page through the PDF route ---")
-    through_draw = bridge._render_through_draw(doc, 2, "/tmp/mcp_live_draw.png",
+    through_draw = bridge._render_through_draw(doc, 2, tmp_path("mcp_live_draw.png"),
                                                744, 1052)
     check("the fallback wrote a picture too", through_draw is not None, True)
     if through_draw:
         check("as a PNG", open(through_draw, "rb").read(8),
               b"\x89PNG\r\n\x1a\x0a")
         os.unlink(through_draw)
-    for leftover in ("/tmp/mcp_live_page1.png", "/tmp/mcp_live_page2.png",
-                     "/tmp/mcp_live_addr.png"):
+    for leftover in (tmp_path("mcp_live_page1.png"), tmp_path("mcp_live_page2.png"),
+                     tmp_path("mcp_live_addr.png")):
         os.unlink(leftover)
 
     print("\n--- an anchor keeps pointing while the paragraphs move ---")
@@ -4015,7 +4029,7 @@ try:
 
     print("\n--- saving under a name, closing, renaming ---")
     import zipfile
-    yard = "/tmp/mcp_live_documents"
+    yard = tmp_path("mcp_live_documents")
     if os.path.isdir(yard):
         for leftover in os.listdir(yard):
             os.unlink(os.path.join(yard, leftover))
@@ -4035,7 +4049,7 @@ try:
     check("saved under a name", saved.get("success"), True)
     check("with Writer's own filter", saved.get("filter"), "writer8")
     check("the document lives there now", fresh.getURL(),
-          f"file://{odt}")
+          file_uri(odt))
     check("and the file is real ODF",
           zipfile.ZipFile(odt).read("mimetype").decode(),
           "application/vnd.oasis.opendocument.text")
@@ -4046,7 +4060,7 @@ try:
     check("saved as Word", as_word.get("filter"), "MS Word 2007 XML")
     check("and it really is OOXML, not ODF with a .docx name",
           "[Content_Types].xml" in zipfile.ZipFile(word).namelist(), True)
-    check("the document followed the name", fresh.getURL(), f"file://{word}")
+    check("the document followed the name", fresh.getURL(), file_uri(word))
 
     check("a format nothing here writes is refused",
           bridge.save_document(doc=fresh,
@@ -4063,7 +4077,7 @@ try:
     print("   ", renamed)
     check("renamed", renamed.get("success"), True)
     check("the document is called that now", fresh.getURL(),
-          f"file://{os.path.join(yard, 'guide-v2.docx')}")
+          file_uri(os.path.join(yard, "guide-v2.docx")))
     check("the old file is still there, as UNO leaves it",
           os.path.exists(word), True)
     check("which the result says", renamed.get("original_kept"), True)
