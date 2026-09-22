@@ -58,7 +58,7 @@ ERROR_CODES = {"NO_DOCUMENT", "WRONG_DOCUMENT_TYPE", "READ_ONLY",
 # What a tool is asked for, when its answer is a list of things.
 ITEMS = {
     "read_paragraphs": "paragraphs", "get_outline": "headings",
-    "find_text": "hits", "find_by_style": "found", "read_runs": "runs",
+    "find_text": "hits", "find_by_style": "hits", "read_runs": "runs",
     "list_images": "images", "list_comments": "comments",
     "list_fields": "fields", "list_bookmarks": "bookmarks",
     "list_formulas": "formulas", "list_notes": "notes",

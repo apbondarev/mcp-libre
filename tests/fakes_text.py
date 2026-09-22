@@ -358,6 +358,23 @@ class FakeTextPortion:
         return FakeRange(self.model,
                          (self.paragraph, self.offset + len(self._text)))
 
+    @property
+    def start(self):
+        return (self.paragraph, self.offset)
+
+    @property
+    def end(self):
+        return (self.paragraph, self.offset + len(self._text))
+
+    def getText(self):
+        """A portion is a text range, so it names the text that owns it.
+
+        Without this a run could not be anchored — holding an anchor asks a
+        range for its text — and find_by_style handed back a character style's
+        hits with no anchor on them while the live server anchored every one.
+        """
+        return getattr(self.model, "owner", None) or self.model
+
 
 def _property_states(self, names):
     """The states of several properties in one call, as UNO answers them."""

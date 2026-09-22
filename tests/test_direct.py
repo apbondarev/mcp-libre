@@ -38,7 +38,38 @@ def test_a_paragraph_style_is_found_without_walking_for_it(bridge, doc):
     assert found["success"] is True
     assert [hit["text"] for hit in found["hits"]] == ["query { hero }",
                                                       "mutation { }"]
+    # Each hit is named by an anchor. Numbering them is a sweep of the body
+    # that runs as far as the last hit — 4.7s for the 23 places one style was
+    # used in a real guide — and the anchor names the same text to every tool.
+    assert [hit["address"]["anchor"]["type"] for hit in found["hits"]] \
+        == ["text", "text"]
+    assert all("paragraph" not in hit["address"] for hit in found["hits"])
+    assert [bridge._resolve_address(doc, hit["address"]).getString()
+            for hit in found["hits"]] == ["query { hero }", "mutation { }"]
+
+
+def test_the_numbers_come_when_they_are_asked_for(bridge, doc):
+    found = bridge.find_by_style("Preformatted Text", number=True, doc=doc)
+
     assert [hit["address"]["paragraph"] for hit in found["hits"]] == [2, 4]
+    assert found["hits"][0]["address"]["anchor"]["type"] == "text"
+
+
+def test_a_scoped_search_compares_ranges_rather_than_numbers(bridge, doc,
+                                                             monkeypatch):
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped search numbered the hits")
+
+    monkeypatch.setattr(bridge, "_addresses_in_order", refuse)
+    monkeypatch.setattr(bridge, "_locate_matches", refuse)
+
+    found = bridge.find_by_style("Preformatted Text",
+                                 address={"paragraph": 4}, doc=doc)
+
+    assert [hit["text"] for hit in found["hits"]] == ["mutation { }"]
+    # What is not reported is what the scope holds and the cap left out, not
+    # the hits elsewhere in the document that the scope threw away.
+    assert found["not_reported"] is None
 
 
 def test_a_character_style_is_walked_for(bridge, doc):
@@ -49,6 +80,11 @@ def test_a_character_style_is_walked_for(bridge, doc):
 
     assert [(hit["text"], hit["address"]["offset"])
             for hit in found["hits"]] == [("абзац", 8)]
+    # The runs are walked for, so their numbers come free with the walk; the
+    # anchor goes beside them rather than instead of them.
+    assert found["hits"][0]["address"]["paragraph"] == 1
+    assert found["hits"][0]["address"]["anchor"]["type"] == "text"
+    assert "range" not in found["hits"][0]
 
 
 def test_finding_is_scoped_and_refuses_what_it_cannot_do(bridge, doc):

@@ -97,7 +97,7 @@ class DirectFormattingMixin:
 
     def find_by_style(self, style: str, family: str = "paragraph",
                       address: Any = None, max_results: int = 200,
-                      doc: Any = None) -> Dict[str, Any]:
+                      number: bool = False, doc: Any = None) -> Dict[str, Any]:
         """
         Every place a style is used — which is how a code block is found
 
@@ -105,6 +105,16 @@ class DirectFormattingMixin:
         search takes a style name when `SearchStyles` is on, and answers in
         milliseconds. A character style is not searchable that way, so those
         are found by walking the runs.
+
+        **The search was cheap and the answer was not.** Every hit was placed
+        by paragraph *number*, which is one sweep of the body running as far
+        as the last hit: measured on the 519-page guide, one hit 0.25s, three
+        0.78s, twenty-three 4.72s, and a *scoped* call 3.84s to answer that
+        there are none in that stretch — since the scope was a predicate on
+        numbers, so every hit in the document had to be numbered before it
+        could be thrown away. Each hit now carries an **anchor**, two UNO
+        calls and no walk, and a scope compares ranges (`_scope_over`) rather
+        than numbers. `number: true` buys the sweep back.
         """
         doc, error = self._writer_document(doc, "Finding by style")
         if error:
@@ -120,51 +130,59 @@ class DirectFormattingMixin:
                            f"list_styles says which it has")
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = self._scope_over(doc, address)
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        # Placing a hit is a walk shared between them all, and on a real
-        # document 184 code blocks cost 1.7s to place — so when nothing is
-        # being scoped, only the hits that will be reported are placed.
-        limit = None if address is not None else max(1, max_results)
+        limit = max(1, max_results)
         if wanted == "paragraph":
-            hits, total = self._paragraphs_in_style(doc, style, limit)
+            matches = self._ranges_in_style(doc, style)
+            if address is not None:
+                matches = [one for one in matches if covers(one)]
+            total = len(matches)
+            shown = matches[:limit]
+            hits = [{"address": place,
+                     "text": _text_payload(match.getString())["text"]}
+                    for match, place in zip(shown,
+                                            self._place_all(doc, shown,
+                                                            number))]
         else:
-            hits = self._runs_in_style(doc, style, address)
-            total = len(hits)
-        hits = [hit for hit in hits if covers(hit["address"])]
-        shown = hits[:max_results]
-        more = max(0, total - len(shown))
+            # The runs are walked for, so the walk hands out their numbers on
+            # the way and they cost nothing; the anchor goes beside them.
+            found = self._runs_in_style(doc, style, address)
+            total = len(found)
+            hits = []
+            for hit in found[:limit]:
+                place = hit.pop("range", None)
+                held = (self._anchor_handle(self._hold_anchor(doc, place),
+                                            "text")
+                        if place is not None else None)
+                if held:
+                    hit["address"] = dict(hit["address"], anchor=held)
+                hits.append(hit)
         return {"success": True, "style": style, "family": wanted,
-                "hits": shown, "count": len(shown),
-                "not_reported": more or None, "scope": scope}
+                "hits": hits, "count": len(hits),
+                "not_reported": max(0, total - len(hits)) or None,
+                "scope": scope}
 
-    def _paragraphs_in_style(self, doc: Any, style: str,
-                             limit: Optional[int] = None) -> tuple:
-        """(hits, how many there are) for a paragraph style, Writer's own way"""
-        found = []
+    def _ranges_in_style(self, doc: Any, style: str) -> List[Any]:
+        """The ranges wearing a paragraph style, Writer's own way
+
+        `SearchStyles` with the style's name as the string makes `findAll`
+        answer with every paragraph in it — milliseconds, where comparing
+        `ParaStyleName` means walking the body. The matches come back in
+        document order, so nothing here has to put them in one.
+        """
         try:
             descriptor = doc.createSearchDescriptor()
             descriptor.SearchString = style
             descriptor.SearchStyles = True
             matches = doc.findAll(descriptor)
+            return [matches.getByIndex(index)
+                    for index in range(matches.getCount())]
         except Exception as e:
             logger.info(f"Could not search for the style {style}: {e}")
-            return found, 0
-
-        total = matches.getCount()
-        ranges = [matches.getByIndex(index)
-                  for index in range(total if limit is None
-                                     else min(total, limit))]
-        for match, address in zip(ranges, self._addresses_in_order(doc,
-                                                                   ranges)):
-            if address is None:
-                continue
-            found.append({"address": {"paragraph": address.get("paragraph")}
-                          if address.get("paragraph") is not None else address,
-                          "text": _text_payload(match.getString())["text"]})
-        return found, total
+            return []
 
     def _runs_in_style(self, doc: Any, style: str, address: Any) -> List[Dict]:
         """The runs wearing a character style, by walking the portions"""
@@ -199,6 +217,7 @@ class DirectFormattingMixin:
                     found.append({
                         "address": {"paragraph": index, "offset": offset,
                                     "length": len(body)},
+                        "range": portion,
                         "text": _text_payload(body)["text"]})
                 offset += len(body)
             index += 1

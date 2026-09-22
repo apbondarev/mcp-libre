@@ -41,6 +41,11 @@ class DirectTools:
                         "description": "How many hits to report",
                         "default": 200
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Place every hit by paragraph number as well. That is a sweep of the body running as far as the last hit — 4.7s for the 23 places a style was used in a real guide, against 0.1s for the anchors — and a hit's anchor already names it to every tool that takes an address",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -129,6 +134,7 @@ class DirectTools:
 
     def find_by_style_live(self, style: str, family: str = "paragraph",
                            address: Any = None, max_results: int = 200,
+                           number: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """Find every place a style is used"""
         doc, error = self._target_document(document)
@@ -136,7 +142,8 @@ class DirectTools:
             return error
         return self.uno_bridge.find_by_style(style, family=family,
                                              address=address,
-                                             max_results=max_results, doc=doc)
+                                             max_results=max_results,
+                                             number=number, doc=doc)
 
     def get_direct_formatting_live(self, address: Any,
                                    document: Optional[str] = None
