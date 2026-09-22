@@ -121,8 +121,13 @@ class FakeFormulaObject:
     bookmark would be quietly renamed.
     """
 
+    MATH_CLSID = "078B7ABA-54FC-457F-8551-6147e776a997"
+
     def __init__(self, formula="", name="", chart=False):
-        self.CLSID = ""
+        # What tells a formula from a chart without loading the object:
+        # Writer stamps the Math class id on it, and asking for `Model`
+        # instead costs the load.
+        self.CLSID = "" if chart else self.MATH_CLSID
         self.AnchorType = None
         self.Width = 3528
         self.Height = 471

@@ -161,8 +161,16 @@ class AddressMixin:
                                "length — it covers them whole")
 
         body = doc.getText()
-        start = self._paragraph_at(body, first)
-        end = self._paragraph_at(body, last)
+        # One walk for both ends: reaching a paragraph by number walks the
+        # body to it, and doing that twice made selecting a block deep in a
+        # long document cost 14.5 seconds.
+        start = end = None
+        for paragraph, index in self._body_paragraphs(doc):
+            if index == first:
+                start = paragraph
+            if index == last:
+                end = paragraph
+                break
         if start is None:
             raise AddressError(f"no body paragraph {first}")
         if end is None:

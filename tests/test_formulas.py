@@ -454,3 +454,57 @@ def test_the_runs_of_a_block_find_its_formulas_without_placing_them_all(
                                    "paragraph": 1,
                                    "offset": len("Плотность 1-й части равна ")}]
     assert "formulas" not in outside
+
+
+def test_a_formula_is_told_from_a_chart_without_loading_it(bridge, doc):
+    # Asking an embedded object for its Model *loads* it, and a real guide
+    # holds hundreds: that cost 2.8s to find one formula, and every read of a
+    # paragraph paid it. The class id is a plain property.
+    put(bridge, doc, 0, AFTER_EQUALS, FIFTH, name="доля")
+    chart = FakeFormulaObject(chart=True, name="Chart1")
+    doc.getText().insertTextContent(
+        bridge._resolve_address(doc, {"paragraph": 2, "offset": 0, "length": 0}),
+        chart, False)
+
+    loaded = []
+
+    class Watched:
+        def __init__(self, real):
+            self._real = real
+
+        def __getattr__(self, name):
+            if name == "Model":
+                loaded.append(True)
+            return getattr(self._real, name)
+
+    objects = doc.getEmbeddedObjects()
+    held = {name: Watched(objects.getByName(name))
+            for name in objects.getElementNames()}
+    objects.getByName = lambda name: held[name]
+
+    found = bridge._formulas_of(doc)
+
+    assert [name for name, _obj, _model in found] == ["доля"]
+    # The chart's model is never touched: only the formula's is.
+    assert len(loaded) == 1
+
+
+def test_reading_a_paragraph_does_not_place_every_formula(bridge, doc,
+                                                           monkeypatch):
+    # Placing them is a sweep of the body, and read_paragraphs paid it on
+    # every call: 12 seconds to read one paragraph of a guide holding one
+    # formula.
+    put(bridge, doc, 1, len("Плотность 1-й части равна "), "rho", name="ро")
+
+    def refuse(*arguments, **named):
+        raise AssertionError("read_paragraphs placed every formula")
+
+    monkeypatch.setattr(bridge, "_formula_places", refuse)
+
+    read = bridge.read_paragraphs(start=0, count=3, anchors=False,
+                                  doc=doc)["paragraphs"]
+
+    assert "formulas" not in read[0]
+    assert read[1]["formulas"] == [{"name": "ро", "formula": "rho",
+                                     "offset": len("Плотность 1-й части равна ")}]
+    assert "⟦formula: rho⟧" in read[1]["text_with_formulas"]

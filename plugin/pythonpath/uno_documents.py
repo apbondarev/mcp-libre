@@ -214,6 +214,18 @@ class DocumentsMixin:
             logger.error(f"Could not open {wanted}: {e}")
             return refusal("FAILED", e)
         if doc is None:
+            # Measured: a file open in another LibreOffice has a lock file
+            # beside it, and loading it headless then answers with *nothing*
+            # at all rather than raising — so the refusal has to say why.
+            locked = os.path.exists(os.path.join(
+                os.path.dirname(str(path)),
+                f".~lock.{os.path.basename(str(path))}#"))
+            if locked:
+                return refusal(
+                    "FAILED",
+                    f"{path} is locked by another LibreOffice — a lock file "
+                    f"sits beside it — so it opened nothing. Pass "
+                    f"read_only=true to read it anyway, or close it there")
             return refusal("FAILED", f"LibreOffice opened nothing for {path}")
 
         answered = self.get_document_info(doc=doc)

@@ -359,9 +359,26 @@ def test_opening_one_that_is_open_answers_with_it(bridge, tmp_path):
 def test_a_file_that_is_not_there_is_refused(bridge, tmp_path):
     from tests.fake_writer import FakeDesktop
 
-    bridge.desktop = FakeDesktop([])
+    bridge.desktop = FakeDesktop([], to_open={})
 
     refused = bridge.open_document(str(tmp_path / "nothing.odt"))
 
     assert refused["success"] is False
     assert refused["code"] == "NOT_FOUND"
+
+
+def test_a_file_locked_by_another_office_says_so(bridge, tmp_path):
+    # Measured: a file open elsewhere has a lock file beside it, and loading
+    # it headless answers with nothing at all rather than raising.
+    from tests.fake_writer import FakeDesktop
+
+    made = tmp_path / "Guide.odt"
+    made.write_bytes(b"x")
+    (tmp_path / ".~lock.Guide.odt#").write_text("someone else")
+    bridge.desktop = FakeDesktop([], to_open={})    # opens nothing
+
+    refused = bridge.open_document(str(made))
+
+    assert refused["success"] is False
+    assert "locked" in refused["error"]
+    assert "read_only" in refused["error"]

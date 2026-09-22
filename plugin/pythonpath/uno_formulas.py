@@ -61,8 +61,21 @@ CONTEXT = 40
 class FormulasMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
+    def _is_math(self, obj: Any) -> bool:
+        """Whether an embedded object is a formula, asked the cheap way.
+
+        `Model` **loads the object**, and a real guide holds hundreds of
+        them: asking every one for its model cost 2.8s to find a single
+        formula, and every `read_paragraphs` call paid it — 4.3s to read one
+        paragraph. `CLSID` is a plain property and says the same thing.
+        """
+        clsid = (_get_property(obj, "CLSID", "") or "").strip("{}").lower()
+        return clsid == MATH_CLSID.lower()
+
     def _math_of(self, obj: Any) -> Any:
         """The Math model of an embedded object, or None if it is not one."""
+        if not self._is_math(obj):
+            return None
         try:
             model = obj.Model
             text = model.Formula
@@ -138,6 +151,66 @@ class FormulasMixin:
                 continue
             found.append({"name": name, "formula": text,
                           "paragraph": paragraph, "offset": offset})
+        found.sort(key=lambda one: one["offset"])
+        return found
+
+    def _formulas_in_paragraph(self, paragraph: Any) -> List[Dict[str, Any]]:
+        """The formulas standing in this paragraph, from its own portions.
+
+        Measured on a live Writer: a formula is a portion of type `Frame`
+        whose content enumeration hands out the embedded object — the same
+        shape a picture has. So a paragraph names its own formulas, and the
+        document's embedded objects need not be scanned at all: that scan is
+        a fixed cost per call, and it made reading **one** paragraph of a
+        real guide dearer than reading fifty.
+        """
+        found = []
+        offset = 0
+        try:
+            portions = paragraph.createEnumeration()
+        except Exception as e:
+            logger.info(f"A paragraph would not say what is in it: {e}")
+            return found
+        while portions.hasMoreElements():
+            portion = portions.nextElement()
+            kind = _get_property(portion, "TextPortionType", "Text")
+            if kind == "Frame":
+                for held in self._contents_of(portion):
+                    model = self._math_of(held)
+                    if model is None:
+                        continue
+                    try:
+                        found.append({"name": held.getName(),
+                                      "formula": model.Formula,
+                                      "offset": offset})
+                    except Exception as e:
+                        logger.info(f"A formula would not answer: {e}")
+                continue
+            try:
+                offset += len(portion.getString())
+            except Exception:
+                continue
+        return found
+
+    def _formulas_here(self, doc: Any, formulas: List[Tuple],
+                       paragraph: Any) -> List[Dict[str, Any]]:
+        """The formulas standing in this paragraph, compared not placed.
+
+        Four UNO calls per formula against the walk of the body that placing
+        them all costs — and a paragraph holds none of them nearly always.
+        """
+        found = []
+        for name, obj, model in formulas:
+            try:
+                anchor = obj.getAnchor()
+                if not self._covers(doc.getText(), paragraph, anchor):
+                    continue
+                address, _, _ = self._locate_range(doc, anchor,
+                                                   find_paragraph=False)
+                found.append({"name": name, "formula": model.Formula,
+                              "offset": address.get("offset", 0)})
+            except Exception as e:
+                logger.info(f"Could not place formula {name}: {e}")
         found.sort(key=lambda one: one["offset"])
         return found
 

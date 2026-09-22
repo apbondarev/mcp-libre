@@ -253,7 +253,10 @@ def select_section(client, named, wanted, paragraphs):
     selection starts at that heading and runs far enough down to be worth
     asking about.
     """
-    outline = client.call("get_outline_live", dict(named, count=10000))
+    # Anchors on 938 headings cost seconds and none of them is used here:
+    # what this wants is the one heading's number.
+    outline = client.call("get_outline_live", dict(named, count=10000,
+                                                   anchors=False))
     if not outline.get("success"):
         raise SystemExit(f"Could not read the outline: {outline.get('error')}")
     headings = [one for one in outline["headings"]

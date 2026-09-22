@@ -883,7 +883,10 @@ class FakeDrawDoc:
 class FakeDesktop:
     def __init__(self, documents, current=None, to_open=None):
         self._documents = list(documents)
-        self.to_open = dict(to_open or {})
+        # None means "this desktop is the PDF-import fake"; a dict — even an
+        # empty one — means it opens documents by URL and answers with
+        # nothing for a file it does not hold, as a locked one does.
+        self.to_open = to_open
         self._current = current if current is not None else (
             documents[0] if documents else None)
         self.loaded = []
@@ -904,10 +907,11 @@ class FakeDesktop:
         """
         settings = {argument.Name: argument.Value for argument in arguments}
         self.loaded.append((url, settings.get("FilterName")))
-        opened = getattr(self, "to_open", {}).get(url)
-        if opened is not None:
-            self._documents.append(opened)
-            self._current = opened
+        if getattr(self, "to_open", None) is not None:
+            opened = self.to_open.get(url)
+            if opened is not None:
+                self._documents.append(opened)
+                self._current = opened
             return opened
         drawing = FakeDrawDoc()
         self.drawings = getattr(self, "drawings", [])

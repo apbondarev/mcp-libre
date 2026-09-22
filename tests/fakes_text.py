@@ -327,7 +327,13 @@ class FakeTextPortion:
                 if where.start == (self.paragraph, self.offset):
                     held.append(image)
         except Exception:
-            return FakeEnumeration([])
+            pass
+        for obj in getattr(self.model, "formulas", []) or []:
+            try:
+                if obj.getAnchor().start == (self.paragraph, self.offset):
+                    held.append(obj)
+            except Exception:
+                continue
         return FakeEnumeration(held)
 
     def __init__(self, text, locale, properties=None, kind="Text", field=None,
@@ -685,6 +691,11 @@ class FakeText:
             if not content.getName():
                 content._name = f"Object{len(self.formulas) + 1}"
             self.formulas.append(content)
+            # Measured on a live Writer: a formula is a portion of type
+            # "Frame" in its paragraph, carrying no characters, whose content
+            # enumeration hands out the object. That is how a paragraph names
+            # its own formulas without the document being scanned.
+            self._thread_frame(start)
             return
         if hasattr(content, "IsProtected") and hasattr(content, "IsVisible"):
             # A section covers the range it is put on and moves nothing: the
@@ -1180,6 +1191,35 @@ class FakeText:
                 else {"text": entry["text"], "locale": entry["locale"],
                       **entry["properties"]}
                 for entry in rebuilt]
+
+    def _thread_frame(self, at):
+        """Put an empty Frame portion into a paragraph, where an object sits"""
+        paragraph, offset = at
+        declared = self.portions.get(paragraph)
+        if declared is None:
+            text = self.paragraphs[paragraph]
+            declared = ([{"text": text[:offset]}] if offset else []) \
+                + [{"text": text[offset:]}]
+        threaded, seen, placed = [], 0, False
+        for run in declared:
+            piece = run.get("text", "") if isinstance(run, dict) else run[0]
+            kind = run.get("kind", "Text") if isinstance(run, dict) else "Text"
+            if not placed and kind != "Frame" and seen + len(piece) >= offset:
+                cut = offset - seen
+                if cut:
+                    threaded.append(dict(run, text=piece[:cut])
+                                    if isinstance(run, dict) else (piece[:cut],))
+                threaded.append({"kind": "Frame", "text": ""})
+                if piece[cut:]:
+                    threaded.append(dict(run, text=piece[cut:])
+                                    if isinstance(run, dict) else (piece[cut:],))
+                placed = True
+            else:
+                threaded.append(run)
+            seen += len(piece)
+        if not placed:
+            threaded.append({"kind": "Frame", "text": ""})
+        self.portions[paragraph] = threaded
 
     def portions_of(self, paragraph):
         """

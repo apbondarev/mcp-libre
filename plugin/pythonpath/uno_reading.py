@@ -122,9 +122,14 @@ class ReadingMixin:
                                  f"one go"}
             paragraphs = []
             total = 0
+            # A formula is not text, so a paragraph holding one has to say
+            # so — and it says so itself: a formula is a Frame portion of the
+            # paragraph, measured. Placing every formula of the document
+            # instead was a sweep of the body on every call (12s to read one
+            # paragraph of a guide holding a single formula), and scanning
+            # the document's embedded objects was a fixed cost that made one
+            # paragraph dearer than fifty.
             standing: Dict[int, List[Dict[str, Any]]] = {}
-            for one in self._formula_places(doc):
-                standing.setdefault(one["paragraph"], []).append(one)
 
             enumeration = doc.getText().createEnumeration()
             while enumeration.hasMoreElements():
@@ -135,6 +140,9 @@ class ReadingMixin:
                     raw = element.getString()
                     entry = _text_payload(raw)
                     entry["paragraph"] = total
+                    here = self._formulas_in_paragraph(element)
+                    if here:
+                        standing[total] = here
                     if total in standing:
                         entry["formulas"] = [
                             {"name": one["name"], "formula": one["formula"],
