@@ -9,7 +9,8 @@ pictures, styles — is counted before anything is written.
 from typing import Any, Optional, Dict, List
 import logging
 from uno_values import (GRAPHIC_SERVICE, MAX_RUN_PARAGRAPHS, REDLINE_KINDS,
-    TABLE_SERVICE, AddressError, _get_property, _supports, _table_size,
+    TABLE_SERVICE, AddressError, _anchor_token, _get_property, _supports,
+    _table_size,
     _colour_name,
     _comment_key, _distinct_changes, 
     _describe_comment, _distinct_comments, _distinct_images, 
@@ -54,7 +55,8 @@ class RunsMixin:
             return refusal("INVALID_ADDRESS", e)
 
         if by_anchor:
-            located["anchor"] = address["anchor"]
+            located["anchor"] = self._anchor_handle(
+                _anchor_token(address["anchor"]))
         index = located["paragraph"]
         if index is None and not located.get("cell") and not by_anchor:
             return {"success": False, "code": "INVALID_ADDRESS",
@@ -108,9 +110,9 @@ class RunsMixin:
                   "paragraph": index}
         if spread:
             # Every paragraph read is held, and its runs are addressed by that
-            # anchor; the numbers were never worked out.
+            # anchor; the numbers were never worked out, and the anchors are
+            # not listed again beside the runs that carry them.
             result["paragraphs_read"] = len(tokens)
-            result["anchors"] = tokens
             if crossed:
                 result["spans_tables"] = crossed
                 result["note"] = ("this range runs through a table, whose "
@@ -124,11 +126,14 @@ class RunsMixin:
             # The anchor is the address these runs belong to; its number is
             # not counted, and `number: true` on get_cursor_info is where a
             # human-readable one comes from.
-            result["address"] = {"anchor": address["anchor"]}
+            result["address"] = {"anchor": self._anchor_handle(
+                _anchor_token(address["anchor"]))}
         self._say_which_formulas(doc, result, index, read, located, block,
                                  paragraph_cursor, target)
         if held and not by_anchor:
-            result["address"] = {"paragraph": index, "anchor": held}
+            result["address"] = {
+                "paragraph": index,
+                "anchor": self._anchor_handle(held, "paragraph")}
         if block:
             result["paragraphs"] = read
             result["paragraphs_read"] = (read[1] - read[0] + 1) if read else 0
@@ -175,8 +180,9 @@ class RunsMixin:
                 break
             token = self._hold_paragraph_anchor(doc, element)
             cursor = element.getText().createTextCursorByRange(element)
-            located = {"paragraph": None, "anchor": token, "offset": 0,
-                       "length": len(element.getString())}
+            located = {"paragraph": None,
+                       "anchor": self._anchor_handle(token, "paragraph"),
+                       "offset": 0, "length": len(element.getString())}
             runs.extend(self._runs_in(doc, located, cursor,
                                       paragraph=element))
             held.append(token)

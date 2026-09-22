@@ -81,10 +81,16 @@ without a number ever being carried from one call to the next, and a block
 address (`through`) says how many paragraphs to read. `count` is a window,
 not a limit: 50 unasked, and a whole document can be had in one call — 6981
 paragraphs came back in five seconds — though with anchors on it is refused
-past 2000, which is how many this session keeps. `anchor` holds a place
-you worked out some other way, `list_anchors` says where they point now (200
-a call, `held` counting them all), `drop_anchors` lets go of the ones whose
-work is done, and an anchor lives as long as this session.
+past 2000, which is how many this session keeps. An answer names a place **once**, in its `address`, and the anchor inside it
+says which kind it is: `{"anchor": {"anchorId": "a7f3c1", "type":
+"paragraph"}}`. `paragraph` holds a whole paragraph and takes an `offset` and
+a `length` counted within it; `text` covers exactly its own stretch and takes
+neither. Hand the address back as it came — there is nothing to unpack. The
+bare id is still accepted (`{"anchor": "a7f3c1"}`), which is what to write by
+hand. `anchor` holds a place you worked out some other way, `list_anchors` says
+where they point now (200 a call, `held` counting them all), `drop_anchors`
+lets go of the ones whose work is done, and an anchor lives as long as this
+session.
 `select` puts an address under the reader's eyes.
 
 A caption numbers itself: `insert_caption` writes "Figure 3: …" beside a

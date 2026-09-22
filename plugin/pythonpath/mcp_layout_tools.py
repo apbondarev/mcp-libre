@@ -98,7 +98,7 @@ class LayoutTools:
                         "type": "object",
                         "description": "The paragraph the break belongs to: {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

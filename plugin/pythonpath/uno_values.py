@@ -347,6 +347,19 @@ def _get_property_call(source: Any, method: str, default: Any = None) -> Any:
         return default
 
 
+def _anchor_token(value: Any) -> Any:
+    """The id of an anchor, given either the id or the object a result shows.
+
+    An answer names a place once — `{"anchor": {"anchorId": …, "type": …}}` —
+    and that address is passed back as it came, so the object is the usual
+    form. The bare id is still accepted: it is what the ids were before, and
+    what a caller writes by hand.
+    """
+    if isinstance(value, dict):
+        return value.get("anchorId")
+    return value
+
+
 def _file_url(path: str) -> str:
     """A file:// URL UNO accepts, with the odd character in a name escaped"""
     # as_uri is 'file:///C:/Users/x' on Windows, where 'file://' + a path

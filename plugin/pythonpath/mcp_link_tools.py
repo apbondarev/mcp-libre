@@ -22,7 +22,7 @@ class LinkTools:
                         "description": SCOPE,
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -49,7 +49,7 @@ class LinkTools:
                         "description": "The links in this part of the document: " + SCOPE,
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

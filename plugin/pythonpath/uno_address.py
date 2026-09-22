@@ -10,8 +10,8 @@ The table lookups live here because a cell address needs them.
 
 from typing import Any, Optional, Dict, List
 import logging
-from uno_values import (AddressError, CELL_SERVICE, _cell_position, 
-    _get_property, _supports, _table_size, _text_payload)
+from uno_values import (AddressError, CELL_SERVICE, _anchor_token,
+    _cell_position, _get_property, _supports, _table_size, _text_payload)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class AddressMixin:
             if "selection" in address:
                 raise AddressError("an anchor already says where: it takes no "
                                    "'selection' beside it")
-            token = address["anchor"]
+            token = _anchor_token(address["anchor"])
             entry = self._anchor_entry(doc, token)
             # The addresses the reading tools hand out carry their anchor
             # beside the numbers they had when handed out, and passing one
@@ -270,7 +270,8 @@ class AddressMixin:
         if not isinstance(address, dict):
             return None
         if "anchor" in address:
-            return (self._anchor_paragraph(doc, address["anchor"])
+            return (self._anchor_paragraph(doc,
+                                           _anchor_token(address["anchor"]))
                     if doc is not None else None)
         index = address.get("paragraph")
         if isinstance(index, int) and not isinstance(index, bool) \

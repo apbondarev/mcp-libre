@@ -14,7 +14,7 @@ STARMATH = ("The formula in StarMath, LibreOffice Math's own notation: "
             "subscript, \"x ^ 2 + sqrt { y }\", \"a over b\", \"sum from { i = 1 } to n\"")
 
 ADDRESS_PARTS = {
-    "anchor": {"type": "string"},
+    "anchor": {"type": ["string", "object"]},
     "heading": {"type": "integer"},
     "paragraph": {"type": "integer"},
     "through": {"type": "integer"},

@@ -39,11 +39,14 @@ def test_anchoring_a_paragraph_hands_back_a_token(bridge, doc):
     held = result["anchors"][0]
     assert held["text"] == "Operation"
     assert held["address"]["paragraph"] == 1
-    assert isinstance(held["anchor"], str) and held["anchor"]
+    # The place is named once, in the address, and says which kind it is.
+    assert held["address"]["anchor"]["anchorId"]
+    assert held["address"]["anchor"]["type"] == "text"
+    assert "anchor" not in held
 
 
 def test_an_anchor_is_an_address(bridge, doc):
-    token = bridge.anchor({"paragraph": 2}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 2}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     assert bridge._resolve_address(doc, {"anchor": token}).getString() \
         == "{ hero }"
@@ -65,7 +68,7 @@ def test_one_bad_address_anchors_nothing(bridge, doc):
 
 
 def test_an_anchor_holds_its_text_when_a_paragraph_above_it_goes(bridge, doc):
-    token = bridge.anchor({"paragraph": 3}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 3}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
     text = doc.getText()
 
     text.removeTextContent(text.createEnumeration().nextElement())
@@ -78,7 +81,7 @@ def test_an_anchor_holds_its_text_when_a_paragraph_above_it_goes(bridge, doc):
 
 
 def test_an_anchor_survives_a_replacement_made_through_it(bridge, doc):
-    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     result = bridge.replace_range({"anchor": token}, "Запрос", doc=doc)
 
@@ -89,7 +92,7 @@ def test_an_anchor_survives_a_replacement_made_through_it(bridge, doc):
 
 
 def test_an_anchor_whose_text_is_rewritten_elsewhere_refuses(bridge, doc):
-    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     bridge.replace_range({"paragraph": 1}, "Запрос", doc=doc)
 
@@ -98,7 +101,7 @@ def test_an_anchor_whose_text_is_rewritten_elsewhere_refuses(bridge, doc):
 
 
 def test_a_refusal_says_what_the_anchor_held(bridge, doc):
-    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
     bridge.replace_range({"paragraph": 1}, "Запрос", doc=doc)
 
     with pytest.raises(AddressError, match="Operation"):
@@ -112,14 +115,14 @@ def test_an_unknown_anchor_is_refused(bridge, doc):
 
 def test_an_anchor_of_another_document_is_refused(bridge, doc):
     other = writer_doc(["Другой документ"], caret=(0, 0))
-    token = bridge.anchor({"paragraph": 0}, doc=other)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 0}, doc=other)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     with pytest.raises(AddressError, match="another document"):
         bridge._resolve_address(doc, {"anchor": token})
 
 
 def test_an_anchor_takes_nothing_beside_it(bridge, doc):
-    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     with pytest.raises(AddressError, match="takes no"):
         bridge._resolve_address(doc, {"anchor": token, "offset": 2})
@@ -174,10 +177,10 @@ def test_dropping_named_anchors(bridge, doc):
     made = bridge.anchor([{"paragraph": 1}, {"paragraph": 3}],
                          doc=doc)["anchors"]
 
-    bridge.drop_anchors([made[0]["anchor"]], doc=doc)
+    bridge.drop_anchors([made[0]["address"]["anchor"]["anchorId"]], doc=doc)
 
-    assert [one["anchor"] for one in bridge.list_anchors(doc=doc)["anchors"]] \
-        == [made[1]["anchor"]]
+    assert [one["anchor"]["anchorId"] for one in bridge.list_anchors(doc=doc)["anchors"]] \
+        == [made[1]["address"]["anchor"]["anchorId"]]
 
 
 def test_dropping_an_anchor_that_is_not_there_is_refused(bridge, doc):
@@ -190,7 +193,7 @@ def test_dropping_an_anchor_that_is_not_there_is_refused(bridge, doc):
 def test_search_hands_back_an_anchor_per_hit(bridge, doc):
     found = bridge.find_text("Operation", anchors=True, doc=doc)
 
-    token = found["hits"][0]["anchor"]
+    token = found["hits"][0]["address"]["anchor"]["anchorId"]
     assert bridge._resolve_address(doc, {"anchor": token}).getString() \
         == "Operation"
 
@@ -205,7 +208,7 @@ def test_search_without_anchors_holds_nothing(bridge, doc):
 def test_reading_paragraphs_can_anchor_them(bridge, doc):
     read = bridge.read_paragraphs(start=1, count=2, anchors=True, doc=doc)
 
-    tokens = [entry["anchor"] for entry in read["paragraphs"]]
+    tokens = [entry["address"]["anchor"]["anchorId"] for entry in read["paragraphs"]]
     assert [bridge._resolve_address(doc, {"anchor": token}).getString()
             for token in tokens] == ["Operation", "{ hero }"]
 
@@ -213,10 +216,10 @@ def test_reading_paragraphs_can_anchor_them(bridge, doc):
 def test_the_oldest_anchors_are_let_go_when_too_many_are_held(bridge, doc,
                                                               monkeypatch):
     monkeypatch.setattr(uno_anchors, "MAX_ANCHORS", 3)
-    made = [bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["anchor"]
+    made = [bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
             for _ in range(4)]
 
-    held = [one["anchor"] for one in bridge.list_anchors(doc=doc)["anchors"]]
+    held = [one["anchor"]["anchorId"] for one in bridge.list_anchors(doc=doc)["anchors"]]
 
     assert made[0] not in held
     assert made[-1] in held
@@ -241,7 +244,7 @@ def test_an_address_in_a_cell_resolves_with_its_anchor_beside_it(bridge):
                      tables=[FakeTextTable("Table1",
                                            cells=[["Operation", "R2-D2"]])])
     in_cell = {"table": "Table1", "cell": "B1", "offset": 0, "length": 5}
-    token = bridge.anchor(in_cell, doc=doc)["anchors"][0]["anchor"]
+    token = bridge.anchor(in_cell, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
     handed_out = dict(in_cell, anchor=token)
 
@@ -257,7 +260,7 @@ def test_an_address_in_a_cell_resolves_with_its_anchor_beside_it(bridge):
 # else answered either.
 
 def many_anchors(bridge, doc, how_many):
-    return [bridge.anchor({"paragraph": index}, doc=doc)["anchors"][0]["anchor"]
+    return [bridge.anchor({"paragraph": index}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
             for index in range(how_many)]
 
 
@@ -332,3 +335,47 @@ def test_the_listing_carries_more_than_a_page_when_asked(bridge):
 
     assert (unasked["count"], unasked["more"]) == (DEFAULT_ANCHOR_REPORTS, True)
     assert (listed["count"], listed["more"]) == (how_many, False)
+
+
+# --- what an answer says about an anchor -----------------------------------
+#
+# A caller holding "anchor": "84b81c" could not tell a paragraph anchor from
+# one over a stretch of text, and the two take different things beside them:
+# only a paragraph anchor counts an offset and a length within itself. So a
+# result reports {"anchorId": …, "type": …}; an address still takes the id.
+
+def test_an_anchor_is_reported_with_its_kind(bridge, doc):
+    over_text = bridge.anchor({"paragraph": 1, "offset": 0, "length": 5},
+                              doc=doc)["anchors"][0]["address"]["anchor"]
+    read = bridge.read_paragraphs(start=1, count=1, doc=doc)["paragraphs"][0]
+
+    assert over_text["type"] == "text"
+    assert read["address"]["anchor"]["type"] == "paragraph"
+    assert set(over_text) == {"anchorId", "type"}
+
+
+def test_an_address_is_handed_back_exactly_as_it_came(bridge, doc):
+    read = bridge.read_paragraphs(start=1, count=1, doc=doc)["paragraphs"][0]
+
+    assert bridge._resolve_address(doc, read["address"]).getString() \
+        == PARAGRAPHS[1]
+
+
+def test_the_bare_id_is_still_an_address(bridge, doc):
+    # What ids were before the type came along, and what a caller writes by
+    # hand: the object is the usual form, not the only one.
+    handed_out = bridge.read_paragraphs(start=1, count=1,
+                                        doc=doc)["paragraphs"][0]["address"]
+
+    by_id = {"anchor": handed_out["anchor"]["anchorId"]}
+
+    assert bridge._resolve_address(doc, by_id).getString() == PARAGRAPHS[1]
+
+
+def test_the_listing_reports_the_kind_on_the_anchor_itself(bridge, doc):
+    bridge.anchor({"paragraph": 1}, doc=doc)
+
+    listed = bridge.list_anchors(doc=doc)["anchors"][0]
+
+    assert listed["anchor"]["type"] == "text"
+    assert "kind" not in listed

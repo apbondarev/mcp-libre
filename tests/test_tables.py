@@ -239,7 +239,8 @@ def test_the_selection_says_how_much_it_covers_and_hands_out_an_anchor(
     assert selected["paragraphs_selected"] == 2
     # No numbers: working one out walks the body. The anchor reads them all.
     assert "paragraphs" not in selected
-    assert selected["address"] == {"anchor": selected["anchor"]}
+    assert selected["address"]["anchor"]["type"] == "text"
+    assert "anchor" not in selected
     runs = bridge.read_runs(selected["address"], doc=selection_over_a_table)
     assert [run["text"] for run in runs["runs"]] == ["Попробуйте запрос:",
                                                       "После таблицы"]
@@ -293,7 +294,8 @@ def test_reading_runs_of_such_a_range_reads_them_all_and_names_the_table(
     assert [run["text"] for run in runs["runs"]] == ["Попробуйте запрос:",
                                                       "После таблицы"]
     assert runs["paragraphs_read"] == 2
-    assert len(runs["anchors"]) == 2
+    assert len({run["address"]["anchor"]["anchorId"]
+                for run in runs["runs"]}) == 2
     assert runs["spans_tables"] == [{"name": "Table1", "rows": 2,
                                      "columns": 2}]
     assert "read_table" in runs["note"]

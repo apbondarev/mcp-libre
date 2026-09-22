@@ -131,7 +131,7 @@ try:
     check("heading levels", [h["level"] for h in outline["headings"]], [1, 2])
     check("heading paragraphs", [h["paragraph"] for h in outline["headings"]], [0, 2])
     check("every heading is an address to work from",
-          all(isinstance(h["address"].get("anchor"), str)
+          all(h["address"].get("anchor", {}).get("type") == "paragraph"
               for h in outline["headings"]), True)
     # A long document has more headings than one call carries, and the rest
     # used to be unreachable: the outline stopped and said only "truncated".
@@ -200,8 +200,8 @@ try:
     first = dict(found["hits"][0]["address"])
     # A hit is handed out with the anchor that holds it, so that passing the
     # address back hits the same words however the paragraphs above it move.
-    check("first hit is anchored", isinstance(first.pop("anchor", None), str),
-          True)
+    check("first hit is anchored",
+          (first.pop("anchor", {}) or {}).get("type"), "text")
     check("first hit address", first, {"paragraph": 1, "offset": 0,
                                        "length": 5})
     check("and the anchor resolves to the hit",
@@ -1347,6 +1347,9 @@ try:
     check("the caret is reported without a number",
           (where["cursor"]["paragraph_index"],
            where["cursor"]["document_offset"]), (None, None))
+    check("the anchor says which kind it is, inside the address and nowhere else",
+          (where["address"]["anchor"]["type"], "anchor" in where),
+          ("paragraph", False))
     check("and with an anchor that names the paragraph it reported",
           bridge._resolve_address(doc, where["address"]).getString(),
           where["paragraph"]["text"])
@@ -1363,8 +1366,8 @@ try:
     through = bridge.read_runs(where["address"], doc=doc)
     check("the runs at the caret are read through its anchor",
           (through.get("success"), through.get("paragraph"),
-           through.get("address")),
-          (True, None, {"anchor": where["address"]["anchor"]}))
+           through["address"]["anchor"]["anchorId"]),
+          (True, None, where["address"]["anchor"]["anchorId"]))
     check("and every run of that read resolves through it too",
           [bridge._resolve_address(doc, run["address"]).getString()
            for run in through["runs"]],
@@ -1877,7 +1880,7 @@ try:
           (2, 2))
     check("and how many body paragraphs it covers, with an anchor over it all",
           (selected["paragraphs_selected"],
-           isinstance(selected.get("anchor"), str),
+           selected["address"]["anchor"]["type"] == "text",
            "paragraphs" in selected),
           (1, True, False))          # one paragraph, then the table
     check("the numbers still come when they are asked for",
@@ -1894,7 +1897,8 @@ try:
           (spread["paragraphs_selected"], spread["contains_table"]), (2, False))
     read = bridge.read_runs(spread["address"], doc=doc)
     check("and its anchor reads them both, each with an anchor of its own",
-          (read.get("paragraphs_read"), len(read.get("anchors") or []),
+          (read.get("paragraphs_read"),
+           len({run["address"]["anchor"]["anchorId"] for run in read["runs"]}),
            read.get("paragraph")),
           (2, 2, None))
     check("every run of it resolves through the anchor it came with",
@@ -2138,7 +2142,8 @@ try:
     held = bridge.anchor([{"paragraph": first}, {"paragraph": second}], doc=doc)
     print("   ", held)
     check("both places anchored", held.get("held"), 2)
-    one, two = [entry["anchor"] for entry in held["anchors"]]
+    one, two = [entry["address"]["anchor"]["anchorId"]
+                for entry in held["anchors"]]
     check("and each says what it holds",
           [entry["text"] for entry in held["anchors"]],
           ["ANCHOR-ONE", "ANCHOR-TWO"])
@@ -2151,7 +2156,8 @@ try:
           bridge._resolve_address(doc, {"anchor": one}).getString(),
           "ANCHOR-ONE")
     listed = bridge.list_anchors(doc=doc)
-    moved = [entry for entry in listed["anchors"] if entry["anchor"] == one][0]
+    moved = [entry for entry in listed["anchors"]
+             if entry["anchor"]["anchorId"] == one][0]
     check("and reports where it has moved to",
           moved["address"]["paragraph"], first - 1)
 
@@ -2171,7 +2177,7 @@ try:
         print("   refused:", e)
     check("an anchor whose text was rewritten past it refuses", stale, True)
     dead = [entry for entry in bridge.list_anchors(doc=doc)["anchors"]
-            if entry["anchor"] == two][0]
+            if entry["anchor"]["anchorId"] == two][0]
     check("and is listed as dead, saying what it held",
           (dead["alive"], dead["held_when_made"]), (False, "ANCHOR-TWO"))
 
@@ -2181,9 +2187,11 @@ try:
     # serves the whole call, and the paragraphs it reports have to be right
     # after the numbers move, which is what the halving search is for.
     read_back = bridge.read_paragraphs(start=0, count=20, doc=doc)["paragraphs"]
-    where = {entry["anchor"]: entry["paragraph"] for entry in read_back}
+    where = {entry["address"]["anchor"]["anchorId"]: entry["paragraph"]
+             for entry in read_back}
     listed = bridge.list_anchors(count=200, doc=doc)
-    placed = {entry["anchor"]: (entry.get("address") or {}).get("paragraph")
+    placed = {entry["anchor"]["anchorId"]:
+              (entry.get("address") or {}).get("paragraph")
               for entry in listed["anchors"]}
     check("every anchor a read handed out is placed where the read found it",
           all(placed.get(token) == index for token, index in where.items()),
@@ -2192,7 +2200,8 @@ try:
     moved_up = text.createTextCursorByRange(text.getStart())
     text.insertString(moved_up, "Pushed down.", False)
     text.insertControlCharacter(moved_up, PARAGRAPH_BREAK, False)
-    after = {entry["anchor"]: (entry.get("address") or {}).get("paragraph")
+    after = {entry["anchor"]["anchorId"]:
+             (entry.get("address") or {}).get("paragraph")
              for entry in bridge.list_anchors(count=200, doc=doc)["anchors"]}
     check("and each is one further down once a paragraph is put above them",
           all(after.get(token) == index + 1 for token, index in where.items()),
@@ -2205,14 +2214,14 @@ try:
     hits = bridge.find_text("ANCHOR-REWRITTEN", anchors=True, doc=doc)
     check("a search can hand back an anchor per hit",
           bridge._resolve_address(
-              doc, {"anchor": hits["hits"][0]["anchor"]}).getString(),
+              doc, hits["hits"][0]["address"]).getString(),
           "ANCHOR-REWRITTEN")
 
     table.getCellByName("A1").setString("ANCHOR-IN-CELL")
     in_cell = bridge.anchor({"table": table_name, "cell": "A1"}, doc=doc)
     check("a cell can be anchored too",
           bridge._resolve_address(
-              doc, {"anchor": in_cell["anchors"][0]["anchor"]}).getString(),
+              doc, in_cell["anchors"][0]["address"]).getString(),
           "ANCHOR-IN-CELL")
 
     # A cursor into a cell whose table is taken away is disposed, not merely
@@ -2225,7 +2234,7 @@ try:
     body.insertTextContent(end, doomed, False)
     doomed.getCellByName("A1").setString("WILL-VANISH")
     gone = bridge.anchor({"table": "AnchorTable", "cell": "A1"},
-                         doc=doc)["anchors"][0]["anchor"]
+                         doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
     body.removeTextContent(doomed)
     refused = None
     try:
@@ -2236,7 +2245,7 @@ try:
           refused is not None and "is gone" in refused, True)
     check("and list_anchors says the same without raising",
           [entry["alive"] for entry in bridge.list_anchors(doc=doc)["anchors"]
-           if entry["anchor"] == gone], [False])
+           if entry["anchor"]["anchorId"] == gone], [False])
 
     check("anchors are let go when asked",
           bridge.drop_anchors(doc=doc).get("count") >= 3, True)

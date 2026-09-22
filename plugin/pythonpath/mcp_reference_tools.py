@@ -37,7 +37,7 @@ class ReferenceTools:
                         "description": ADDRESS_SCOPE,
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -64,7 +64,7 @@ class ReferenceTools:
                         "description": ADDRESS_SCOPE,
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -102,7 +102,7 @@ class ReferenceTools:
                         "type": "object",
                         "description": "The paragraph to caption: {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -159,7 +159,7 @@ class ReferenceTools:
                         "type": "object",
                         "description": "Where the reference goes: {\"paragraph\": N, \"offset\": K, \"length\": 0} for a spot, {\"paragraph\": N, \"offset\": K, \"length\": L} to put it in place of that text, {\"anchor\": \"a7f3c1\"}, {\"table\": \"Table1\", \"cell\": \"A2\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

@@ -279,15 +279,16 @@ def test_the_caret_comes_back_as_an_anchor_that_names_its_paragraph(bridge):
 
     result = bridge.get_cursor_info(doc=doc)
 
-    token = result["address"]["anchor"]
-    assert result["anchor"] == token
-    assert bridge._resolve_address(doc, {"anchor": token}).getString() \
+    # The place is named once: inside the address, saying which kind it is.
+    assert result["address"]["anchor"]["type"] == "paragraph"
+    assert "anchor" not in result
+    assert bridge._resolve_address(doc, result["address"]).getString() \
         == PARAGRAPHS[2]
 
 
 def test_the_anchor_still_names_its_paragraph_after_one_is_put_above(bridge):
     doc = writer_doc(PARAGRAPHS, caret=(2, 4))
-    token = bridge.get_cursor_info(doc=doc)["anchor"]
+    token = bridge.get_cursor_info(doc=doc)["address"]["anchor"]
 
     bridge.split_paragraph({"paragraph": 0, "offset": 0, "length": 0}, doc=doc)
 
@@ -301,8 +302,8 @@ def test_the_number_comes_with_the_anchor_when_it_is_asked_for(bridge):
     result = bridge.get_cursor_info(number=True, doc=doc)
 
     assert result["cursor"]["paragraph_index"] == 2
-    assert result["address"] == {"paragraph": 2,
-                                 "anchor": result["anchor"]}
+    assert result["address"]["paragraph"] == 2
+    assert result["address"]["anchor"]["type"] == "paragraph"
     assert "note" not in result
 
 

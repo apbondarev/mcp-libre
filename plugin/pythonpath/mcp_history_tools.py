@@ -89,7 +89,7 @@ class HistoryTools:
                         "type": "object",
                         "description": "The paragraphs to turn into rows: {\"paragraph\": N, \"through\": M}, {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

@@ -147,10 +147,10 @@ class ReadingMixin:
                         # The paragraph itself, held with a cursor at its
                         # start — see uno_anchors for why both.
                         token = self._hold_paragraph_anchor(doc, element, total)
-                        entry["anchor"] = token
-                        entry["address"] = {"paragraph": total,
-                                            "anchor": token} if token \
-                            else {"paragraph": total}
+                        entry["address"] = {
+                            "paragraph": total,
+                            "anchor": self._anchor_handle(token, "paragraph")
+                        } if token else {"paragraph": total}
                     else:
                         entry["address"] = {"paragraph": total}
                     paragraphs.append(entry)
@@ -229,11 +229,10 @@ class ReadingMixin:
                         }
                         token = self._hold_paragraph_anchor(
                             doc, element, total) if anchors else None
-                        entry["address"] = {"paragraph": total,
-                                            "anchor": token} if token \
-                            else {"paragraph": total}
-                        if token:
-                            entry["anchor"] = token
+                        entry["address"] = {
+                            "paragraph": total,
+                            "anchor": self._anchor_handle(token, "paragraph")
+                        } if token else {"paragraph": total}
                         headings.append(entry)
                     else:
                         after += 1
@@ -458,11 +457,12 @@ class ReadingMixin:
             if anchors:
                 for hit, match in zip(hits, matches):
                     token = self._hold_anchor(doc, match)
-                    hit["anchor"] = token
                     if token and isinstance(hit.get("address"), dict):
-                        # Handed out inside the address, so passing the
-                        # address back is all it takes to use it.
-                        hit["address"] = dict(hit["address"], anchor=token)
+                        # Handed out inside the address and nowhere else, so
+                        # passing the address back is all it takes to use it.
+                        hit["address"] = dict(
+                            hit["address"],
+                            anchor=self._anchor_handle(token, "text"))
 
             if paragraphs_before or paragraphs_after:
                 wanted = set()

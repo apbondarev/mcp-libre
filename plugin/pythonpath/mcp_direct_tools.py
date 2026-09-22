@@ -28,7 +28,7 @@ class DirectTools:
                         "description": "Only inside this part of the document: {\"heading\": N} for a section, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, a range, or {\"selection\": true}",
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -60,7 +60,7 @@ class DirectTools:
                         "type": "object",
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -88,7 +88,7 @@ class DirectTools:
                         "type": "object",
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block, a range, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

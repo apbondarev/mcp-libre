@@ -128,9 +128,10 @@ class ViewMixin:
             held = (self._hold_paragraph_anchor(doc, standing, index)
                     if standing is not None else None)
             if held:
-                info["address"] = ({"paragraph": index, "anchor": held}
-                                   if index is not None else {"anchor": held})
-                info["anchor"] = held
+                handle = self._anchor_handle(held, "paragraph")
+                info["address"] = ({"paragraph": index, "anchor": handle}
+                                   if index is not None
+                                   else {"anchor": handle})
             if not counting:
                 info["note"] = ("the paragraph's number is not counted unless "
                                 "number: true asks for it — UNO gives none, so "
@@ -167,8 +168,8 @@ class ViewMixin:
                     selected["contains_table"] = bool(tables)
                     token = self._hold_anchor(doc, span)
                     if token:
-                        selected["address"] = {"anchor": token}
-                        selected["anchor"] = token
+                        selected["address"] = {
+                            "anchor": self._anchor_handle(token, "text")}
                     if counting:
                         selected["paragraphs"] = self._range_spans(
                             doc, span)["paragraphs"]

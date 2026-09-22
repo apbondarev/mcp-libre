@@ -23,7 +23,7 @@ class SectionTools:
                         "description": "Which sections: omit for the whole document, {\"heading\": N} for a section of the outline, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, a range, or {\"selection\": true}",
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -49,7 +49,7 @@ class SectionTools:
                         "type": "object",
                         "description": "What the section covers: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

@@ -163,7 +163,7 @@ class StyleWritingTools:
                         "description": "Only inside this part of the document: {\"heading\": N}, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, a range, or {\"selection\": true}",
                         "properties": {
                             "heading": {"type": "integer"},
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

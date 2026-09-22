@@ -25,7 +25,7 @@ class SurgeryTools:
                         "type": "object",
                         "description": "Where to cut: {\"paragraph\": N, \"offset\": K}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -55,7 +55,7 @@ class SurgeryTools:
                         "type": "object",
                         "description": BLOCK + ". One paragraph means \"join this one with the next\"",
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -86,7 +86,7 @@ class SurgeryTools:
                         "type": "object",
                         "description": BLOCK,
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -131,7 +131,7 @@ class SurgeryTools:
                         "type": "object",
                         "description": BLOCK,
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

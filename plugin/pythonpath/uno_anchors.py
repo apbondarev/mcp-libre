@@ -50,7 +50,7 @@ import logging
 import secrets
 
 from uno_values import (AddressError, CELL_SERVICE, MAX_ANCHORS,
-                        _get_property,
+                        _anchor_token, _get_property,
                         _supports, _text_payload)
 
 logger = logging.getLogger(__name__)
@@ -164,8 +164,26 @@ class AnchorsMixin:
             logger.info(f"Anchor {dropped} let go, {MAX_ANCHORS} is the limit")
         return token
 
+    def _anchor_handle(self, token: Optional[str],
+                       kind: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """An anchor as an answer shows it: its id and what kind it is.
+
+        A caller holding `"anchor": "84b81c"` could not tell a paragraph
+        anchor from one over a stretch of text, and the two take different
+        things beside them — only a paragraph anchor counts an `offset` and a
+        `length` within itself. An address still takes the **id**: this is
+        what a result reports, not what a tool accepts.
+        """
+        if not token:
+            return None
+        if kind is None:
+            entry = self._anchor_store().get(token) or {}
+            kind = entry.get("kind", "text")
+        return {"anchorId": token, "type": kind}
+
     def _anchor_entry(self, doc: Any, token: Any) -> Dict[str, Any]:
         """The registry entry for a token, or an AddressError saying why not"""
+        token = _anchor_token(token)
         if not isinstance(token, str) or not token:
             raise AddressError(f"anchor must be a token from a tool that "
                                f"hands them out, got {token!r}")
@@ -363,9 +381,9 @@ class AnchorsMixin:
         Without it every anchor reported here walked the body itself, twice:
         once to place it and once to read the paragraph it landed in.
         """
-        report: Dict[str, Any] = {"anchor": token,
-                                  "held_when_made": entry["held"],
-                                  "kind": entry.get("kind", "text")}
+        report: Dict[str, Any] = {
+            "anchor": self._anchor_handle(token, entry.get("kind", "text")),
+            "held_when_made": entry["held"]}
         if entry.get("kind") == "paragraph":
             try:
                 index = self.paragraph_now(doc, token, sweep)
@@ -455,9 +473,10 @@ class AnchorsMixin:
             # regions — six anchors on a 300-paragraph document took 2.0s.
             located, _, _ = self._locate_range(
                 doc, text_range, self._paragraph_hint(address, doc))
-            made.append({"anchor": token, "text": payload["text"],
+            made.append({"text": payload["text"],
                          "truncated": payload["truncated"],
-                         "address": located})
+                         "address": dict(located,
+                                         anchor=self._anchor_handle(token))})
 
         logger.info(f"Anchored {len(made)} place(s)")
         return {"success": True, "anchors": made, "held": len(made)}

@@ -157,8 +157,8 @@ def test_lists_headings_with_their_levels(bridge):
         {"paragraph": 2, "level": 2, "text": "Section A"},
     ]
     # Every entry is an address to read or edit from, anchored like the rest.
-    assert all(one["address"]["anchor"] == one["anchor"]
-               for one in result["headings"])
+    assert all(one["address"]["anchor"]["type"] == "paragraph"
+               and "anchor" not in one for one in result["headings"])
 
 
 def test_reports_the_paragraph_count_alongside_the_outline(bridge):

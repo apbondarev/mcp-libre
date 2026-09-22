@@ -27,7 +27,7 @@ class ReviewTools:
                         "type": "object",
                         "description": SCOPE,
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
@@ -66,7 +66,7 @@ class ReviewTools:
                         "type": "object",
                         "description": SCOPE,
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
@@ -106,7 +106,7 @@ class ReviewTools:
                         "type": "object",
                         "description": SCOPE,
                         "properties": {
-                            "anchor": {"type": "string"},
+                            "anchor": {"type": ["string", "object"]},
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},

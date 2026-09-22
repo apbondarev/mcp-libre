@@ -369,7 +369,7 @@ def test_and_can_still_be_asked_for_knowingly(bridge, block):
 
 def anchored(bridge, doc, paragraph=1):
     """The anchor get_cursor_info hands out for a paragraph."""
-    return bridge.anchor({"paragraph": paragraph}, doc=doc)["anchors"][0]["anchor"]
+    return bridge.anchor({"paragraph": paragraph}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 
 
 def test_runs_are_read_through_an_anchor_without_counting_paragraphs(

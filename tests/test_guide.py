@@ -32,7 +32,8 @@ NOT_TOOLS = {
     "unresolved", "authors", "reference", "link", "allow_protected",
     "from_style", "include_others", "text_before", "text_after",
     "text_with_formulas", "text", "formulas", "start", "through", "more", "held", "count", "paragraph",
-    "paragraphs_selected", "contains_table",
+    "paragraphs_selected", "contains_table", "length", "offset", "type",
+    "anchorId",
 }
 
 
