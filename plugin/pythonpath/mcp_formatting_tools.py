@@ -96,6 +96,7 @@ class FormattingTools:
                         "description": "Where to act: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -151,6 +152,7 @@ class FormattingTools:
                         "description": "Where to act: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -185,6 +187,7 @@ class FormattingTools:
                         "description": "Which paragraphs: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, or {\"selection\": true} — body text, not a table cell. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -265,6 +268,7 @@ class FormattingTools:
                         "description": "Whose style to describe: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. Only used when no name is given. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

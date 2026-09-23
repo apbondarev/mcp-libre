@@ -22,6 +22,7 @@ class NoteTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -53,6 +54,7 @@ class NoteTools:
                         "description": "What the note is about; the mark goes after it: {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"}, {\"table\": \"Table1\", \"cell\": \"A2\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -99,6 +101,7 @@ class NoteTools:
                         "description": "Where the note's mark sits, as list_notes_live reports it",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -139,6 +142,7 @@ class NoteTools:
                         "description": "Where the note's mark sits, as list_notes_live reports it",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

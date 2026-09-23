@@ -2416,17 +2416,33 @@ try:
           [one["name"] for one in listed["bookmarks"]], ["Метка", "Точка"])
     check("each with the address of what it covers",
           listed["bookmarks"][0]["address"]["length"], 12)
-    # Placing them by number is a sweep of the body; the anchors are not.
+    # Placing them by number is a sweep of the body. A bookmark needs no
+    # placing at all: it *is* an address, kept by the document rather than by
+    # this session, so the fast listing names each as itself and holds
+    # nothing — where 195 bookmarks of a real guide used to take 195 of the
+    # 2000 anchors the store keeps.
     fast = bridge.list_bookmarks({"paragraph": where}, doc=doc)
-    check("and the fast listing places them by anchor alone",
-          ([one["address"]["anchor"]["type"] for one in fast["bookmarks"]],
-           all("paragraph" not in one["address"]
-               for one in fast["bookmarks"])),
-          (["text", "text"], True))
-    check("each anchor resolving to what its bookmark covers",
+    check("and the fast listing names each bookmark as itself",
+          [one["address"] for one in fast["bookmarks"]],
+          [{"bookmark": "Метка"}, {"bookmark": "Точка"}])
+    check("each address resolving to what its bookmark covers",
           [bridge._resolve_address(doc, one["address"]).getString()
            for one in fast["bookmarks"]],
           [one["text"] for one in fast["bookmarks"]])
+    check("and a name no bookmark has is refused",
+          _refused(bridge, doc, {"bookmark": "Нетакой"}), True)
+    check("a bookmark covers its own stretch, so it takes no offset",
+          _refused(bridge, doc, {"bookmark": "Метка", "offset": 2}), True)
+    # The number a bookmark sat on moves; its name does not.
+    opener = body.createTextCursorByRange(body.getStart())
+    body.insertString(opener, "Вставленная строка", False)
+    body.insertControlCharacter(opener, PARAGRAPH_BREAK, False)
+    check("a bookmark address outlives a paragraph inserted above it",
+          bridge._resolve_address(doc, {"bookmark": "Метка"}).getString(),
+          "МЕТКА-СТРОКА")
+    body.removeTextContent(bridge._paragraph_at(body, 0))
+    where = bridge.read_paragraphs(start=0, count=1,
+                                   doc=doc)["total_paragraphs"] - 1
 
     check("renaming leaves it where it is",
           bridge.rename_bookmark("Метка", "Метка-2", doc=doc).get("success"),

@@ -754,7 +754,12 @@ class FakeText:
             return
         if hasattr(content, "getName") and hasattr(content, "setName") \
                 and not hasattr(content, "getCellNames"):
-            content._anchor = FakeRange(self, text_range.start, text_range.end)
+            # A bookmark's anchor is held by the document and moves with its
+            # text — measured on a real Writer, where a paragraph removed
+            # above it leaves it covering the same words. A fixed range stood
+            # still and made the name look as stale as the number it replaced.
+            content._anchor = self.createTextCursorByRange(
+                FakeRange(self, text_range.start, text_range.end))
             if hasattr(self, "bookmarks"):
                 self.bookmarks.append(content)
             return

@@ -128,6 +128,7 @@ class TextTools:
                         "description": "Where to set the language: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -158,6 +159,7 @@ class TextTools:
                         "description": "Which part of the document to check: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"heading\": N} for a section, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"selection\": true}, or an anchor as {\"anchor\": \"a7f3c1\"} — the address get_cursor_info, find_text or read_paragraphs handed back, which goes on naming the same text after edits have renumbered the paragraphs. A scoped check costs the paragraphs it reads and no walk of the document. Omit to check the whole document, which on a 519-page guide is 45 seconds",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -194,6 +196,7 @@ class TextTools:
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. Best of all, the `address` another answer handed back, passed through as it came: it carries an anchor — {\"anchor\": {\"anchorId\": \"a7f3c1\", \"type\": \"paragraph\"}} — which goes on naming the same text after edits have renumbered the paragraphs. A `paragraph` anchor takes an `offset` and a `length` counted inside its paragraph; a `text` anchor covers exactly its own stretch and takes neither. The bare id ({\"anchor\": \"a7f3c1\"}) is accepted too",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -220,6 +223,7 @@ class TextTools:
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

@@ -19,6 +19,7 @@ class ReadingTools:
                         "description": "What to select: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L}, or {\"table\": \"Table1\", \"cell\": \"A2\"}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

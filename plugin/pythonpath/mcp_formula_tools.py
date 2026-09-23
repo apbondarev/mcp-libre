@@ -15,6 +15,7 @@ STARMATH = ("The formula in StarMath, LibreOffice Math's own notation: "
 
 ADDRESS_PARTS = {
     "anchor": {"type": ["string", "object"]},
+    "bookmark": {"type": "string"},
     "heading": {"type": "integer"},
     "paragraph": {"type": "integer"},
     "through": {"type": "integer"},

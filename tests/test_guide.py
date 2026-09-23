@@ -61,7 +61,7 @@ def test_every_tool_the_guide_names_is_a_tool_this_server_has(tools):
 
 def test_the_guide_covers_every_form_an_address_takes():
     for form in ('"paragraph"', '"through"', '"table"', '"cell"',
-                 '"selection"', '"anchor"'):
+                 '"selection"', '"anchor"', '"bookmark"'):
         assert form in INSTRUCTIONS, f"{form} is not explained"
 
 

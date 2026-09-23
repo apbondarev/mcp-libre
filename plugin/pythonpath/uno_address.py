@@ -27,10 +27,11 @@ class AddressMixin:
         text, where offset defaults to 0 and an omitted length means the rest
         of the paragraph; {"paragraph": i, "through": j} for whole paragraphs;
         {"table": "Table1", "cell": "A1", …} inside a table; {"selection":
-        true} for the current selection; or {"anchor": "a7f3c1"}, which names
-        a place held from an earlier call and keeps pointing at it however
-        the paragraphs around it move. Raises AddressError for anything it
-        cannot resolve.
+        true} for the current selection; {"anchor": "a7f3c1"}, which names a
+        place held from an earlier call and keeps pointing at it however the
+        paragraphs around it move; or {"bookmark": "name"}, which is the same
+        idea kept by the document instead of by this session. Raises
+        AddressError for anything it cannot resolve.
 
         A collapsed selection resolves to an empty range rather than an error:
         inserting at a caret is legitimate, so callers needing actual content
@@ -75,6 +76,14 @@ class AddressMixin:
                     "takes no 'offset' or 'length' beside it")
             return self._anchor_range(doc, token)
 
+        if "bookmark" in address:
+            # A bookmark is the document's own anchor: it is saved in the
+            # file, survives a rewrite of the very text it covers, shows in
+            # the Navigator, and costs two UNO calls to resolve — where a
+            # session anchor has to be held, one per item, out of a store
+            # that a single listing of 195 bookmarks filled a tenth of.
+            return self._bookmark_range(doc, address)
+
         if address.get("selection"):
             controller = doc.getCurrentController()
             if not controller:
@@ -101,7 +110,7 @@ class AddressMixin:
 
         if "paragraph" not in address:
             raise AddressError("address needs 'paragraph', 'cell', "
-                               "'selection' or 'anchor'")
+                               "'selection', 'anchor' or 'bookmark'")
 
         if address.get("through") is not None:
             return self._resolve_block(doc, address)
@@ -113,6 +122,32 @@ class AddressMixin:
         return self._within_paragraph(paragraph, address.get("offset", 0),
                                       address.get("length"),
                                       f"paragraph {address['paragraph']}")
+
+    def _bookmark_range(self, doc: Any, address: Dict[str, Any]) -> Any:
+        """The range a bookmark covers, named by the document itself"""
+        name = address.get("bookmark")
+        if not isinstance(name, str) or not name.strip():
+            raise AddressError("'bookmark' must be the name of a bookmark, "
+                               "as list_bookmarks reports it")
+        name = name.strip()
+        if "selection" in address:
+            raise AddressError("a bookmark already says where: it takes no "
+                               "'selection' beside it")
+        if "offset" in address or "length" in address:
+            raise AddressError(
+                "a bookmark already covers exactly its stretch: it takes no "
+                "'offset' or 'length' beside it")
+        try:
+            marks = doc.getBookmarks()
+            if not marks.hasByName(name):
+                raise AddressError(
+                    f"this document has no bookmark called {name!r}; "
+                    f"list_bookmarks says which it has")
+            return marks.getByName(name).getAnchor()
+        except AddressError:
+            raise
+        except Exception as e:
+            raise AddressError(f"could not reach bookmark {name!r}: {e}")
 
     def _within_paragraph(self, paragraph: Any, offset: Any, length: Any,
                           named: str) -> Any:

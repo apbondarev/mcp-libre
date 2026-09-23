@@ -15,7 +15,7 @@ from tests.uno_stubs import install_uno_stubs
 
 install_uno_stubs()
 
-from uno_bridge import UNOBridge  # noqa: E402
+from uno_bridge import AddressError, UNOBridge  # noqa: E402
 
 PARAGRAPHS = ["Введение", "query is the entry point", "Конец"]
 
@@ -37,7 +37,9 @@ def test_a_bookmark_covers_the_text_it_was_put_on(bridge, doc):
     assert made["success"] is True
     assert made["name"] == "запрос"
     assert made["text"] == "query"
-    assert made["address"]["paragraph"] == 1
+    # A bookmark names itself: the document keeps the place, so there is no
+    # number to work out and no session anchor to hold.
+    assert made["address"] == {"bookmark": "запрос"}
     assert made["is_a_point"] is False
 
 
@@ -150,8 +152,7 @@ def test_bookmarks_are_placed_by_anchors_without_counting_paragraphs(
     listed = bridge.list_bookmarks(doc=doc)
 
     one, = [item for item in listed["bookmarks"] if item["name"] == "середина"]
-    assert one["address"]["anchor"]["type"] == "text"
-    assert "paragraph" not in one["address"]
+    assert one["address"] == {"bookmark": "середина"}
     assert bridge._resolve_address(doc, one["address"]).getString() \
         == one["text"]
 
@@ -164,7 +165,7 @@ def test_the_numbers_come_when_they_are_asked_for(bridge, doc):
             if item["name"] == "середина"]
 
     assert one["address"]["paragraph"] == 1
-    assert one["address"]["anchor"]["type"] == "text"
+    assert one["address"]["bookmark"] == "середина"
 
 
 def test_a_scoped_listing_needs_no_numbers_either(bridge, doc,
@@ -180,3 +181,64 @@ def test_a_scoped_listing_needs_no_numbers_either(bridge, doc,
     listed = bridge.list_bookmarks(address={"paragraph": 2}, doc=doc)
 
     assert [one["name"] for one in listed["bookmarks"]] == ["третья"]
+
+
+# A bookmark is an address, and the one address the *document* keeps. It costs
+# two UNO calls to resolve, where a session anchor has to be held one per item
+# out of a store a single listing of 195 filled a tenth of.
+
+def test_a_bookmark_is_an_address(bridge, doc):
+    bridge.add_bookmark({"paragraph": 1, "offset": 0, "length": 5}, "запрос",
+                        doc=doc)
+
+    assert bridge._resolve_address(doc, {"bookmark": "запрос"}).getString() \
+        == "query"
+
+
+def test_a_bookmark_address_survives_the_paragraphs_moving(bridge, doc):
+    bridge.add_bookmark({"paragraph": 1, "offset": 0, "length": 5}, "запрос",
+                        doc=doc)
+    text = doc.getText()
+    text.removeTextContent(text.createEnumeration().nextElement())
+
+    # The number it was on names another paragraph now; the name does not.
+    assert bridge._resolve_address(doc, {"bookmark": "запрос"}).getString() \
+        == "query"
+
+
+def test_a_bookmark_address_reaches_the_tools(bridge, doc):
+    bridge.add_bookmark({"paragraph": 1, "offset": 0, "length": 5}, "запрос",
+                        doc=doc)
+
+    bridge.replace_range({"bookmark": "запрос"}, "запрос", doc=doc)
+
+    assert bridge.read_paragraphs(start=1, count=1,
+                                  doc=doc)["paragraphs"][0]["text"] \
+        == "запрос is the entry point"
+
+
+def test_a_name_no_bookmark_has_is_refused_by_name(bridge, doc):
+    with pytest.raises(AddressError, match="list_bookmarks"):
+        bridge._resolve_address(doc, {"bookmark": "нетакой"})
+
+
+def test_a_bookmark_covers_its_own_stretch_and_takes_no_offset(bridge, doc):
+    bridge.add_bookmark({"paragraph": 1, "offset": 0, "length": 5}, "запрос",
+                        doc=doc)
+
+    with pytest.raises(AddressError, match="offset"):
+        bridge._resolve_address(doc, {"bookmark": "запрос", "offset": 2})
+
+
+def test_the_listing_holds_no_anchors_at_all(bridge, doc, monkeypatch):
+    bridge.add_bookmark({"paragraph": 1}, "строка", doc=doc)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("list_bookmarks held a session anchor")
+
+    monkeypatch.setattr(bridge, "_hold_anchor", refuse)
+
+    listed = bridge.list_bookmarks(doc=doc)
+
+    assert [one["address"] for one in listed["bookmarks"]] \
+        == [{"bookmark": "строка"}]

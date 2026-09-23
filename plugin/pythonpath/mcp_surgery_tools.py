@@ -26,6 +26,7 @@ class SurgeryTools:
                         "description": "Where to cut: {\"paragraph\": N, \"offset\": K}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -56,6 +57,7 @@ class SurgeryTools:
                         "description": BLOCK + ". One paragraph means \"join this one with the next\"",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -87,6 +89,7 @@ class SurgeryTools:
                         "description": BLOCK,
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -132,6 +135,7 @@ class SurgeryTools:
                         "description": BLOCK,
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

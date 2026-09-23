@@ -40,6 +40,7 @@ class IndexTools:
                         "description": "The index goes before this paragraph: {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -141,6 +142,7 @@ class IndexTools:
                         "description": "The text to mark: {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"paragraph\": N}, {\"anchor\": \"a7f3c1\"}, {\"table\": \"Table1\", \"cell\": \"A2\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},

@@ -44,18 +44,22 @@ class BookmarksMixin:
                            text: Any = None) -> Dict[str, Any]:
         """A bookmark as a caller sees it: its name, what it covers, where.
 
-        The address is taken from the caller when it has already been worked
-        out — placing one anchor walks the body, so a list of them is placed
-        in a single sweep instead (see `list_bookmarks`). So are the anchor
-        and its text: a listing holds both already, and asking the bookmark
-        for them again is two UNO calls per bookmark for nothing.
+        The address is `{"bookmark": name}` — the document's own handle on
+        the place, which every tool takes and which no edit above it moves.
+        A caller that has worked out more (the paragraph numbers, under
+        `number`) passes that instead, and so it does the anchor and its
+        text: a listing holds both already, and asking the bookmark for them
+        again is two UNO calls per bookmark for nothing.
         """
         described = {"name": name}
         try:
             if anchor is None:
                 anchor = mark.getAnchor()
             if address == "unplaced":
-                address, _, _ = self._locate_range(doc, anchor)
+                # The bookmark names itself, so there is nothing to work out:
+                # numbering it would walk the body for an address the
+                # document already has a better name for.
+                address = {"bookmark": name}
             payload = _text_payload(anchor.getString() if text is None
                                     else text)
             described["address"] = address
@@ -77,11 +81,15 @@ class BookmarksMixin:
         A bookmark over a range reports that text; one set at a caret reports
         nothing and says so in `is_a_point`. Scoped like the comments.
 
-        Each is placed by an **anchor** it is held with, not by a paragraph
-        number: a number is a sweep of the body — two UNO calls for every
-        paragraph of the document — and 195 bookmarks of a real guide cost
-        20 seconds to number and 0.4 to anchor. `number: true` works them out
-        as well, for showing a human where things are.
+        Each is addressed as **itself** — `{"bookmark": "name"}` — which
+        every tool takes: a bookmark is the document's own handle on a place,
+        saved in the file and proof against a rewrite of the text it covers,
+        so holding a session anchor beside it was work and state for nothing.
+        A paragraph number is a sweep of the body (two UNO calls for every
+        paragraph of the document): 195 bookmarks of a real guide cost 20
+        seconds to number, 0.4 to anchor and nothing at all to name.
+        `number: true` works the numbers out as well, for showing a human
+        where things are.
         """
         doc, error = self._writer_document(doc, "Listing bookmarks")
         if error:
@@ -117,21 +125,17 @@ class BookmarksMixin:
 
         found = []
         for name, mark, located, anchor in zip(names, marked, placed, anchors):
-            # The text is read once and spent twice: on the anchor that is
-            # held and on the bookmark that is described.
             try:
                 text = anchor.getString()
             except Exception as e:
                 logger.info(f"Could not read what bookmark {name} covers: {e}")
                 text = None
-            held = self._anchor_handle(
-                self._hold_anchor(doc, anchor, known=text), "text")
             if number:
                 if not covers(located):
                     continue
-                located = dict(located or {}, anchor=held)
+                located = dict(located or {}, bookmark=name)
             else:
-                located = {"anchor": held}
+                located = {"bookmark": name}
             found.append(self._describe_bookmark(doc, name, mark,
                                                  address=located,
                                                  anchor=anchor, text=text))

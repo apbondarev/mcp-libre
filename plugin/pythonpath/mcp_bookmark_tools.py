@@ -11,6 +11,7 @@ DOCUMENT = ("URL of the document to act on, from list_open_documents; "
 
 ADDRESS_PARTS = {
     "anchor": {"type": ["string", "object"]},
+    "bookmark": {"type": "string"},
     "heading": {"type": "integer"},
     "paragraph": {"type": "integer"},
     "through": {"type": "integer"},

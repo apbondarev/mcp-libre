@@ -164,6 +164,7 @@ class StyleWritingTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

@@ -23,6 +23,7 @@ class LinkTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -50,6 +51,7 @@ class LinkTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

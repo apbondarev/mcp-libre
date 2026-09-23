@@ -29,6 +29,7 @@ class DirectTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -66,6 +67,7 @@ class DirectTools:
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"offset\": K, \"length\": L}, {\"table\": \"Table1\", \"cell\": \"A2\"}, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -99,6 +101,7 @@ class DirectTools:
                         "description": "Which text: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block, a range, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

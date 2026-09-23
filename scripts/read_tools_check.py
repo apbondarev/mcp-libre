@@ -17,9 +17,10 @@ exit:
   * an address a tool hands out resolves: it is read back with read_runs,
     which refuses anything it cannot reach.
 
-Beside that it reports, for each tool, whether its addresses carry an
-**anchor** — which is how a caller acts on them after edits have renumbered
-the document — so the column is also the progress of that work.
+Beside that it reports, for each tool, whether its addresses are named in a
+way that survives an edit — an **anchor**, or a **bookmark**, which is the
+document's own handle on a place — so the column is also the progress of that
+work.
 
     python3 scripts/read_tools_check.py
     python3 scripts/read_tools_check.py --document file:///home/me/Doc.odt
@@ -231,8 +232,12 @@ def check(client, name, named, ground, resolve):
     if name in NO_ADDRESS or not addresses:
         row["anchors"] = "—"
     else:
+        # A bookmark is an address of its own — the document's own handle on
+        # a place, which outlives the session an anchor belongs to — so it
+        # counts here as named, not as missing an anchor.
         anchored = [one for one in addresses
-                    if isinstance(one.get("anchor"), dict)]
+                    if isinstance(one.get("anchor"), dict)
+                    or isinstance(one.get("bookmark"), str)]
         row["anchors"] = ("all" if len(anchored) == len(addresses)
                           else f"{len(anchored)}/{len(addresses)}")
         if resolve and anchored:

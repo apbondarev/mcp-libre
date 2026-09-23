@@ -24,6 +24,7 @@ class SectionTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},
@@ -55,6 +56,7 @@ class SectionTools:
                         "description": "What the section covers: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block, {\"anchor\": \"a7f3c1\"} or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
                             "offset": {"type": "integer"},

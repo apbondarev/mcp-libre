@@ -24,6 +24,7 @@ class CommentTools:
                         "properties": {
                             "heading": {"type": "integer"},
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -57,6 +58,7 @@ class CommentTools:
                         "description": "Which text the comment is about: {\"paragraph\": N}, {\"paragraph\": N, \"through\": M} for a block of whole paragraphs, {\"paragraph\": N, \"offset\": K, \"length\": L} for part of one, {\"table\": \"Table1\", \"cell\": \"A2\"} for a table cell, or {\"selection\": true}. An anchor from anchor or from find_text/read_paragraphs with anchors: true can be given instead, as {\"anchor\": \"a7f3c1\"} — it keeps pointing at the same text after edits have renumbered the paragraphs",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "paragraph": {"type": "integer"},
                             "offset": {"type": "integer"},
                             "length": {"type": "integer"},
@@ -142,6 +144,7 @@ class CommentTools:
                         "description": "Delete the comments of a part of the document: {\"heading\": N}, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, a range, or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},
@@ -187,6 +190,7 @@ class CommentTools:
                         "description": "The comments of a part of the document: {\"heading\": N}, {\"paragraph\": N}, {\"paragraph\": N, \"through\": M}, a range, or {\"selection\": true}",
                         "properties": {
                             "anchor": {"type": ["string", "object"]},
+                            "bookmark": {"type": "string"},
                             "heading": {"type": "integer"},
                             "paragraph": {"type": "integer"},
                             "through": {"type": "integer"},

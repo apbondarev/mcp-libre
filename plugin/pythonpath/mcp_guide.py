@@ -26,7 +26,7 @@ having no document to be pointed at.
 
 ## Addressing
 
-A place in a document is named in one of five ways:
+A place in a document is named in one of six ways:
 
 ```
 {"paragraph": 7}                           a whole body paragraph
@@ -35,11 +35,15 @@ A place in a document is named in one of five ways:
 {"table": "Table1", "cell": "A2"}          a cell; offsets count its own text
 {"selection": true}                        what the reader has selected
 {"anchor": "a7f3c1"}                       a place held from an earlier call
+{"bookmark": "intro"}                      a place the document itself keeps
 ```
 
 Paragraph numbers count body paragraphs and skip tables — and they move with
 every insertion or deletion above them. An anchor does not: it points at the
-text itself. **Address by anchor wherever you can.** `find_text`,
+text itself. A **bookmark** is the same promise kept by the document rather
+than by this session: `list_bookmarks` names each as `{"bookmark": "name"}`,
+`add_bookmark` leaves one anywhere, and it survives saving, reopening and a
+rewrite of the very words it covers. **Address by anchor wherever you can.** `find_text`,
 `read_paragraphs` and `read_runs` hand out addresses that already carry one,
 so the habit costs nothing: pass the address back **as it came**, whole, and
 the anchor decides where the edit lands while the numbers beside it are only
