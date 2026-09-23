@@ -40,19 +40,24 @@ class BookmarksMixin:
             return None
 
     def _describe_bookmark(self, doc: Any, name: str, mark: Any,
-                           address: Any = "unplaced") -> Dict[str, Any]:
+                           address: Any = "unplaced", anchor: Any = None,
+                           text: Any = None) -> Dict[str, Any]:
         """A bookmark as a caller sees it: its name, what it covers, where.
 
         The address is taken from the caller when it has already been worked
         out — placing one anchor walks the body, so a list of them is placed
-        in a single sweep instead (see `list_bookmarks`).
+        in a single sweep instead (see `list_bookmarks`). So are the anchor
+        and its text: a listing holds both already, and asking the bookmark
+        for them again is two UNO calls per bookmark for nothing.
         """
         described = {"name": name}
         try:
-            anchor = mark.getAnchor()
+            if anchor is None:
+                anchor = mark.getAnchor()
             if address == "unplaced":
                 address, _, _ = self._locate_range(doc, anchor)
-            payload = _text_payload(anchor.getString())
+            payload = _text_payload(anchor.getString() if text is None
+                                    else text)
             described["address"] = address
             described["text"] = payload["text"]
             described["truncated"] = payload["truncated"]
@@ -112,16 +117,24 @@ class BookmarksMixin:
 
         found = []
         for name, mark, located, anchor in zip(names, marked, placed, anchors):
-            held = self._anchor_handle(self._hold_anchor(doc, anchor), "text")
+            # The text is read once and spent twice: on the anchor that is
+            # held and on the bookmark that is described.
+            try:
+                text = anchor.getString()
+            except Exception as e:
+                logger.info(f"Could not read what bookmark {name} covers: {e}")
+                text = None
+            held = self._anchor_handle(
+                self._hold_anchor(doc, anchor, known=text), "text")
             if number:
                 if not covers(located):
                     continue
                 located = dict(located or {}, anchor=held)
             else:
                 located = {"anchor": held}
-            described = self._describe_bookmark(doc, name, mark,
-                                                address=located)
-            found.append(described)
+            found.append(self._describe_bookmark(doc, name, mark,
+                                                 address=located,
+                                                 anchor=anchor, text=text))
         # A bookmark in a table cell has no body paragraph, so it sorts
         # after the ones that do, by table and cell — as the comments do.
         def where(one):

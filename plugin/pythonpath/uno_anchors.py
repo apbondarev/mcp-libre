@@ -97,21 +97,33 @@ class AnchorsMixin:
         except Exception:
             return "url:"
 
-    def _hold_anchor(self, doc: Any, text_range: Any) -> Optional[str]:
+    def _hold_anchor(self, doc: Any, text_range: Any,
+                     known: Optional[str] = None) -> Optional[str]:
         """Keep a cursor over a range and return the token naming it.
 
         None when the range cannot be held, which is not worth failing a
         search over — the hit still carries its address.
+
+        Every call here crosses the bridge, and a listing holds one anchor per
+        item: 195 bookmarks of a real guide spent 0.194s of a 0.31s call in
+        this method alone. It used to read three strings — the cursor's, the
+        range's, and the cursor's again to remember it — where one is enough,
+        and `known` is the range's string for a caller that has already read
+        it, which the listings have.
         """
+        held = ""
         try:
             owner = text_range.getText()
             cursor = owner.createTextCursorByRange(text_range)
-            if cursor.getString() != text_range.getString():
+            held = cursor.getString()
+            same = text_range.getString() if known is None else known
+            if held != same:
                 # The object getSelection() hands back is not always accepted
                 # whole; walking from its start to its end is the form that
                 # always is — the same trick a comment's anchor needs.
                 cursor = owner.createTextCursorByRange(text_range.getStart())
                 cursor.gotoRange(text_range.getEnd(), True)
+                held = cursor.getString()
         except Exception as e:
             logger.info(f"Could not hold an anchor: {e}")
             return None
@@ -120,10 +132,6 @@ class AnchorsMixin:
         token = secrets.token_hex(3)
         while token in store:
             token = secrets.token_hex(3)
-        try:
-            held = cursor.getString()
-        except Exception:
-            held = ""
         store[token] = {"cursor": cursor,
                         "document": self._document_key(doc),
                         "held": held,
