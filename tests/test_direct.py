@@ -116,6 +116,40 @@ def test_a_paragraph_wearing_only_its_style_has_nothing_over_it(bridge, doc):
     assert direct["paragraph_style"] == "Preformatted Text"
 
 
+# Asking what is formatted at one place used to walk the body twice: once to
+# number the paragraph, once to reach the paragraph of that number so its own
+# formatting could be read. 6.8s at paragraph 4069 of a real guide.
+
+def test_what_is_formatted_here_is_read_without_counting(bridge, doc,
+                                                         monkeypatch):
+    bridge.format_range({"paragraph": 2}, bold=True, doc=doc)
+    held = bridge.anchor({"paragraph": 2}, doc=doc)["anchors"][0]["address"]
+
+    def refuse(*arguments, **named):
+        raise AssertionError("get_direct_formatting counted the paragraphs")
+
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+    monkeypatch.setattr(bridge, "_paragraph_at", refuse)
+
+    direct = bridge.get_direct_formatting(held, doc=doc)
+
+    # The paragraph's own formatting is still read — it comes from the cursor
+    # that spans the paragraph, not from a walk to its number.
+    assert direct["character"]["bold"]["where"] == "paragraph"
+    assert direct["paragraph"] is None
+    assert direct["address"]["anchor"]["type"] == "text"
+    assert bridge._resolve_address(doc, direct["address"]).getString() \
+        == direct["text"]
+
+
+def test_the_number_comes_when_it_is_asked_for(bridge, doc):
+    direct = bridge.get_direct_formatting({"paragraph": 2}, number=True,
+                                          doc=doc)
+
+    assert direct["paragraph"] == 2
+    assert direct["address"]["paragraph"] == 2
+
+
 def test_a_range_whose_parts_differ_says_so(bridge, doc):
     bridge.format_range({"paragraph": 1, "offset": 0, "length": 7}, bold=True,
                         doc=doc)

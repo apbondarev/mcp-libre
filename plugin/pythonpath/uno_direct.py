@@ -225,7 +225,7 @@ class DirectFormattingMixin:
 
     # ---- what is applied over the style ------------------------------
 
-    def get_direct_formatting(self, address: Any,
+    def get_direct_formatting(self, address: Any, number: bool = False,
                               doc: Any = None) -> Dict[str, Any]:
         """
         What is formatted by hand over the styles, at an address
@@ -233,40 +233,62 @@ class DirectFormattingMixin:
         This is what makes a document look inconsistent, and what a clean-up
         takes off. Reported separately for the characters and for the
         paragraph, since the two are cleared separately.
+
+        **It used to walk the body twice** for a question about one place:
+        once to work out the paragraph's number, and once again to reach the
+        paragraph *of* that number so its own formatting could be read.
+        Measured on the 519-page guide: 0.05s at paragraph 20, 3.5s at 4000
+        and 6.8s through an anchor at 4069 — the cost being where the place
+        sits, not what is formatted there. The range names its own paragraph
+        (`_locate_range` builds a cursor over it whatever else it does), so
+        neither walk is needed; what comes back instead is `address` with an
+        anchor, and `number: true` counts the index for a caller that wants
+        it.
         """
         doc, error = self._writer_document(doc, "Reading direct formatting")
         if error:
             return error
         try:
             target = self._resolve_address(doc, address)
-            located, cursor, _ = self._locate_range(
-                doc, target, self._paragraph_hint(address, doc))
+            located, paragraph_cursor, _ = self._locate_range(
+                doc, target,
+                self._paragraph_hint(address, doc) if number else None,
+                find_paragraph=bool(number))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
         character = self._direct_on(target, DIRECT_CHARACTER)
         paragraph = {}
-        index = located.get("paragraph")
-        if index is not None:
-            element = self._paragraph_at(doc.getText(), index)
-            if element is not None:
-                paragraph = self._direct_on(element, DIRECT_PARAGRAPH,
-                                            where="paragraph")
-                # Character formatting applied to a whole paragraph lives on
-                # the paragraph, where the range reports nothing — measured.
-                for name, entry in self._direct_on(
-                        element, DIRECT_CHARACTER,
-                        where="paragraph").items():
-                    character.setdefault(name, entry)
+        # The paragraph the range starts in, from the cursor that already
+        # spans it — where reaching it by number is a walk, and a paragraph
+        # in a table cell has no number to reach it by at all.
+        element = self._paragraph_from(paragraph_cursor)
+        if element is not None:
+            paragraph = self._direct_on(element, DIRECT_PARAGRAPH,
+                                        where="paragraph")
+            # Character formatting applied to a whole paragraph lives on
+            # the paragraph, where the range reports nothing — measured.
+            for name, entry in self._direct_on(
+                    element, DIRECT_CHARACTER, where="paragraph").items():
+                character.setdefault(name, entry)
 
-        return {"success": True,
-                "paragraph": index,
-                "paragraph_style": _get_property(target, "ParaStyleName", None),
-                "character_style": _get_property(target, "CharStyleName", None)
-                or None,
-                "character": character, "paragraph_formatting": paragraph,
-                "count": len(character) + len(paragraph),
-                "text": _text_payload(target.getString())["text"]}
+        answer = {"success": True,
+                  "paragraph": located.get("paragraph"),
+                  "paragraph_style": _get_property(target, "ParaStyleName",
+                                                   None),
+                  "character_style": _get_property(target, "CharStyleName",
+                                                   None) or None,
+                  "character": character, "paragraph_formatting": paragraph,
+                  "count": len(character) + len(paragraph),
+                  "text": _text_payload(target.getString())["text"]}
+        held = self._anchor_handle(self._hold_anchor(doc, target), "text")
+        if held:
+            # A text anchor covers exactly the stretch it was made over, so it
+            # takes no offset beside it; the numbers go with it only when they
+            # were counted, which is the shape every listing hands out.
+            answer["address"] = (dict(located, anchor=held) if number
+                                 else {"anchor": held})
+        return answer
 
     def _direct_on(self, thing: Any, wanted: Dict[str, str],
                    where: str = "text") -> Dict[str, Any]:

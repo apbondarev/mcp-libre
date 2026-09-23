@@ -74,6 +74,11 @@ class DirectTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph it is, by number. A paragraph has none in UNO, so that is a walk of the body — 6.8s at paragraph 4069 of a real guide against 0.02s without — and the `address` in the answer names the same place by anchor",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -145,14 +150,15 @@ class DirectTools:
                                              max_results=max_results,
                                              number=number, doc=doc)
 
-    def get_direct_formatting_live(self, address: Any,
+    def get_direct_formatting_live(self, address: Any, number: bool = False,
                                    document: Optional[str] = None
                                    ) -> Dict[str, Any]:
         """What is formatted by hand over the styles at an address"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.get_direct_formatting(address, doc=doc)
+        return self.uno_bridge.get_direct_formatting(address, number=number,
+                                                     doc=doc)
 
     def clear_direct_formatting_live(self, address: Any,
                                      characters: bool = True,
