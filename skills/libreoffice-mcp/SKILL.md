@@ -328,11 +328,15 @@ external program — which is how to check a table or a layout.
 ## Spending fewer calls
 
 `get_outline` is the map of a long document: every heading with its level and
-its address, without reading a word of the body. A window nobody asked about
-holds 200 headings, and that is a default rather than a limit — `count` may
-ask for the lot, and 938 headings of a 519-page guide come back in one call
-of a few seconds. `more` says a window ended early, and the last heading's
-address is what to pass back as `start`.
+its anchored address, without reading a word of the body. A window nobody
+asked about holds 200 headings, and that is a default rather than a limit —
+`count` may ask for the lot, and the 938 headings of a 519-page guide come
+back in one call. `more` says a window ended early, and the last heading's
+address is what to pass back as `start`. Read `level_from`: `outline level`
+means Writer calls that paragraph structure, `style name` means only the
+style's name does, and a document can be full of the latter. A section scope
+(`{"heading": N}`) needs the number, so ask for `number: true` when that is
+where you are going.
 
 `find_text` brings the paragraphs around each hit (`paragraphs_before`,
 `paragraphs_after`) and hands out anchors, so one call does what would

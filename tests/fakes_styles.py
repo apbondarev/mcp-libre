@@ -50,7 +50,16 @@ FAKE_STYLE_OWN = {
                   "ParaLineSpacing": FakeLineSpacing(0, 115)},
     "Heading": {"FollowStyle": "Text body", "ParaTopMargin": 423,
                 "ParaBottomMargin": 212, "ParaKeepTogether": True},
+    # A fresh Writer gives its heading styles an outline level, and that is
+    # what makes them structure: Writer's own Navigator lists the paragraphs
+    # wearing them. A document whose "Heading 2" carries no level is a real
+    # case too — the LibreOffice Writer Guide is one — and the tests build it
+    # by setting the levels on the paragraphs instead.
+    "Heading 1": {"CharHeight": 18.0, "CharWeight": 150.0, "OutlineLevel": 1,
+                  "FollowStyle": "Text body"},
     "Heading 2": {"CharHeight": 14.0, "CharWeight": 150.0, "OutlineLevel": 2,
+                  "FollowStyle": "Text body"},
+    "Heading 3": {"CharHeight": 13.0, "CharWeight": 150.0, "OutlineLevel": 3,
                   "FollowStyle": "Text body"},
     "Preformatted Text": {"CharFontName": "Liberation Mono",
                           "ParaAdjust": 0},
@@ -179,6 +188,7 @@ class FakeStyle:
                 and self.name not in FAKE_STYLE_DEFAULTS
                 and self.name not in ("Standard", "Text body", "Heading",
                                       "Heading 1", "Heading 2", "Heading 3",
+                                      "Heading 4",
                                       "Preformatted Text", "Quotations",
                                       "Comment", "List", "Caption",
                                       "Table Contents", "Table Heading",
@@ -255,6 +265,10 @@ class FakeStyleFamilies:
         self.families = families or {
             "ParagraphStyles": ["Standard", "Heading", "Text body",
                                 "Heading 1", "Heading 2", "Heading 3",
+                                # Carries no outline level of its own: a style
+                                # whose *name* is all that says it is a
+                                # heading, as "Heading 2" is in a real guide.
+                                "Heading 4",
                                 "Preformatted Text", "Quotations", "Comment",
                                 "List", "Caption", "Table Contents",
                                 "Table Heading",

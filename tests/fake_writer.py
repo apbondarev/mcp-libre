@@ -161,6 +161,28 @@ for _range_type in (FakeRange, FakeTextCursor):
 
 
 
+class FakeLinkTarget:
+    """One entry of Writer's link list: a display name and nothing else.
+
+    Measured on a live Writer: an outline entry is a SwXOutlineTarget whose
+    only properties are LinkDisplayName and LinkDisplayBitmap — no range, no
+    paragraph, no level — so the list says how many headings there are and
+    what they read, and not where they are.
+    """
+
+    def __init__(self, name, shown):
+        self.Name = name
+        self.LinkDisplayName = shown
+
+
+class FakeLinkTargetGroup(FakeNameAccess):
+    """One of the Navigator's groups: "Headings", "Tables" and the rest."""
+
+    def __init__(self, name, items):
+        super().__init__(items)
+        self.Name = name
+
+
 class FakeSelection:
     def __init__(self, model, spans):
         self._ranges = [FakeRange(model, start, end) for start, end in spans]
@@ -190,13 +212,22 @@ class FakeSearchDescriptor:
 
 
 class FakeFindResults:
+    """What findAll answers — counting what is fetched out of it.
+
+    Fetching a hit is a UNO call apiece, so a tool that asks for five of nine
+    hundred and then fetches all nine hundred has paid for the document
+    instead of for the answer. `fetched` is how a test sees that.
+    """
+
     def __init__(self, ranges):
         self._ranges = list(ranges)
+        self.fetched = 0
 
     def getCount(self):
         return len(self._ranges)
 
     def getByIndex(self, index):
+        self.fetched += 1
         return self._ranges[index]
 
 
@@ -585,6 +616,23 @@ class FakeDoc:
         return FakeIndexed([one for one in self._text.notes_in_order()
                             if one.kind == "endnote"])
 
+    def getLinks(self):
+        """What the Navigator lists, as SwXLinkTargetSupplier hands it out.
+
+        Measured on a live Writer: doc.getLinks() offers "Tables", "Frames",
+        "Images", "OLE objects", "Sections", "Headings", "Bookmarks" and
+        "Drawing objects", and "Headings" names every paragraph Writer counts
+        as structure — exactly those with an outline level — in document
+        order, in under a millisecond, kept up to date as the document is
+        edited. Only "Headings" is modelled here, since that is the one thing
+        the outline is checked against.
+        """
+        headings = [FakeLinkTarget(f"{text}|outline", text)
+                    for text, level
+                    in zip(self._text.paragraphs, self._text.outline_levels)
+                    if level > 0]
+        return FakeNameAccess([FakeLinkTargetGroup("Headings", headings)])
+
     def getDocumentIndexes(self):
         """The indexes the document holds, by the names they gave themselves"""
         if not hasattr(self, "_document_indexes"):
@@ -815,11 +863,14 @@ class FakeWriterDoc(FakeDoc):
 
         if getattr(descriptor, "SearchStyles", False):
             wanted = descriptor.SearchString
-            return FakeFindResults([
+            results = FakeFindResults([
                 FakeRange(self._text, (index, 0),
                           (index, len(self._text.paragraphs[index])))
                 for index, style in enumerate(self._text.styles)
                 if style == wanted])
+            self.searches = getattr(self, "searches", [])
+            self.searches.append(results)
+            return results
         pattern = (descriptor.SearchString if descriptor.SearchRegularExpression
                    else re.escape(descriptor.SearchString))
         flags = 0 if descriptor.SearchCaseSensitive else re.IGNORECASE

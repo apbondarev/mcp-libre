@@ -9,8 +9,9 @@ import logging
 from uno_values import (AddressError, DEFAULT_PARAGRAPH_COUNT,
     DEFAULT_SEARCH_RESULTS, MAX_ANCHORS,
     DEFAULT_OUTLINE_ENTRIES, MAX_PARAGRAPH_COUNT, MAX_SEARCH_RESULTS, 
-    MAX_TEXT_CHARS, WRITER_SERVICE, _get_property, _heading_level, 
-    _supports, _text_payload, refusal)
+    CELL_SERVICE, MAX_TEXT_CHARS, WRITER_SERVICE, _get_property,
+    _heading_level, _level_from_style_name, _level_source, _supports,
+    _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -216,85 +217,112 @@ class ReadingMixin:
             return refusal("FAILED", e)
 
     def get_outline(self, start: Any = 0, count: Optional[int] = None,
-                    anchors: bool = True, doc: Any = None) -> Dict[str, Any]:
+                    anchors: bool = True, number: bool = False,
+                    doc: Any = None) -> Dict[str, Any]:
         """
-        List the document's headings with the paragraph index of each
+        List the document's headings — the structure Writer itself keeps
 
         Gives an assistant a map of a long document without reading it, and
-        every entry doubles as an address to read or edit from — with an
-        anchor beside the number unless `anchors` is false, so the map keeps
-        pointing at the right paragraphs after edits have moved them.
+        every entry doubles as an address to read or edit from.
 
-        Long documents are paged the way `read_paragraphs` pages: `start` is
-        a place in the document — a number or an address — and the headings
-        from there on are returned, at most `count` of them. A real guide of
-        519 pages has more than the 200 one call carries, and before this the
-        rest could not be reached at all: the chapter being looked for simply
-        was not in the answer. `more` says another call is worth making, and
-        the last heading's own address is what to hand back as `start`.
+        **Writer knows its own structure and is never asked twice.** This used
+        to enumerate every paragraph of the document and ask each whether it
+        was a heading: 2.5s on a 519-page guide, of which 2.1s was the bare
+        enumeration — nothing in the tool's own logic could make that cheaper.
+        Writer's search finds the paragraphs of a style in milliseconds
+        instead, so the styles that carry an outline level (or are named
+        "Heading N") are searched for and the hits merged into document order:
+        0.41s for the same 938 headings, and the walk is kept for the calls
+        that need it.
+
+        **A level from a style's name is a guess, and it says so.** Measured
+        on that guide: its chapter numbering gives level 1 to "Title" and 2 to
+        "Heading 1", while "Heading 2", "Heading 3" and "Heading 4" carry no
+        outline level at all — so Writer's Navigator shows 256 entries where
+        this tool reported 938, and called a "Heading 2" paragraph level 2,
+        the very level of the "Heading 1" paragraphs above it. Each entry now
+        says in `level_from` whether its level is Writer's (`outline level`)
+        or the name's (`style name`), and `outline_entries` reports how many
+        entries Writer itself holds — `doc.getLinks()`'s "Headings", the
+        Navigator's own list, which answers in a millisecond.
+
+        That count is also the check: when it disagrees with the number of
+        entries the styles account for, somebody has given a paragraph an
+        outline level by hand, the search cannot see it, and the walk is made
+        instead. `found_by` says which happened. Asking for `number` or
+        turning `anchors` off also walks, since an entry must be addressable
+        and a number is only free to a walk.
+
+        Long documents page the way `read_paragraphs` pages: `start` is a
+        place — a number or an address — and `more` says another call is worth
+        making, with the last heading's own address to hand back as `start`.
         """
         try:
             doc, error = self._writer_document(doc, "An outline")
             if error:
                 return error
 
-            if isinstance(start, dict):
-                try:
-                    start, _ = self._paragraphs_from(doc, start)
-                except AddressError as e:
-                    return refusal("INVALID_ADDRESS", e)
-            if not isinstance(start, int) or isinstance(start, bool) or start < 0:
-                return {"success": False, "code": "INVALID_PARAMETER",
-                        "error": f"start must be a non-negative integer or an "
-                                 f"address, got {start!r}"}
+            if not isinstance(start, dict):
+                if not isinstance(start, int) or isinstance(start, bool) \
+                        or start < 0:
+                    return {"success": False, "code": "INVALID_PARAMETER",
+                            "error": f"start must be a non-negative integer "
+                                     f"or an address, got {start!r}"}
             # A default, not a ceiling: ask for more and you get more, since
             # a map of a document is what this answers and half a map is no
             # map. 200 is only what an unasked-for window holds.
             window = max(1, int(DEFAULT_OUTLINE_ENTRIES if count is None
                                 else count))
 
-            headings = []
-            total = 0
+            said = self._writer_outline_count(doc)
+            plan = None
+            if not number and anchors:
+                plan = self._outline_by_styles(doc, said)
+            found_by = "styles"
+            total_paragraphs = None
+            if plan is None:
+                found_by = "walk"
+                entries, total_paragraphs = self._outline_by_walk(doc)
+                stream, total = iter(entries), len(entries)
+            else:
+                stream, total = plan
+
+            try:
+                reached = self._outline_reaches(doc, start, found_by)
+            except AddressError as e:
+                return refusal("INVALID_ADDRESS", e)
+
+            # Only as far as the window: every heading passed over costs a
+            # fetch and a comparison, and every one taken costs its anchor.
             before = 0
+            shown = []
             after = 0
-
-            enumeration = doc.getText().createEnumeration()
-            while enumeration.hasMoreElements():
-                element = enumeration.nextElement()
-                if not hasattr(element, "getStart"):
+            for one in stream:
+                if not shown and not reached(one):
+                    before += 1
                     continue
-                level = _heading_level(element)
-                if level > 0:
-                    if total < start:
-                        before += 1
-                    elif len(headings) < window:
-                        entry = {
-                            "paragraph": total,
-                            "level": level,
-                            "text": element.getString()[:MAX_TEXT_CHARS]
-                        }
-                        token = self._hold_paragraph_anchor(
-                            doc, element, total) if anchors else None
-                        entry["address"] = {
-                            "paragraph": total,
-                            "anchor": self._anchor_handle(token, "paragraph")
-                        } if token else {"paragraph": total}
-                        headings.append(entry)
-                    else:
-                        after += 1
-                total += 1
+                if len(shown) < window:
+                    shown.append(one)
+                    continue
+                after = 1          # one more is all "more" needs to know
+                break
 
+            headings = [self._outline_entry(doc, one, anchors)
+                        for one in shown]
             if after:
-                logger.info(f"Outline paged, {after} headings after this window")
+                logger.info("Outline paged, there are headings after this window")
 
             return {
                 "success": True,
                 "headings": headings,
-                "start": start,
+                "start": start if isinstance(start, int) else None,
                 "count": len(headings),
                 "headings_before": before,
-                "total_headings": before + len(headings) + after,
-                "total_paragraphs": total,
+                "total_headings": total,
+                "total_paragraphs": total_paragraphs,
+                "found_by": found_by,
+                # What Writer itself counts as structure, in a millisecond.
+                "outline_entries": said,
                 "more": after > 0,
                 # What this key meant before paging existed: there are
                 # headings this answer does not carry.
@@ -304,6 +332,206 @@ class ReadingMixin:
         except Exception as e:
             logger.error(f"Failed to get outline: {e}")
             return refusal("FAILED", e)
+
+    def _outline_by_walk(self, doc: Any) -> tuple:
+        """(entries, paragraphs counted) — every paragraph asked in turn
+
+        Complete, and the price of it is one UNO call per paragraph and then
+        some: 2.5s on a 6981-paragraph document over a socket. It sees a level
+        set by hand, which no search can.
+        """
+        entries = []
+        total = 0
+        enumeration = doc.getText().createEnumeration()
+        while enumeration.hasMoreElements():
+            element = enumeration.nextElement()
+            if not hasattr(element, "getStart"):
+                continue
+            level = _heading_level(element)
+            if level > 0:
+                entries.append({"paragraph": total, "level": level,
+                                "level_from": _level_source(element),
+                                "element": element, "range": element})
+            total += 1
+        return entries, total
+
+    def _outline_by_styles(self, doc: Any, said: Optional[int]) -> Optional[tuple]:
+        """(headings in document order, how many there are), or None
+
+        Milliseconds against seconds — but a style search can only find what a
+        style accounts for, so it is checked against Writer's own count before
+        it is trusted. The headings come back as a **stream**: a caller asking
+        for five of 938 paid for all of them otherwise, and every part of this
+        was proportional to the document rather than to the answer — 0.25s
+        fetching every hit, 0.34s asking each whether it sat in a table cell,
+        0.21s merging them all, for five entries that cost 8ms.
+        """
+        styles = self._outline_styles(doc)
+        if not styles:
+            return None
+        sources = []
+        total = 0
+        counted = 0
+        for name in sorted(styles):
+            level, source = styles[name]
+            try:
+                found = self._search_style(doc, name)
+                many = found.getCount()
+            except Exception as e:
+                logger.info(f"Could not search for the style {name}: {e}")
+                continue
+            if not many:
+                continue
+            total += many
+            if source == "outline level":
+                counted += many
+            sources.append({"found": found, "count": many, "taken": 0,
+                            "level": level, "level_from": source})
+        if said is not None and said != counted:
+            logger.info(f"Writer counts {said} outline entries where the "
+                        f"styles account for {counted}: walking instead")
+            return None
+        return self._headings_in_order(doc.getText(), sources), total
+
+    def _outline_styles(self, doc: Any) -> Dict[str, tuple]:
+        """{style name: (level, where the level came from)} for the headings
+
+        Reading the level of every paragraph style is 143 property reads on a
+        real document — 0.037s — and it answers both questions at once: which
+        styles Writer counts as structure, and at which level.
+        """
+        wanted = {}
+        try:
+            family = doc.StyleFamilies.getByName("ParagraphStyles")
+            names = list(family.getElementNames())
+        except Exception as e:
+            logger.info(f"Could not read the paragraph styles: {e}")
+            return wanted
+        for name in names:
+            try:
+                level = family.getByName(name).OutlineLevel
+            except Exception:
+                level = 0
+            if isinstance(level, int) and not isinstance(level, bool) \
+                    and level > 0:
+                wanted[name] = (level, "outline level")
+                continue
+            named = _level_from_style_name(name)
+            if named:
+                wanted[name] = (named, "style name")
+        return wanted
+
+    def _writer_outline_count(self, doc: Any) -> Optional[int]:
+        """How many entries Writer's own outline holds, or None if it will not say
+
+        `doc.getLinks()` is the Navigator's list of link targets — "Tables",
+        "Sections", "Headings" and the rest — and Writer keeps it up to date
+        itself: 256 headings of a 519-page guide came back in **0.8 ms**, and
+        renaming a heading showed in the next call. Each entry carries only
+        its display name, so it is a count and a list of texts, not a set of
+        addresses; that is why it checks the search rather than replacing it.
+        """
+        try:
+            return len(doc.getLinks().getByName("Headings").getElementNames())
+        except Exception as e:
+            logger.info(f"Writer would not say how many headings it has: {e}")
+            return None
+
+    def _headings_in_order(self, body: Any, sources: List[Dict]):
+        """Yield the hits of several style searches in document order
+
+        Each search answers in document order already, so this is a merge:
+        every step compares the heads — one UNO call apiece, a handful of
+        styles — and fetches a hit only when it is reached. A hit inside a
+        **table cell** is passed over here, where it costs nothing, since an
+        address counts body paragraphs and the walk this stands in for never
+        saw inside a cell either.
+        """
+        heads = [None] * len(sources)
+
+        def head(which):
+            if heads[which] is not None:
+                return heads[which]
+            source = sources[which]
+            while source["taken"] < source["count"]:
+                one = source["found"].getByIndex(source["taken"])
+                source["taken"] += 1
+                try:
+                    if _supports(one.getText(), CELL_SERVICE):
+                        continue
+                except Exception:
+                    continue
+                heads[which] = {"range": one, "level": source["level"],
+                                "level_from": source["level_from"],
+                                "paragraph": None}
+                return heads[which]
+            return None
+
+        while True:
+            best = -1
+            for which in range(len(sources)):
+                if head(which) is None:
+                    continue
+                if best < 0:
+                    best = which
+                    continue
+                try:
+                    if body.compareRegionStarts(heads[which]["range"],
+                                                heads[best]["range"]) == 1:
+                        best = which
+                except Exception as e:
+                    logger.info(f"Could not order two headings: {e}")
+            if best < 0:
+                return
+            yield heads[best]
+            heads[best] = None
+
+    def _outline_reaches(self, doc: Any, start: Any, found_by: str):
+        """A test for "this heading is where the caller asked to begin"
+
+        The walk knows every heading's number, so it compares numbers; the
+        search knows only places, so it compares those — `start` resolved
+        once, each heading against it until one is at or past it.
+        """
+        if not isinstance(start, dict) and not start:
+            return lambda one: True
+        if found_by == "walk":
+            first = (self._paragraphs_from(doc, start)[0]
+                     if isinstance(start, dict) else start)
+            return lambda one: one["paragraph"] >= first
+        where = self._resolve_address(
+            doc, {"paragraph": start} if isinstance(start, int) else start)
+        body = doc.getText()
+
+        def at_or_after(one):
+            try:
+                return body.compareRegionStarts(where, one["range"]) >= 0
+            except Exception as e:
+                logger.info(f"Could not place the start of an outline: {e}")
+                return False
+        return at_or_after
+
+    def _outline_entry(self, doc: Any, one: Dict[str, Any],
+                       anchors: bool) -> Dict[str, Any]:
+        """One heading, as a caller sees it: its level, its text, its address"""
+        element = one.get("element")
+        if element is None:
+            element = self._paragraph_from(one["range"])
+        entry = {
+            "paragraph": one["paragraph"],
+            "level": one["level"],
+            # Whether Writer calls this structure or the style's name does.
+            "level_from": one["level_from"],
+            "text": one["range"].getString()[:MAX_TEXT_CHARS]
+        }
+        token = (self._hold_paragraph_anchor(doc, element, one["paragraph"])
+                 if anchors and element is not None else None)
+        address = ({"paragraph": one["paragraph"]}
+                   if one["paragraph"] is not None else {})
+        if token:
+            address["anchor"] = self._anchor_handle(token, "paragraph")
+        entry["address"] = address
+        return entry
 
     def _match_in(self, body: Any, paragraph: Any, index: int, match: Any,
                   start: Any) -> Dict[str, Any]:

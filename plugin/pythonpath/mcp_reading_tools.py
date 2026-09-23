@@ -97,7 +97,7 @@ class ReadingTools:
         }
 
         self.tools["get_outline_live"] = {
-            "description": "List the headings of the active Writer document with the paragraph index of each — the map of a long document, without reading it. One call carries at most 200 headings, so a long document is paged: `more` says there are further headings, and the last heading's own `address` is what to pass back as `start`",
+            "description": "List the headings of the active Writer document — the map of a long document, without reading it. Each entry carries an anchored `address` to read or edit from, its `level`, and `level_from`, which says whether that level is Writer's own (`outline level`, the paragraphs the Navigator lists) or a guess from the style's name (`style name`) — a real guide gives \"Heading 2\" no outline level at all, so the two are not the same question. `outline_entries` is how many entries Writer itself holds and `found_by` how this answer was found. One call carries 200 headings by default; `more` says there are further ones and the last heading's own `address` is what to pass back as `start`",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -113,8 +113,13 @@ class ReadingTools:
                     },
                     "anchors": {
                         "type": "boolean",
-                        "description": "Give every heading an `address` holding an anchor beside its index, so the map still points at the right paragraphs after edits have renumbered them. On by default",
+                        "description": "Give every heading an `address` holding an anchor, so the map still points at the right paragraphs after edits have moved them. On by default — turning it off means the headings must be numbered instead, which walks the document",
                         "default": True
+                    },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Number every heading by paragraph. That means walking the document — 2.5s on a 519-page guide against 0.4s for searching the heading styles — and it is what a section scope ({\"heading\": N}) needs. It also sees a heading whose outline level was set by hand rather than by its style",
+                        "default": False
                     },
                     "document": {
                         "type": "string",
@@ -219,14 +224,15 @@ class ReadingTools:
                                                anchors=anchors, doc=doc)
 
     def get_outline_live(self, start: Any = 0, count: Optional[int] = None,
-                         anchors: bool = True,
+                         anchors: bool = True, number: bool = False,
                          document: Optional[str] = None) -> Dict[str, Any]:
         """List the headings of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.get_outline(start=start, count=count,
-                                           anchors=anchors, doc=doc)
+                                           anchors=anchors, number=number,
+                                           doc=doc)
 
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,

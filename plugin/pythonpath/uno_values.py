@@ -831,23 +831,42 @@ def _get_property(obj: Any, name: str, default: Any = None) -> Any:
         return default
 
 
+def _level_from_style_name(style: str) -> int:
+    """The level a style's *name* claims — "Heading 3" is 3, 0 for anything else
+
+    This is a guess, and a measured one: in a real 519-page guide the styles
+    "Heading 2", "Heading 3" and "Heading 4" carry **no** outline level, so
+    Writer's own Navigator does not show those paragraphs as structure at all
+    and the name is all there is to go on. Whatever is reported from here says
+    so, since a level taken from a name can put a "Heading 2" paragraph beside
+    a "Heading 1" one that is really a level deeper.
+    """
+    if not isinstance(style, str) or not style.startswith("Heading "):
+        return 0
+    suffix = style[len("Heading "):].strip()
+    return int(suffix) if suffix.isdigit() else 0
+
+
 def _heading_level(paragraph: Any) -> int:
     """
     Outline level of a paragraph, 0 when it is body text
 
-    OutlineLevel covers custom styles that were given a level; the style-name
-    check is the fallback for builds that do not expose the property.
+    OutlineLevel is what Writer itself goes by — a paragraph with one is an
+    entry in the Navigator — and it covers custom styles given a level. The
+    style-name check is the guess beside it.
     """
     level = _get_property(paragraph, "OutlineLevel", 0)
     if isinstance(level, int) and not isinstance(level, bool) and level > 0:
         return level
+    return _level_from_style_name(_get_property(paragraph, "ParaStyleName", ""))
 
-    style = _get_property(paragraph, "ParaStyleName", "") or ""
-    if style.startswith("Heading "):
-        suffix = style[len("Heading "):].strip()
-        if suffix.isdigit():
-            return int(suffix)
-    return 0
+
+def _level_source(paragraph: Any) -> str:
+    """Where a paragraph's level came from: Writer's own, or the style's name"""
+    level = _get_property(paragraph, "OutlineLevel", 0)
+    if isinstance(level, int) and not isinstance(level, bool) and level > 0:
+        return "outline level"
+    return "style name"
 
 
 def _text_payload(value: str) -> Dict[str, Any]:

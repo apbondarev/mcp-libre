@@ -165,19 +165,24 @@ class DirectFormattingMixin:
                 "not_reported": max(0, total - len(hits)) or None,
                 "scope": scope}
 
-    def _ranges_in_style(self, doc: Any, style: str) -> List[Any]:
-        """The ranges wearing a paragraph style, Writer's own way
+    def _search_style(self, doc: Any, style: str) -> Any:
+        """What `findAll` answers for a paragraph style — the matches, unfetched
 
         `SearchStyles` with the style's name as the string makes `findAll`
         answer with every paragraph in it — milliseconds, where comparing
         `ParaStyleName` means walking the body. The matches come back in
-        document order, so nothing here has to put them in one.
+        document order, so nothing has to put them in one; fetching them is a
+        UNO call apiece, which is why the result is handed over unfetched.
         """
+        descriptor = doc.createSearchDescriptor()
+        descriptor.SearchString = style
+        descriptor.SearchStyles = True
+        return doc.findAll(descriptor)
+
+    def _ranges_in_style(self, doc: Any, style: str) -> List[Any]:
+        """The ranges wearing a paragraph style, every one of them"""
         try:
-            descriptor = doc.createSearchDescriptor()
-            descriptor.SearchString = style
-            descriptor.SearchStyles = True
-            matches = doc.findAll(descriptor)
+            matches = self._search_style(doc, style)
             return [matches.getByIndex(index)
                     for index in range(matches.getCount())]
         except Exception as e:

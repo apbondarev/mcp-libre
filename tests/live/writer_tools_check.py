@@ -180,10 +180,52 @@ try:
     check("heading texts", [h["text"] for h in outline["headings"]],
           ["Chapter One", "Section A"])
     check("heading levels", [h["level"] for h in outline["headings"]], [1, 2])
-    check("heading paragraphs", [h["paragraph"] for h in outline["headings"]], [0, 2])
     check("every heading is an address to work from",
           all(h["address"].get("anchor", {}).get("type") == "paragraph"
               for h in outline["headings"]), True)
+    # The structure comes from Writer's own: the styles that carry an outline
+    # level are searched for, in milliseconds, instead of every paragraph of
+    # the document being asked whether it is a heading.
+    check("found by searching the heading styles", outline.get("found_by"),
+          "styles")
+    check("and the level is Writer's own, not the style name's",
+          [h["level_from"] for h in outline["headings"]],
+          ["outline level", "outline level"])
+    check("Writer counts the same entries",
+          outline.get("outline_entries"), 2)
+    check("nothing is numbered unless the numbers are asked for",
+          [h["paragraph"] for h in outline["headings"]], [None, None])
+    numbered = bridge.get_outline(number=True, doc=doc)
+    check("heading paragraphs, when asked for",
+          [h["paragraph"] for h in numbered["headings"]], [0, 2])
+    check("which is the walk", numbered.get("found_by"), "walk")
+
+    # A paragraph given an outline level by hand wears an ordinary style, so
+    # no style search can find it — Writer's own count is what says so.
+    by_hand = bridge.read_paragraphs(start=1, count=1, doc=doc)
+    body_paragraph = None
+    walker = doc.getText().createEnumeration()
+    seen = 0
+    while walker.hasMoreElements():
+        element = walker.nextElement()
+        if not hasattr(element, "getStart"):
+            continue
+        if seen == 1:
+            body_paragraph = element
+            break
+        seen += 1
+    body_paragraph.OutlineLevel = 3
+    hand_made = bridge.get_outline(doc=doc)
+    check("a level set by hand is counted by Writer",
+          hand_made.get("outline_entries"), 3)
+    check("so the outline is walked for instead",
+          hand_made.get("found_by"), "walk")
+    check("and the heading is in it",
+          [h["text"] for h in hand_made["headings"]],
+          ["Chapter One", "Alpha beta alpha.", "Section A"])
+    body_paragraph.OutlineLevel = 0
+    check("and it is gone once the level is taken off",
+          bridge.get_outline(doc=doc).get("outline_entries"), 2)
     # A long document has more headings than one call carries, and the rest
     # used to be unreachable: the outline stopped and said only "truncated".
     one_at_a_time = bridge.get_outline(count=1, doc=doc)
@@ -377,10 +419,11 @@ try:
 
     print("\n--- replace_range by address: translating a heading ---")
     outline_before = bridge.get_outline(doc=doc)
-    heading = outline_before["headings"][1]        # "Section A" at its index
+    heading = outline_before["headings"][1]        # "Section A" in the map
     print("heading to rewrite:", heading)
-    replaced = bridge.replace_range({"paragraph": heading["paragraph"]},
-                                    "Section Two", doc=doc)
+    # Its own address is what the map hands out, and it is an anchor: the map
+    # is read once and acted on, with no number carried between the calls.
+    replaced = bridge.replace_range(heading["address"], "Section Two", doc=doc)
     print(replaced)
     check("replace_range succeeded", replaced.get("success"), True)
 
@@ -390,10 +433,11 @@ try:
           ["Chapter One", "Section Two"])
     check("heading is still a heading at the same level",
           outline_after["headings"][1]["level"], heading["level"])
-    check("heading is still at the same paragraph",
-          outline_after["headings"][1]["paragraph"], heading["paragraph"])
-    check("paragraph count unchanged",
-          outline_after["total_paragraphs"], outline_before["total_paragraphs"])
+    check("the address it was rewritten through still names it",
+          bridge._resolve_address(doc, heading["address"]).getString(),
+          "Section Two")
+    check("no heading gained or lost",
+          outline_after["total_headings"], outline_before["total_headings"])
 
     print("\n--- replace_range on part of a paragraph ---")
     body_paragraph = 3                              # "Gamma delta."

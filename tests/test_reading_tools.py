@@ -151,23 +151,99 @@ def test_lists_headings_with_their_levels(bridge):
     result = bridge.get_outline(doc=doc)
 
     assert result["success"] is True
-    assert [{key: one[key] for key in ("paragraph", "level", "text")}
+    assert [{key: one[key] for key in ("level", "level_from", "text")}
             for one in result["headings"]] == [
-        {"paragraph": 0, "level": 1, "text": "Chapter One"},
-        {"paragraph": 2, "level": 2, "text": "Section A"},
+        {"level": 1, "level_from": "outline level", "text": "Chapter One"},
+        {"level": 2, "level_from": "outline level", "text": "Section A"},
     ]
-    # Every entry is an address to read or edit from, anchored like the rest.
+    # Every entry is an address to read or edit from, anchored like the rest —
+    # and no paragraph is numbered, since counting one is a walk of the body.
     assert all(one["address"]["anchor"]["type"] == "paragraph"
                and "anchor" not in one for one in result["headings"])
+    assert [one["paragraph"] for one in result["headings"]] == [None, None]
+    assert [bridge._resolve_address(doc, one["address"]).getString()
+            for one in result["headings"]] == ["Chapter One", "Section A"]
 
 
-def test_reports_the_paragraph_count_alongside_the_outline(bridge):
+def test_the_outline_is_found_without_walking_the_document(bridge,
+                                                           monkeypatch):
     doc = writer_doc(OUTLINE_PARAGRAPHS, caret=(0, 0), styles=OUTLINE_STYLES,
                      outline_levels=[1, 0, 2, 0])
 
+    def refuse(*arguments, **named):
+        raise AssertionError("get_outline walked the body")
+
+    monkeypatch.setattr(bridge, "_outline_by_walk", refuse)
+
     result = bridge.get_outline(doc=doc)
 
+    assert [one["text"] for one in result["headings"]] == ["Chapter One",
+                                                           "Section A"]
+    assert result["found_by"] == "styles"
+    # What Writer itself counts as structure, which is also the check.
+    assert result["outline_entries"] == 2
+
+
+def test_a_window_costs_the_window_and_not_the_document(bridge):
+    # Fetching a hit is a UNO call, and so is every comparison that orders
+    # them: asking for one heading of fifty used to fetch all fifty, ask each
+    # whether it sat in a table cell and merge the lot — 0.8s of a 0.7s call
+    # on a real guide spent on entries nobody asked for.
+    many = 50
+    lines, styles, levels = [], [], []
+    for number in range(many):
+        lines += [f"Heading {number}", "Body."]
+        styles += ["Heading 1", "Standard"]
+        levels += [1, 0]
+    doc = writer_doc(lines, caret=(0, 0), styles=styles, outline_levels=levels)
+
+    result = bridge.get_outline(count=1, doc=doc)
+
+    assert [one["text"] for one in result["headings"]] == ["Heading 0"]
+    # The total comes from the search's own count, which costs nothing.
+    assert result["total_headings"] == many
+    assert result["more"] is True
+    fetched = sum(search.fetched for search in doc.searches)
+    assert fetched <= 3, f"fetched {fetched} hits for one heading"
+
+
+def test_a_level_taken_from_a_style_name_says_so(bridge):
+    # Measured on a real guide: "Heading 2" and "Heading 3" carry no outline
+    # level there, so Writer does not call those paragraphs structure at all
+    # and their level is a guess from the name.
+    doc = writer_doc(["Looks like a heading", "Body."], caret=(0, 0),
+                     styles=["Heading 4", "Standard"], outline_levels=[0, 0])
+
+    result = bridge.get_outline(doc=doc)
+
+    assert [(one["level"], one["level_from"]) for one in result["headings"]] \
+        == [(4, "style name")]
+    assert result["outline_entries"] == 0
+
+
+def test_it_walks_when_writer_knows_a_heading_no_style_accounts_for(bridge):
+    # An outline level set by hand on an ordinary paragraph: Writer counts it,
+    # a search by style cannot find it, and the count is what says so.
+    doc = writer_doc(["Levelled by hand", "Body."], caret=(0, 0),
+                     styles=["Standard", "Standard"], outline_levels=[2, 0])
+
+    result = bridge.get_outline(doc=doc)
+
+    assert result["found_by"] == "walk"
+    assert [one["text"] for one in result["headings"]] == ["Levelled by hand"]
+    assert result["headings"][0]["paragraph"] == 0
+    assert result["outline_entries"] == 1
+
+
+def test_reports_the_paragraph_count_when_it_walked_for_it(bridge):
+    doc = writer_doc(OUTLINE_PARAGRAPHS, caret=(0, 0), styles=OUTLINE_STYLES,
+                     outline_levels=[1, 0, 2, 0])
+
+    result = bridge.get_outline(number=True, doc=doc)
+
     assert result["total_paragraphs"] == 4
+    assert [one["paragraph"] for one in result["headings"]] == [0, 2]
+    assert result["found_by"] == "walk"
 
 
 def test_falls_back_to_style_names_when_outline_level_is_absent(bridge):
