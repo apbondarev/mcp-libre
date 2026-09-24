@@ -38,12 +38,16 @@ some other place says. Both were measured before they were built:
 from typing import Any, Dict, List, Optional
 import logging
 
-from uno_values import (AddressError, _get_property, _supports, _text_payload,
+from uno_values import (AddressError, DEFAULT_TARGET_REPORTS, _get_property,
+                        _supports, _text_payload,
                         refusal)
 
 logger = logging.getLogger(__name__)
 
 SEQUENCE_SERVICE = "com.sun.star.text.TextField.SetExpression"
+# The masters' names spell "fieldmaster" in lower case, whatever getByName
+# takes — measured — so the pieces of the name are matched, not the whole.
+SEQUENCE_MASTER = "SetExpression"
 REFERENCE_SERVICE = "com.sun.star.text.TextField.GetReference"
 MASTER_PREFIX = "com.sun.star.text.fieldmaster.setexpression."
 
@@ -88,6 +92,30 @@ class ReferencesMixin:
                 found.append(field)
         return found
 
+    def _sequence_fields(self, doc: Any) -> List[Any]:
+        """Every caption number, asked of the sequences they count in
+
+        A caption is a `SetExpression` attached to a sequence master, and a
+        master **names its own fields**: `DependentTextFields`. Asking the
+        document for all its fields and filtering instead read 1536 fields to
+        find 547 captions — 2.79s against **0.26s** on a real guide — and the
+        two answer with the same captions.
+        """
+        found = []
+        try:
+            masters = doc.getTextFieldMasters()
+            names = [one for one in masters.getElementNames()
+                     if SEQUENCE_MASTER in one]
+        except Exception as e:
+            logger.info(f"Could not ask the document for its sequences: {e}")
+            return self._fields_of_service(doc, SEQUENCE_SERVICE)
+        for name in names:
+            try:
+                found.extend(masters.getByName(name).DependentTextFields)
+            except Exception as e:
+                logger.info(f"A sequence would not name its fields: {e}")
+        return found
+
     def _master_category(self, field: Any) -> Optional[str]:
         """The sequence a caption's number counts in — "Figure", "Table"."""
         master = _get_property(field, "TextFieldMaster", None)
@@ -106,7 +134,7 @@ class ReferencesMixin:
         the categories and the sequence ids, and placing them is the sweep of
         the body this module exists to stop paying for twice.
         """
-        fields = self._fields_of_service(doc, SEQUENCE_SERVICE)
+        fields = self._sequence_fields(doc)
         anchors, kept = [], []
         for field in fields:
             try:
@@ -221,16 +249,22 @@ class ReferencesMixin:
                 return one["name"]
         return None
 
-    def _headings_as_targets(self, doc: Any,
-                             bookmarks: bool = True) -> List[Dict[str, Any]]:
+    def _headings_as_targets(self, doc: Any, bookmarks: bool = True,
+                             number: bool = True) -> List[Dict[str, Any]]:
         """Every heading, with the bookmark a reference to it would use
 
-        A heading's number comes free with the walk that finds it, and a
-        reference to one is made by that number. Saying which bookmark
-        already covers it does not: that is the sweep which places every
-        bookmark of the document, so it waits to be asked for.
+        A heading's number comes free with the walk that finds it, and that
+        walk is 4.3s on a 519-page guide. Without `number` the headings are
+        searched for by style instead — the way `get_outline` finds them,
+        0.4s for the same 938 — and each is named by an anchor, which
+        `insert_cross_reference` takes in place of the number. Saying which
+        bookmark already covers a heading is a second sweep, so it waits to
+        be asked for.
         """
         from uno_values import _heading_level
+
+        if not number:
+            return self._headings_by_style(doc)
 
         by_paragraph = self._bookmarks_by_paragraph(doc) if bookmarks else {}
         found = []
@@ -249,10 +283,84 @@ class ReferencesMixin:
             })
         return found
 
+    def _bookmarks_over_paragraph(self, doc: Any,
+                                  paragraph: Any) -> List[Dict[str, Any]]:
+        """The bookmarks covering a paragraph, compared rather than counted
+
+        `_bookmarks_by_paragraph` places every bookmark of the document by
+        number, which is a sweep of the body; comparing each with the one
+        paragraph in hand is four UNO calls apiece and no walk at all.
+        """
+        marks = self._bookmarks(doc)
+        if marks is None:
+            return []
+        body = doc.getText()
+        found = []
+        for name in marks.getElementNames():
+            try:
+                anchor = marks.getByName(name).getAnchor()
+                if not self._covers(body, paragraph, anchor):
+                    continue
+                found.append({"name": name, "text": anchor.getString()})
+            except Exception as e:
+                logger.info(f"Could not compare bookmark {name}: {e}")
+        return found
+
+    def _headings_by_style(self, doc: Any) -> List[Dict[str, Any]]:
+        """The headings, found by searching for their styles and anchored
+
+        The same route `get_outline` takes: the styles that carry an outline
+        level are searched for in milliseconds and the hits merged into
+        document order, checked against Writer's own count. A reference is
+        then made by the anchor rather than by a number nobody counted.
+        """
+        plan = self._outline_by_styles(doc, self._writer_outline_count(doc))
+        if plan is None:
+            return self._headings_as_targets(doc, bookmarks=False,
+                                             number=True)
+        stream, _total = plan
+        found = []
+        for one in stream:
+            # No anchor yet: a listing of 938 headings would hold 938 of
+            # them, and the store keeps 2000 — measured, a run that fills it
+            # and then evicts took the office down with it (SIGABRT in
+            # libuno_cppu). Only the window a caller reads is anchored.
+            found.append({
+                "kind": "heading", "level": one["level"],
+                "level_from": one["level_from"],
+                # The text is read with the anchor, for the window alone:
+                # asking all 938 headings what they say is 1.5s of the call.
+                "text": None,
+                "address": None,
+                "bookmark": None,
+                "reference": None,
+                "_range": one["range"],
+            })
+        return found
+
+    def _anchor_a_target(self, doc: Any, one: Dict[str, Any]) -> Dict[str, Any]:
+        """Give a heading found by style the anchor it is named by"""
+        held = one.pop("_range", None)
+        if held is None:
+            return one
+        if one.get("text") is None:
+            one["text"] = _text_payload(
+                self._safely(lambda: held.getString(), ""))["text"]
+        paragraph = self._paragraph_from(held)
+        token = (self._hold_paragraph_anchor(doc, paragraph, None)
+                 if paragraph is not None else None)
+        if token:
+            place = {"anchor": self._anchor_handle(token, "paragraph")}
+            one["address"] = place
+            one["reference"] = {"heading": dict(place)}
+        return one
+
     # ---- listing -----------------------------------------------------
 
     def list_reference_targets(self, kinds: Optional[List[str]] = None,
-                               address: Any = None, number: bool = False,
+                               address: Any = None, start: int = 0,
+                               count: Optional[int] = None,
+                               number: bool = False,
                                doc: Any = None) -> Dict[str, Any]:
         """
         What a cross-reference can point at: headings, captions, bookmarks,
@@ -260,6 +368,13 @@ class ReferencesMixin:
 
         Every target carries `reference`, which is what insert_cross_reference
         takes as its `target`, so nothing has to be spelled out by hand.
+
+        A real guide answers with 1689 of them, and each heading reported is
+        held by an anchor — so the answer is **paged** (`count`, 200 by
+        default, with `total` and `more` beside it). That is not only a
+        payload nobody reads: filling the anchor store and then evicting from
+        it took a headless office down, measured, with SIGABRT inside
+        libuno_cppu.
         """
         doc, error = self._writer_document(doc, "Listing reference targets")
         if error:
@@ -285,7 +400,8 @@ class ReferencesMixin:
 
         targets: List[Dict[str, Any]] = []
         if "heading" in wanted:
-            targets.extend(self._headings_as_targets(doc, bookmarks=number))
+            targets.extend(self._headings_as_targets(doc, bookmarks=number,
+                                                     number=number))
         if "caption" in wanted:
             targets.extend({key: value for key, value in one.items()
                             if key != "field"}
@@ -312,7 +428,17 @@ class ReferencesMixin:
         counted: Dict[str, int] = {}
         for one in targets:
             counted[one["kind"]] = counted.get(one["kind"], 0) + 1
-        return {"success": True, "targets": targets, "count": len(targets),
+        total = len(targets)
+        window = max(1, int(DEFAULT_TARGET_REPORTS if count is None
+                            else count))
+        begin = max(0, int(start or 0))
+        shown = [self._anchor_a_target(doc, one)
+                 for one in targets[begin:begin + window]]
+        for one in targets:
+            one.pop("_range", None)
+        return {"success": True, "targets": shown, "count": len(shown),
+                "total": total, "start": begin,
+                "more": begin + len(shown) < total,
                 "kinds": counted, "scope": scope}
 
     def _target_of_reference(self, field: Any) -> Dict[str, Any]:
@@ -664,16 +790,25 @@ class ReferencesMixin:
         from uno_values import _heading_level
 
         body = doc.getText()
-        element = self._paragraph_at(body, paragraph) \
-            if isinstance(paragraph, int) and not isinstance(paragraph, bool) \
-            and paragraph >= 0 else None
+        if isinstance(paragraph, dict):
+            # An address — an anchor, most often, since that is what
+            # list_reference_targets hands out without numbering anything.
+            element = self._paragraph_from(
+                self._resolve_address(doc, paragraph))
+        elif isinstance(paragraph, int) and not isinstance(paragraph, bool) \
+                and paragraph >= 0:
+            element = self._paragraph_at(body, paragraph)
+        else:
+            element = None
         if element is None or _heading_level(element) <= 0:
             raise AddressError(
                 f"paragraph {paragraph!r} is not a heading; put a bookmark on "
                 f"ordinary text with add_bookmark and refer to that")
 
         text = element.getString()
-        listed = self._bookmarks_by_paragraph(doc).get(paragraph, [])
+        listed = (self._bookmarks_by_paragraph(doc).get(paragraph, [])
+                  if isinstance(paragraph, int)
+                  else self._bookmarks_over_paragraph(doc, element))
         already = self._bookmark_over(listed, text)
         if already:
             return already

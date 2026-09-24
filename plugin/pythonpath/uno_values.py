@@ -55,6 +55,10 @@ MAX_SPELLING_RESULTS = 200
 # them against the 2000 the anchor store keeps.
 DEFAULT_FIELD_REPORTS = 200
 
+# The same for the things a cross-reference can point at: a real guide holds
+# 1689, and every heading reported is held by an anchor.
+DEFAULT_TARGET_REPORTS = 200
+
 
 def _locale(language: str) -> Any:
     """

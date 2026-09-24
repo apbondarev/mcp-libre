@@ -8,11 +8,14 @@ ADDRESS_SCOPE = ("Which part of the document: omit for all of it, "
                  "a range, or {\"selection\": true}")
 
 TARGET = ("What to point at, named in exactly one way: {\"heading\": N} for "
-          "the heading at that paragraph (a bookmark is left on it, as "
-          "Writer's own dialog does), {\"caption\": \"Figure 2\"} for a "
-          "caption, {\"bookmark\": \"name\"} or {\"reference_mark\": "
-          "\"name\"}. list_reference_targets reports every target with the "
-          "`reference` object to pass straight back here")
+          "the heading at that paragraph — or {\"heading\": {\"anchor\": "
+          "\"a7f3c1\"}}, which is what list_reference_targets hands out, "
+          "since numbering a document's headings is a walk of it — and a "
+          "bookmark is left on the heading either way, as Writer's own dialog "
+          "does; {\"caption\": \"Figure 2\"} for a caption, {\"bookmark\": "
+          "\"name\"} or {\"reference_mark\": \"name\"}. "
+          "list_reference_targets reports every target with the `reference` "
+          "object to pass straight back here")
 
 
 class ReferenceTools:
@@ -46,9 +49,19 @@ class ReferenceTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "start": {
+                        "type": "integer",
+                        "description": "Which target of the answer to begin at, for paging through a document that holds many",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many targets to report. 200 when nobody says, and a default rather than a limit — a real guide holds 1689, and every heading reported is held by an anchor. `total` says how many there are and `more` whether another call is worth making",
+                        "default": 200
+                    },
                     "number": {
                         "type": "boolean",
-                        "description": "Place every target by paragraph number, in reading order, and say which bookmark each heading already has. Those are two sweeps of the body — 79s on a real guide of 1689 targets against 9s without — and naming a scope turns them on, since narrowing to a stretch means knowing where things are",
+                        "description": "Place every target by paragraph number, in reading order, and say which bookmark each heading already has. Those are sweeps of the body — the headings alone are 4.3s on a real guide, where searching for their styles is 0.4s — and naming a scope turns them on, since narrowing to a stretch means knowing where things are",
                         "default": False
                     },
                     "document": {
@@ -186,7 +199,7 @@ class ReferenceTools:
                         "type": "object",
                         "description": TARGET,
                         "properties": {
-                            "heading": {"type": "integer"},
+                            "heading": {"type": ["integer", "object"]},
                             "caption": {"type": "string"},
                             "bookmark": {"type": "string"},
                             "reference_mark": {"type": "string"}
@@ -215,7 +228,8 @@ class ReferenceTools:
         }
 
     def list_reference_targets_live(self, kinds: Optional[List[str]] = None,
-                                    address: Any = None,
+                                    address: Any = None, start: int = 0,
+                                    count: Optional[int] = None,
                                     number: bool = False,
                                     document: Optional[str] = None
                                     ) -> Dict[str, Any]:
@@ -225,6 +239,7 @@ class ReferenceTools:
             return error
         return self.uno_bridge.list_reference_targets(kinds=kinds,
                                                       address=address,
+                                                      start=start, count=count,
                                                       number=number, doc=doc)
 
     def list_references_live(self, address: Any = None, number: bool = False,

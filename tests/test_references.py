@@ -161,6 +161,61 @@ def test_a_reference_to_a_heading_leaves_a_bookmark_on_it(bridge, doc):
     assert bridge.list_bookmarks(doc=doc)["count"] == 1
 
 
+def test_a_heading_target_is_taken_by_the_address_it_was_listed_with(bridge):
+    # Numbering the headings of a document is a walk of the body — 4.3s on a
+    # real guide — so the listing searches for the heading styles and hands
+    # out anchors, and a reference made through one must reach the same
+    # heading.
+    doc = writer_doc(["Scalar types", "Body text", "See also"],
+                     styles=["Heading 1", "Standard", "Standard"],
+                     outline_levels=[1, 0, 0], caret=(1, 0))
+
+    target, = bridge.list_reference_targets(kinds=["heading"],
+                                            doc=doc)["targets"]
+
+    assert target["text"] == "Scalar types"
+    assert target["address"]["anchor"]["type"] == "paragraph"
+
+    put = bridge.insert_cross_reference({"paragraph": 2, "offset": 0,
+                                         "length": 0}, target["reference"],
+                                        doc=doc)
+
+    assert (put["success"], put["shows"]) == (True, "Scalar types")
+    assert bridge.list_bookmarks(doc=doc)["count"] == 1
+
+
+def test_the_listing_is_paged_because_each_heading_is_held(bridge):
+    # Measured: a run that filled the anchor store and then evicted from it
+    # took a headless office down, SIGABRT inside libuno_cppu. A listing of
+    # 938 headings held 938 anchors.
+    lines, styles, levels = [], [], []
+    for number in range(6):
+        lines += [f"Заголовок {number}", "Текст"]
+        styles += ["Heading 1", "Standard"]
+        levels += [1, 0]
+    doc = writer_doc(lines, caret=(0, 0), styles=styles, outline_levels=levels)
+
+    page = bridge.list_reference_targets(kinds=["heading"], count=2, doc=doc)
+
+    assert (page["count"], page["total"], page["more"]) == (2, 6, True)
+    assert all(one["address"]["anchor"]["type"] == "paragraph"
+               for one in page["targets"])
+    rest = bridge.list_reference_targets(kinds=["heading"], start=2,
+                                         count=100, doc=doc)
+    assert (rest["count"], rest["more"]) == (4, False)
+    # Nothing outside the window is anchored, and nothing leaks the range it
+    # was found by.
+    assert all("_range" not in one for one in rest["targets"])
+
+
+def test_the_numbers_of_the_targets_come_when_asked_for(bridge, doc):
+    listed = bridge.list_reference_targets(kinds=["heading"], number=True,
+                                           doc=doc)
+
+    assert [one["reference"] for one in listed["targets"]][:1] \
+        == [{"heading": 0}]
+
+
 def test_ordinary_text_is_not_a_heading(bridge, doc):
     refused = bridge.insert_cross_reference({"paragraph": 3, "offset": 0,
                                              "length": 0}, {"heading": 2},
