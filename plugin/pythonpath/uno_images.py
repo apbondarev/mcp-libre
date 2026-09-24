@@ -86,6 +86,53 @@ class ImagesMixin:
             logger.info(f"A portion would not say what it holds: {e}")
         return found
 
+    def _images_over(self, doc: Any, address: Any) -> List[Any]:
+        """The pictures the paragraphs of a scope hold, asked of them
+
+        Two measured facts, and both are needed. A picture anchored **in** a
+        paragraph — inline or at a character — is an empty portion of type
+        `Frame` whose content enumeration hands it out. One anchored **to**
+        the paragraph shows no portion at all, and is instead named by the
+        paragraph's own content enumeration. Asking every picture in the
+        document where it is instead costs three UNO calls apiece, and a real
+        guide holds 566 of them: 806ms to say which stand in a selection.
+        """
+        paragraphs, _, _ = self._paragraphs_over(doc, address)
+        if paragraphs is None:
+            return self._graphics(doc)
+        found, seen = [], set()
+
+        def keep(one):
+            if not _supports(one, GRAPHIC_SERVICE):
+                return
+            name = _get_property(one, "Name", None)
+            if name in seen:
+                return
+            seen.add(name)
+            found.append(one)
+
+        for paragraph in paragraphs:
+            try:
+                anchored = paragraph.createContentEnumeration(
+                    "com.sun.star.text.TextContent")
+                while anchored.hasMoreElements():
+                    keep(anchored.nextElement())
+            except Exception as e:
+                logger.info(f"A paragraph would not say what hangs on it: {e}")
+            try:
+                portions = paragraph.createEnumeration()
+            except Exception as e:
+                logger.info(f"Could not read a paragraph's portions: {e}")
+                continue
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if _get_property(portion, "TextPortionType",
+                                 "Text") != "Frame":
+                    continue
+                for one in self._contents_of(portion):
+                    keep(one)
+        return found
+
     def _describe_image(self, doc: Any, image: Any, address: Any = "unplaced",
                         paragraph_text: Any = None) -> Dict[str, Any]:
         """
@@ -224,13 +271,18 @@ class ImagesMixin:
                     "scope": {"selection": "picture"}}
 
         try:
+            # A picture found among a paragraph's own contents is in the
+            # scope by construction, and an inline one's anchor cannot be
+            # compared with the body at all — so a comparison that cannot be
+            # made keeps it rather than dropping it.
             covers, scope = (self._comment_scope(doc, address) if number
-                             else self._scope_over(doc, address))
+                             else self._scope_over(doc, address, unknown=True))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
         images = []
-        for image in self._graphics(doc):
+        for image in (self._graphics(doc) if number or address is None
+                      else self._images_over(doc, address)):
             if number:
                 described = self._describe_image(doc, image)
                 if not covers(described["address"]):

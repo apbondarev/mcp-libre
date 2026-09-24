@@ -32,11 +32,17 @@ class FakeImage:
     """
 
     def __init__(self, name, model, paragraph, offset, inline=True, title="",
-                 description="", width=800, height=600, graphic=None):
+                 description="", width=800, height=600, graphic=None,
+                 anchored=None):
         self.Name = name
         self.Title = title
         self.Description = description
-        self.AnchorType = FakeEnum("AS_CHARACTER" if inline else "AT_CHARACTER")
+        # Measured on a live Writer: an inline or at-character picture shows
+        # as an empty portion of type Frame, while one anchored **to** the
+        # paragraph shows no portion at all and is named by the paragraph's
+        # own content enumeration instead.
+        self.AnchorType = FakeEnum(anchored or ("AS_CHARACTER" if inline
+                                                else "AT_CHARACTER"))
         self.Width = width
         self.Height = height
         self.Graphic = graphic if graphic is not None else FakeGraphic()

@@ -213,6 +213,28 @@ class FakeParagraph(FakeRange):
     # and takes "" instead, reading back as None; and PageNumberOffset
     # refuses None the same way.
 
+    def createContentEnumeration(self, service):
+        """What is anchored **to** this paragraph, as a real one answers.
+
+        Measured on a live Writer: a picture anchored to the paragraph shows
+        **no portion at all** — the Frame portions are the inline and
+        at-character ones — and is named here instead. A scoped listing that
+        read only the portions would miss it, silently.
+        """
+        from tests.fakes_values import FakeEnumeration
+        index = self.index
+        held = []
+        for image in getattr(self.model, "images", []) or []:
+            try:
+                kind = getattr(image.AnchorType, "value", image.AnchorType)
+                if kind != "AT_PARAGRAPH":
+                    continue
+                if image.getAnchor().start[0] == index:
+                    held.append(image)
+            except Exception:
+                continue
+        return FakeEnumeration(held)
+
     def getPropertyState(self, name):
         from tests.fakes_values import FakeEnum
         if name.startswith("Char"):

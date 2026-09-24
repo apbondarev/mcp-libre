@@ -1006,6 +1006,10 @@ def writer_doc(paragraphs, caret, selection_spans=(), page=1, images=(),
         doc.redlines = FakeRedlines(entries=[
             FakeRedline(text, *described) for described in redlines])
     doc.images = [FakeImage(model=text, **described) for described in images]
+    # The text holds them too: a paragraph names what is anchored *to* it,
+    # which is the only way a picture anchored that way can be found — it
+    # shows no portion at all. Measured on a live Writer.
+    text.images = doc.images
     doc.pages = pages
     doc.tables = list(tables)
     # A table sits between paragraphs in the body, and a range that runs from

@@ -1364,6 +1364,30 @@ try:
     check("a range before it holds none",
           bridge.list_images({"paragraph": 1, "offset": 0, "length": 5},
                              doc=doc)["count"], 0)
+    # A picture handed back by a listing must be findable through the address
+    # that listing gave it. On a real guide this answered **nothing**: those
+    # pictures sit in text frames, the body refuses to compare such a range
+    # (IllegalArgumentException, unotext.cxx:975), and a comparison that
+    # could not be made was read as "not in the scope".
+    its_own = bridge.list_images(doc=doc)["images"][0]["address"]
+    check("a picture is found by the address it was listed with",
+          [one["name"] for one
+           in bridge.list_images(its_own, doc=doc)["images"]],
+          [bridge.list_images(doc=doc)["images"][0]["name"]])
+    # And the scope asks its paragraphs rather than every picture in the
+    # document: 566 of them are three UNO calls apiece.
+    asked = {"all": False}
+    every = bridge._graphics
+
+    def _noticed(document):
+        asked["all"] = True
+        return every(document)
+
+    bridge._graphics = _noticed
+    scoped = bridge.list_images({"paragraph": 1}, doc=doc)
+    bridge._graphics = every
+    check("a scoped listing asks its own paragraphs",
+          (scoped["count"], asked["all"]), (1, False))
 
     print("\n--- and read_runs says which run it sits in ---")
     runs = bridge.read_runs({"paragraph": 1}, doc=doc)["runs"]

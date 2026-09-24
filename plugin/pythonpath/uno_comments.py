@@ -104,7 +104,8 @@ class CommentsMixin:
                 break
         return index, last
 
-    def _scope_over(self, doc: Any, address: Any) -> tuple:
+    def _scope_over(self, doc: Any, address: Any,
+                    unknown: bool = False) -> tuple:
         """(predicate on a *range*, description of the scope)
 
         The scope of `_comment_scope` is a predicate on an address — on
@@ -132,11 +133,11 @@ class CommentsMixin:
 
         def covers(item: Any) -> bool:
             try:
-                return self._covers(body, span, item)
+                return self._covers(body, span, item, unknown=unknown)
             except Exception:
                 # A range in a table cell cannot be compared with the body,
                 # and a scope of body paragraphs does not hold it anyway.
-                return False
+                return unknown
 
         return covers, described
 

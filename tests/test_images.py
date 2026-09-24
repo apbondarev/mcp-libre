@@ -92,6 +92,35 @@ def test_lists_the_pictures_by_scope(bridge, doc):
     assert bridge.list_images({"selection": True}, doc=doc)["count"] == 1
 
 
+def test_a_picture_anchored_to_the_paragraph_is_found_too(bridge):
+    # It shows no portion at all — measured — so a scope that read only the
+    # Frame portions would miss it and say the paragraph holds no picture.
+    doc = writer_doc(["Заголовок", "Абзац с картинкой на нём"], caret=(0, 0),
+                     images=[{"name": "Image9", "paragraph": 1, "offset": 0,
+                              "anchored": "AT_PARAGRAPH"}])
+
+    assert [one["name"] for one
+            in bridge.list_images({"paragraph": 1}, doc=doc)["images"]] \
+        == ["Image9"]
+    assert bridge.list_images({"paragraph": 0}, doc=doc)["count"] == 0
+
+
+def test_a_scope_asks_its_paragraphs_not_the_document(bridge, doc,
+                                                      monkeypatch):
+    # Asking every picture in the document where it is costs three UNO calls
+    # apiece, and a real guide holds 566: 806ms to say which stand in a
+    # selection.
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing asked for every picture")
+
+    monkeypatch.setattr(bridge, "_graphics", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_images({"paragraph": 1}, doc=doc)
+
+    assert [one["name"] for one in listed["images"]] == ["Image1"]
+
+
 def test_the_runs_of_a_paragraph_carry_its_pictures(bridge, doc):
     """The picture travels on the run that *starts* at its offset, because
     that is the run whose rewrite destroys it: measured on a live

@@ -50,8 +50,16 @@ MAX_TABLE_ROWS, MAX_TABLE_COLUMNS = 500, 64
 class TablesMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
-    def _covers(self, body: Any, span: Any, element: Any) -> bool:
-        """Whether `span` overlaps `element`, both being ranges of `body`"""
+    def _covers(self, body: Any, span: Any, element: Any,
+                unknown: bool = False) -> bool:
+        """Whether `span` overlaps `element`, both being ranges of `body`
+
+        `unknown` is what to answer when the two cannot be compared at all.
+        Measured: the anchor of an **inline picture** is such a range — the
+        body throws `IllegalArgumentException` (`unotext.cxx:975`) rather
+        than placing it — so answering False there dropped every inline
+        picture from every scoped listing, silently, on any real document.
+        """
         try:
             ends_before = body.compareRegionStarts(element.getEnd(),
                                                    span.getStart()) == 1
@@ -60,7 +68,7 @@ class TablesMixin:
             return not ends_before and not starts_after
         except Exception as e:
             logger.info(f"Could not compare two ranges: {e}")
-            return False
+            return unknown
 
     def _within_one_paragraph(self, body: Any, span: Any) -> bool:
         """Whether a range begins and ends inside the same body paragraph.
