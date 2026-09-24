@@ -127,7 +127,8 @@ class ReferencesMixin:
             return full[len(MASTER_PREFIX):]
         return None
 
-    def _captions(self, doc: Any, place: bool = True) -> List[Dict[str, Any]]:
+    def _captions(self, doc: Any, place: bool = True,
+                  with_lines: bool = True) -> List[Dict[str, Any]]:
         """Every caption number in the document, placed in one walk
 
         `place` off leaves the addresses out — what `_known_targets` wants is
@@ -155,12 +156,16 @@ class ReferencesMixin:
         if not place:
             # No numbers to gather the lines by, but a caption's anchor names
             # its own paragraph for two UNO calls — and the line is the
-            # caption, which is the point of listing them at all.
+            # caption, which is the point of listing them at all. A caller
+            # that only wants the categories and the sequence ids — checking
+            # whether a reference still has its caption — says so: reading
+            # the line of all 547 captions of a real guide is 0.9s.
             unplaced = {}
-            for position, anchor in enumerate(anchors):
-                paragraph = self._paragraph_from(anchor)
-                unplaced[position] = (paragraph.getString()
-                                      if paragraph is not None else "")
+            if with_lines:
+                for position, anchor in enumerate(anchors):
+                    paragraph = self._paragraph_from(anchor)
+                    unplaced[position] = (paragraph.getString()
+                                          if paragraph is not None else "")
             lines = unplaced
 
         found = []
@@ -451,7 +456,8 @@ class ReferencesMixin:
                                                      None)
         return described
 
-    def list_references(self, address: Any = None, number: bool = False,
+    def list_references(self, address: Any = None, start: int = 0,
+                        count: Optional[int] = None, number: bool = False,
                         doc: Any = None) -> Dict[str, Any]:
         """
         The cross-references of a document, each with what it points at
@@ -471,17 +477,37 @@ class ReferencesMixin:
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        fields = self._fields_of_service(doc, REFERENCE_SERVICE)
+        if address is not None and not number:
+            # A reference is a field, and a field is a portion of its own
+            # paragraph: the scope reads its paragraphs rather than every
+            # field the document has, which is 1.1s on a real guide.
+            fields = [one for one in self._fields_over(doc, address)
+                      if _supports(one, REFERENCE_SERVICE)]
+        else:
+            fields = self._fields_of_service(doc, REFERENCE_SERVICE)
         anchors, kept = [], []
         for field in fields:
             try:
-                anchors.append(field.getAnchor())
+                anchor = field.getAnchor()
             except Exception as e:
                 logger.info(f"A reference would not say where it is: {e}")
                 continue
+            if address is not None and not covers(anchor):
+                continue
+            anchors.append(anchor)
             kept.append(field)
+
+        total = len(kept)
+        window = max(1, int(DEFAULT_TARGET_REPORTS if count is None
+                            else count))
+        begin = max(0, int(start or 0))
+        kept = kept[begin:begin + window]
+        anchors = anchors[begin:begin + window]
         # 926 references of a real guide were placed by one sweep of the body
-        # at a cost of 12 seconds; an anchor apiece is two UNO calls.
+        # at a cost of 12 seconds; an anchor apiece is two UNO calls — and
+        # only the window is held, since a listing that holds a thousand
+        # fills the anchor store, whose eviction has been measured to take
+        # the office down.
         placed = self._place_all(doc, anchors, number)
 
         known = self._known_targets(doc)
@@ -501,12 +527,15 @@ class ReferencesMixin:
                 "address": located,
                 "broken": not self._target_is_there(target, known),
             }
-            if not covers(described["address"] if number else anchor):
+            if number and not covers(described["address"]):
                 continue
             references.append(described)
 
         return {"success": True, "references": references,
                 "count": len(references),
+                "total": total,
+                "start": begin,
+                "more": begin + len(references) < total,
                 "broken": sum(1 for one in references if one["broken"]),
                 "order": "reading" if number
                          else "as the document names them",
@@ -521,7 +550,7 @@ class ReferencesMixin:
             logger.info(f"This document keeps no reference marks: {e}")
             reference_marks = set()
         captions = {}
-        for one in self._captions(doc, place=False):
+        for one in self._captions(doc, place=False, with_lines=False):
             captions.setdefault(one["category"], set()).add(one["sequence_id"])
         return {
             "bookmark": set(marks.getElementNames()) if marks else set(),

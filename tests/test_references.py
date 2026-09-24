@@ -208,6 +208,27 @@ def test_the_listing_is_paged_because_each_heading_is_held(bridge):
     assert all("_range" not in one for one in rest["targets"])
 
 
+def test_the_reference_listing_is_paged_and_scoped_by_portions(bridge, doc,
+                                                               monkeypatch):
+    for _ in range(3):
+        bridge.insert_cross_reference({"paragraph": 3, "offset": 0,
+                                       "length": 0}, {"heading": 0}, doc=doc)
+
+    page = bridge.list_references(count=2, doc=doc)
+
+    assert (page["count"], page["total"], page["more"]) == (2, 3, True)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing read every field")
+
+    monkeypatch.setattr(bridge, "_fields_of_service", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    scoped = bridge.list_references({"paragraph": 3}, doc=doc)
+
+    assert scoped["count"] == 3
+
+
 def test_the_numbers_of_the_targets_come_when_asked_for(bridge, doc):
     listed = bridge.list_reference_targets(kinds=["heading"], number=True,
                                            doc=doc)

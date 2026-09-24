@@ -92,6 +92,16 @@ class ReferenceTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "start": {
+                        "type": "integer",
+                        "description": "Which reference of the answer to begin at, for paging through a document that holds many",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many references to report. 200 when nobody says, and a default rather than a limit — a real guide holds 926, each held by an anchor. `total` says how many there are and `more` whether another call is worth making",
+                        "default": 200
+                    },
                     "number": {
                         "type": "boolean",
                         "description": "Work out each reference's paragraph number as well — a sweep of the body, 12s for the 926 references of a real guide, where the anchors cost two UNO calls apiece",
@@ -242,14 +252,17 @@ class ReferenceTools:
                                                       start=start, count=count,
                                                       number=number, doc=doc)
 
-    def list_references_live(self, address: Any = None, number: bool = False,
+    def list_references_live(self, address: Any = None, start: int = 0,
+                             count: Optional[int] = None,
+                             number: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """List the cross-reference fields and say which are broken"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_references(address=address,
-                                               number=number, doc=doc)
+        return self.uno_bridge.list_references(address=address, start=start,
+                                               count=count, number=number,
+                                               doc=doc)
 
     def insert_caption_live(self, text: str, image: Optional[str] = None,
                             table: Optional[str] = None, address: Any = None,
