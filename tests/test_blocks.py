@@ -93,6 +93,21 @@ def test_selecting_a_block(bridge, doc):
         == selected["selected"]
 
 
+def test_the_runs_of_a_long_range_can_be_asked_for_a_few_at_a_time(bridge,
+                                                                   doc):
+    # A table of contents or a section is anchored as one range of hundreds
+    # of paragraphs; reading fifty of them to find out whether an address
+    # still reaches something was 374ms of work nobody asked for.
+    whole = bridge.read_runs({"paragraph": 1, "through": 6}, doc=doc)
+    narrow = bridge.read_runs({"paragraph": 1, "through": 6}, paragraphs=2,
+                              doc=doc)
+
+    assert whole["paragraphs_read"] == 6
+    assert narrow["paragraphs_read"] == 2
+    assert narrow["truncated"] is True
+    assert narrow["truncated_at"] == 2
+
+
 def test_selecting_a_number_of_paragraphs_from_a_place(bridge, doc):
     # Every route to a paragraph *number* on a long document is a sweep of
     # the body — the outline 3.2s, a text search 2.9s — so a block is asked

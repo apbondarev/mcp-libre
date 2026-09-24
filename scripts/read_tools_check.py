@@ -245,8 +245,12 @@ def check(client, name, named, ground, resolve):
             # hiding it made the script sit for seconds beside a row saying
             # 432 ms — the cost was real and belonged to read_runs.
             mark = time.time()
+            # One paragraph is enough to prove the address reaches something:
+            # a table of contents or a section is anchored as **one** range of
+            # hundreds of paragraphs, and reading fifty of them was 374ms of
+            # the check rather than of the tool.
             read = client.call("read_runs_live",
-                               dict(named, address=anchored[0]))
+                               dict(named, address=anchored[0], paragraphs=1))
             row["resolve_ms"] = int((time.time() - mark) * 1000)
             if not read.get("success") and read.get("code") != "INVALID_ADDRESS":
                 row["state"] = "broken"

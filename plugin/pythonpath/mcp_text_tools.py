@@ -203,6 +203,11 @@ class TextTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "paragraphs": {
+                        "type": "integer",
+                        "description": "How many paragraphs of a many-paragraph range to read — 50 unasked, which is also the cap. A table of contents or a section anchored as one range can be hundreds of paragraphs, and reading fifty of them to find out whether an address still reaches something is work nobody asked for",
+                        "default": 50
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -317,13 +322,14 @@ class TextTools:
                                              allow_protected=allow_protected,
                                              doc=doc)
 
-    def read_runs_live(self, address: Any,
+    def read_runs_live(self, address: Any, paragraphs: Optional[int] = None,
                        document: Optional[str] = None) -> Dict[str, Any]:
         """Read the text at an address as its formatted runs"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.read_runs(address, doc=doc)
+        return self.uno_bridge.read_runs(address,
+                                         paragraphs=paragraphs, doc=doc)
 
     def replace_runs_live(self, address: Any, runs: Any,
                           track_changes: Optional[bool] = None,

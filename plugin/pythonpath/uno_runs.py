@@ -22,9 +22,16 @@ logger = logging.getLogger(__name__)
 class RunsMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
-    def read_runs(self, address: Any, doc: Any = None) -> Dict[str, Any]:
+    def read_runs(self, address: Any, paragraphs: Optional[int] = None,
+                  doc: Any = None) -> Dict[str, Any]:
         """
         The formatted runs the text at an address is made of
+
+        `paragraphs` narrows how many of a many-paragraph range are read —
+        50 unasked, which is also the cap. A table of contents anchored as
+        one range is 257 paragraphs, and reading fifty of them for a caller
+        that only wanted to know the address reaches something was 374ms of
+        honest but unwanted work.
 
         Needed because replacing a mixed-formatting range flattens it: one
         setString over four runs leaves one run, so a monospace term loses its
@@ -74,22 +81,21 @@ class RunsMixin:
         # a search hit is an anchor over part of a paragraph.
         spread = None
         if by_anchor or (isinstance(address, dict) and address.get("selection")):
-            covering = [element for element in self._contents_in(target)
-                        if hasattr(element, "getStart")
-                        or _supports(element, TABLE_SERVICE)]
-            if len([one for one in covering
-                    if not _supports(one, TABLE_SERVICE)]) > 1:
-                spread = True
+            spread = self._covers_several_paragraphs(target)
 
+        window = max(1, min(int(MAX_RUN_PARAGRAPHS if paragraphs is None
+                                else paragraphs), MAX_RUN_PARAGRAPHS))
         block = self._block_of(address, located)
         held = None
         passed = None
         try:
             if spread:
-                runs, tokens, crossed, stopped = self._runs_over(doc, target)
+                runs, tokens, crossed, stopped = self._runs_over(doc, target,
+                                                                 window)
                 read = None
             elif block:
-                runs, read, stopped, passed = self._runs_across(doc, block)
+                runs, read, stopped, passed = self._runs_across(doc, block,
+                                                                window)
             else:
                 paragraph = self._paragraph_of(doc, located, paragraph_cursor)
                 runs = self._runs_in(doc, located, paragraph_cursor,
@@ -120,7 +126,7 @@ class RunsMixin:
                                   "read_table reads them")
             if stopped:
                 result["truncated"] = True
-                result["truncated_at"] = MAX_RUN_PARAGRAPHS
+                result["truncated_at"] = window
             return result
         if by_anchor:
             # The anchor is the address these runs belong to; its number is
@@ -139,7 +145,7 @@ class RunsMixin:
             result["paragraphs_read"] = (read[1] - read[0] + 1) if read else 0
             if stopped:
                 result["truncated"] = True
-                result["truncated_at"] = MAX_RUN_PARAGRAPHS
+                result["truncated_at"] = window
         # Runs belong to one paragraph. When the range reaches further — into
         # a table, say — saying so beats letting a caller believe the runs
         # are the whole of what was asked for.
@@ -153,7 +159,8 @@ class RunsMixin:
             logger.info(f"Could not say what the range reaches: {e}")
             return result
 
-    def _runs_over(self, doc: Any, target: Any) -> tuple:
+    def _runs_over(self, doc: Any, target: Any,
+                   window: int = MAX_RUN_PARAGRAPHS) -> tuple:
         """The runs of every paragraph a range covers, and no numbers at all
 
         A selection or an anchor covering several paragraphs used to be read
@@ -175,7 +182,7 @@ class RunsMixin:
                 continue
             if not hasattr(element, "getStart"):
                 continue
-            if len(held) >= MAX_RUN_PARAGRAPHS:
+            if len(held) >= window:
                 stopped = True
                 break
             token = self._hold_paragraph_anchor(doc, element)
@@ -237,7 +244,8 @@ class RunsMixin:
             first, last = last, first
         return first, last
 
-    def _runs_across(self, doc: Any, block) -> tuple:
+    def _runs_across(self, doc: Any, block,
+                     window: int = MAX_RUN_PARAGRAPHS) -> tuple:
         """The runs of every paragraph in a block, and the tables in between
 
         One walk for the whole block: reaching a paragraph by index is a walk
@@ -266,7 +274,7 @@ class RunsMixin:
             if index < first:
                 index += 1
                 continue
-            if index > last or index - first >= MAX_RUN_PARAGRAPHS:
+            if index > last or index - first >= window:
                 stopped = index <= last
                 break
             located = {"paragraph": index, "offset": 0,

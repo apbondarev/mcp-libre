@@ -682,6 +682,32 @@ class AddressMixin:
                       if hasattr(one, "getStart")]
         return paragraphs, described, number
 
+    def _covers_several_paragraphs(self, text_range: Any) -> bool:
+        """Whether a range holds more than one paragraph — asked lazily
+
+        `_contents_in` lists everything a range covers, and a table of
+        contents anchored as one range is 257 paragraphs: enumerating them
+        all to learn that there is *more than one* cost 100ms of every
+        `read_runs` over such an address. The second paragraph is the answer,
+        so the enumeration stops there.
+        """
+        try:
+            owner = text_range.getText()
+            over = owner.createTextCursorByRange(text_range.getStart())
+            over.gotoRange(text_range.getEnd(), True)
+            enumeration = over.createEnumeration()
+            seen = 0
+            while enumeration.hasMoreElements():
+                element = enumeration.nextElement()
+                if not hasattr(element, "getStart"):
+                    continue
+                seen += 1
+                if seen > 1:
+                    return True
+        except Exception as e:
+            logger.info(f"A range would not say how far it reaches: {e}")
+        return False
+
     def _paragraph_of(self, doc: Any, located: Dict[str, Any],
                       paragraph_cursor: Any = None) -> Any:
         """
