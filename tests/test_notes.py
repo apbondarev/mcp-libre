@@ -62,6 +62,35 @@ def test_listing_says_what_each_note_holds(bridge, doc):
     assert bridge.list_notes(kind="endnote", doc=doc)["count"] == 1
 
 
+def test_a_note_is_named_by_an_anchor_and_numbered_when_asked(bridge, doc):
+    bridge.add_note({"paragraph": 1, "offset": 0, "length": 6}, "Entry point.",
+                    doc=doc)
+
+    one, = bridge.list_notes(doc=doc)["notes"]
+
+    assert one["address"]["anchor"]["type"] == "text"
+    assert "paragraph" not in one["address"]
+    assert bridge.list_notes(number=True,
+                             doc=doc)["notes"][0]["address"]["paragraph"] == 1
+
+
+def test_a_scoped_listing_reads_its_own_paragraphs(bridge, doc, monkeypatch):
+    # The scope was a predicate on numbers, so the address was numbered and
+    # then every note in the document was placed by another walk of the body
+    # to be thrown away. A note's mark is a character of its paragraph.
+    bridge.add_note({"paragraph": 1, "offset": 0, "length": 6}, "Entry point.",
+                    doc=doc)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing swept the body")
+
+    monkeypatch.setattr(bridge, "_addresses_in_order", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    assert bridge.list_notes({"paragraph": 1}, doc=doc)["count"] == 1
+    assert bridge.list_notes({"paragraph": 0}, doc=doc)["count"] == 0
+
+
 def test_a_kind_nobody_knows(bridge, doc):
     assert bridge.list_notes(kind="marginalia",
                              doc=doc)["code"] == "INVALID_PARAMETER"

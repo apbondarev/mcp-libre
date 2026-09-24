@@ -35,6 +35,11 @@ class NoteTools:
                         "enum": ["footnote", "endnote"],
                         "description": "Only the footnotes, or only the endnotes"
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph each note's mark stands in, by number, and report them in reading order. That is a sweep of the body, and for a scoped call another walk to number the scope — where the anchor each note carries names its mark for two UNO calls",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -165,13 +170,15 @@ class NoteTools:
             "handler": self.delete_note_live
         }
 
-    def list_notes_live(self, address: Any = None, kind: Optional[str] = None,
+    def list_notes_live(self, address: Any = None,
+                        kind: Optional[str] = None, number: bool = False,
                         document: Optional[str] = None) -> Dict[str, Any]:
-        """List the footnotes and endnotes with their marks"""
+        """The footnotes and endnotes of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_notes(address=address, kind=kind, doc=doc)
+        return self.uno_bridge.list_notes(address=address, kind=kind,
+                                          number=number, doc=doc)
 
     def add_note_live(self, address: Any, text: str, kind: str = "footnote",
                       label: Optional[str] = None,

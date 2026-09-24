@@ -28,7 +28,8 @@ Measured on a live Writer, and each fact shapes a tool or a guard:
 from typing import Any, Dict, List, Optional
 import logging
 
-from uno_values import AddressError, _get_property, _text_payload, refusal
+from uno_values import (AddressError, _get_property, _supports,
+                        _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -54,12 +55,54 @@ class NotesMixin:
             logger.info(f"Could not read the notes: {e}")
         return found
 
-    def _notes(self, doc: Any) -> List[Dict[str, Any]]:
-        """Every footnote and endnote, described and placed in one walk"""
+    def _notes_over(self, doc: Any, address: Any) -> List[tuple]:
+        """The notes whose marks stand in the paragraphs a scope covers
+
+        A note's mark is a character of its paragraph — the portion is of
+        type `Footnote` and carries the note itself, measured — so a
+        paragraph names its own notes and nothing has to ask the document for
+        all of them and then place each one.
+        """
+        paragraphs, _, _ = self._paragraphs_over(doc, address)
+        if paragraphs is None:
+            return self._all_notes(doc)
+        found = []
+        for paragraph in paragraphs:
+            try:
+                portions = paragraph.createEnumeration()
+            except Exception as e:
+                logger.info(f"Could not read a paragraph's portions: {e}")
+                continue
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if _get_property(portion, "TextPortionType",
+                                 "Text") != "Footnote":
+                    continue
+                note = _get_property(portion, "Footnote", None)
+                if note is None:
+                    continue
+                found.append((note, "endnote"
+                              if _supports(note, ENDNOTE_SERVICE)
+                              else "footnote"))
+        return found
+
+    def _all_notes(self, doc: Any) -> List[tuple]:
+        """(note, kind) for every footnote and endnote the document holds"""
         held = [(note, "footnote")
                 for note in self._notes_of(doc, "getFootnotes")]
         held += [(note, "endnote")
                  for note in self._notes_of(doc, "getEndnotes")]
+        return held
+
+    def _notes(self, doc: Any, over: Optional[List[tuple]] = None,
+               number: bool = True) -> List[Dict[str, Any]]:
+        """Every footnote and endnote, described and placed in one walk
+
+        `number` places them by paragraph number, which is a sweep of the
+        body; without it each is named by an anchor on its mark, which is
+        two UNO calls and says the same thing to every tool.
+        """
+        held = self._all_notes(doc) if over is None else over
 
         anchors, kept = [], []
         for note, kind in held:
@@ -69,7 +112,10 @@ class NotesMixin:
                 logger.info(f"A note would not say where it is: {e}")
                 continue
             kept.append((note, kind))
-        placed = self._addresses_in_order(doc, anchors)
+        placed = (self._addresses_in_order(doc, anchors) if number
+                  else [{"anchor": self._anchor_handle(
+                      self._hold_anchor(doc, anchor), "text")}
+                      for anchor in anchors])
 
         found = []
         for (note, kind), anchor, address in zip(kept, anchors, placed):
@@ -82,6 +128,8 @@ class NotesMixin:
                 "address": address,
                 "note": note,
             })
+        if not number:
+            return found
         found.sort(key=lambda one: (
             (one["address"] or {}).get("paragraph")
             if (one["address"] or {}).get("paragraph") is not None else 10 ** 9,
@@ -98,13 +146,20 @@ class NotesMixin:
             return fallback
 
     def list_notes(self, address: Any = None, kind: Optional[str] = None,
-                   doc: Any = None) -> Dict[str, Any]:
+                   number: bool = False, doc: Any = None) -> Dict[str, Any]:
         """
         The footnotes and endnotes of a document, with their text and where
         their marks sit
 
         Scoped like the comments — the whole document, a section, a
         paragraph, a range or the selection.
+
+        **A scope reads its own paragraphs.** The scope used to be a
+        predicate on paragraph numbers, so the address was numbered (a walk)
+        and then every note in the document was placed by another walk to be
+        thrown away. A note's mark is a character of its paragraph, carried
+        by a portion of type `Footnote`, so the paragraphs name their own.
+        `number: true` buys the sweep, the numbers and reading order.
         """
         doc, error = self._writer_document(doc, "Listing notes")
         if error:
@@ -114,19 +169,32 @@ class NotesMixin:
                            f"kind is \"footnote\" or \"endnote\", got {kind!r}")
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address, unknown=True))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
+        if number:
+            described = self._notes(doc)
+            kept = [one for one in described if covers(one["address"])]
+        else:
+            over = (None if address is None
+                    else self._notes_over(doc, address))
+            described = self._notes(doc, over=over, number=False)
+            kept = [one for one in described
+                    if address is None
+                    or covers(self._safely(lambda: one["note"].getAnchor(),
+                                           None))]
         notes = [{key: value for key, value in one.items() if key != "note"}
-                 for one in self._notes(doc)
-                 if covers(one["address"])
-                 and (kind is None or one["kind"] == kind)]
+                 for one in kept
+                 if kind is None or one["kind"] == kind]
         return {"success": True, "notes": notes, "count": len(notes),
                 "footnotes": sum(1 for one in notes
                                  if one["kind"] == "footnote"),
                 "endnotes": sum(1 for one in notes
                                 if one["kind"] == "endnote"),
+                "order": "reading" if number
+                         else "as the document names them",
                 "scope": scope}
 
     def add_note(self, address: Any, text: str, kind: str = "footnote",
