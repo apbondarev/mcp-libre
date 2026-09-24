@@ -152,6 +152,28 @@ def test_listing_by_paragraph_asks_which_sections_cover_it(bridge, doc):
     assert bridge.list_sections({"paragraph": 0}, doc=doc)["count"] == 0
 
 
+def test_a_section_outside_the_scope_is_never_described(bridge, doc,
+                                                       monkeypatch):
+    # A real guide holds 117 sections and describing one is a dozen property
+    # reads; the scope's answer was three of them. So a section is thrown out
+    # by its anchor, before anything is read off it or held.
+    bridge.create_section({"paragraph": 1, "through": 2}, "Раздел", doc=doc)
+    bridge.create_section({"paragraph": 3}, "Другой", doc=doc)
+    described = []
+    telling = bridge._describe_section
+
+    def counted(section, name, located):
+        described.append(name)
+        return telling(section, name, located)
+
+    monkeypatch.setattr(bridge, "_describe_section", counted)
+
+    listed = bridge.list_sections({"paragraph": 2}, doc=doc)
+
+    assert [one["name"] for one in listed["sections"]] == ["Раздел"]
+    assert described == ["Раздел"]
+
+
 def test_counting_what_is_protected_and_hidden(bridge, doc):
     bridge.create_section({"paragraph": 1}, "Один", protected=True, doc=doc)
     bridge.create_section({"paragraph": 3}, "Два", visible=False, doc=doc)

@@ -106,31 +106,43 @@ class SectionsMixin:
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        names, held, anchors = [], [], []
-        for name in sections.getElementNames():
-            try:
-                section = sections.getByName(name)
-                anchors.append(section.getAnchor())
-            except Exception as e:
-                logger.info(f"Could not read the section {name}: {e}")
-                continue
-            names.append(name)
-            held.append(section)
-        placed = self._place_all(doc, anchors, number)
-
         # A section covers whole paragraphs and usually several of them, so
         # "which sections is paragraph 2 in?" is a question about overlap,
         # not about where a section starts — the scope the comments use would
         # answer only with the sections that begin in that paragraph.
         overlaps = self._overlap_test(doc, address)
+
+        names, held, anchors = [], [], []
+        for name in sections.getElementNames():
+            try:
+                section = sections.getByName(name)
+                anchor = section.getAnchor()
+            except Exception as e:
+                logger.info(f"Could not read the section {name}: {e}")
+                continue
+            # Thrown out **before** it is anchored and described: a real
+            # guide holds 117 sections, and describing one is a dozen
+            # property reads. The scope's answer was three of them.
+            if not number:
+                if overlaps is not None:
+                    if not overlaps(anchor):
+                        continue
+                elif address is not None and not covers(anchor):
+                    continue
+            names.append(name)
+            held.append(section)
+            anchors.append(anchor)
+        placed = self._place_all(doc, anchors, number)
+
         found = []
         for name, section, located, anchor in zip(names, held, placed, anchors):
             described = self._describe_section(section, name, located)
-            if overlaps is not None:
-                if not overlaps(anchor):
+            if number:
+                if overlaps is not None:
+                    if not overlaps(anchor):
+                        continue
+                elif not covers(described["address"]):
                     continue
-            elif not covers(described["address"] if number else anchor):
-                continue
             found.append(described)
         if number:
             found.sort(key=lambda one:
