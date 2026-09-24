@@ -146,7 +146,67 @@ def test_a_scoped_listing_answers_about_that_scope_alone(bridge, doc):
     listed = bridge.list_hyperlinks({"paragraph": 2}, doc=doc)
 
     assert listed["count"] == 2
-    assert all(one["address"]["paragraph"] == 2 for one in listed["links"])
+    # Each link is named by an anchor over the portions it spans: working out
+    # a paragraph number means walking the body to it.
+    assert all(one["address"]["anchor"]["type"] == "text"
+               for one in listed["links"])
+    assert [bridge._resolve_address(doc, one["address"]).getString()
+            for one in listed["links"]] == [one["text"]
+                                            for one in listed["links"]]
+    assert all(one["address"]["paragraph"] == 2 for one
+               in bridge.list_hyperlinks({"paragraph": 2}, number=True,
+                                         doc=doc)["links"])
+
+
+def test_writers_own_heading_mark_is_not_called_broken(bridge, doc):
+    # Measured on a real guide: every one of its 256 table-of-contents links
+    # points at a __RefHeading__ mark, and those are in none of the
+    # collections UNO offers — not the bookmarks, not the reference marks —
+    # so the whole contents was reported broken.
+    bridge.format_range({"paragraph": 1, "offset": 0, "length": 5},
+                        link="#__RefHeading__5636_1566568644", doc=doc)
+
+    one, = [link for link in bridge.list_hyperlinks({"paragraph": 1},
+                                                    doc=doc)["links"]
+            if link["url"].startswith("#__RefHeading__")]
+
+    assert one["internal"] is True
+    assert one["broken"] is None
+    assert "unknown" in one["note"]
+
+
+def test_a_name_with_a_space_in_it_is_read_as_a_name(bridge, doc):
+    # An internal link carries its target as a URL, so a space arrives as
+    # %20 — and comparing that with the bookmark's name called it broken.
+    bridge.add_bookmark({"paragraph": 2}, "конец раздела", doc=doc)
+    bridge.format_range({"paragraph": 1, "offset": 0, "length": 5},
+                        link="#%D0%BA%D0%BE%D0%BD%D0%B5%D1%86%20%D1%80%D0%B0"
+                             "%D0%B7%D0%B4%D0%B5%D0%BB%D0%B0", doc=doc)
+
+    one, = [link for link in bridge.list_hyperlinks({"paragraph": 1},
+                                                    doc=doc)["links"]
+            if link["url"].startswith("#%")]
+
+    assert one["points_at"] == "конец раздела"
+    assert one["broken"] is False
+
+
+def test_a_scoped_listing_never_walks_to_its_paragraphs(bridge, doc,
+                                                        monkeypatch):
+    # The scope used to be a predicate on numbers: the address was numbered,
+    # then the body walked from its start until that number came up — 4.5s on
+    # a real guide for a selection two thirds of the way through it.
+    link_up(bridge, doc)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing walked the body")
+
+    monkeypatch.setattr(bridge, "_body_paragraphs_only", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_hyperlinks({"paragraph": 2}, doc=doc)
+
+    assert listed["count"] == 2
 
 
 def test_a_block_of_paragraphs_scopes_to_all_of_them(bridge, doc):
@@ -155,4 +215,6 @@ def test_a_block_of_paragraphs_scopes_to_all_of_them(bridge, doc):
     listed = bridge.list_hyperlinks({"paragraph": 1, "through": 2}, doc=doc)
 
     assert listed["count"] == 3
-    assert listed["scope"] == {"paragraphs": [1, 2]}
+    assert listed["scope"] == {"paragraph": 1, "through": 2}
+    assert bridge.list_hyperlinks({"paragraph": 1, "through": 2}, number=True,
+                                  doc=doc)["scope"] == {"paragraphs": [1, 2]}

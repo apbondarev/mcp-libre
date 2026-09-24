@@ -27,7 +27,14 @@ import logging
 
 from uno_values import _get_property, _text_payload, refusal
 
+from urllib.parse import unquote
+
 logger = logging.getLogger(__name__)
+
+# What Writer names its own mark on a heading — the target of every entry of
+# a table of contents. A bookmark given such a name vanishes from
+# getBookmarks(), measured, and nothing else lists them either.
+REFERENCE_HEADING = "__RefHeading__"
 
 LINK_PROPERTIES = ("HyperLinkURL", "HyperLinkTarget", "HyperLinkName",
                    "UnvisitedCharStyleName", "VisitedCharStyleName")
@@ -57,32 +64,49 @@ class LinksMixin:
             return one, one
         return None
 
-    def _links_in(self, doc: Any,
-                  window: Optional[tuple] = None) -> List[Dict[str, Any]]:
+    def _body_paragraphs_only(self, doc: Any):
+        """The body's paragraphs, one at a time, tables passed over"""
+        paragraphs = doc.getText().createEnumeration()
+        while paragraphs.hasMoreElements():
+            yield paragraphs.nextElement()
+
+    def _links_in(self, doc: Any, window: Optional[tuple] = None,
+                  over: Optional[List[Any]] = None,
+                  number: bool = True) -> List[Dict[str, Any]]:
         """Every hyperlink in the body, in one walk of it.
 
         Consecutive portions carrying the same URL are one link: a bold word
         inside a link is a portion of its own, and reporting it separately
         would count one link twice.
+
+        `over` is the paragraphs a scope covers, taken from the range rather
+        than counted to: walking the body until paragraph 4069 came up was
+        2.5s of the 4.5s a scoped call cost. Without `number` each link is
+        named by an anchor over the portions it spans, which is what it is.
         """
         found: List[Dict[str, Any]] = []
-        try:
-            paragraphs = doc.getText().createEnumeration()
-        except Exception as e:
-            logger.error(f"Could not walk the document for its links: {e}")
-            return found
+        if over is not None:
+            # The scope's own paragraphs, handed over by a caller that got
+            # them from the range: no counting, and no walk to reach them.
+            walk = iter(over)
+        else:
+            try:
+                walk = self._body_paragraphs_only(doc)
+            except Exception as e:
+                logger.error(f"Could not walk the document for its links: {e}")
+                return found
 
         first, last = window if window else (0, None)
         index = 0
-        while paragraphs.hasMoreElements():
-            paragraph = paragraphs.nextElement()
+        for paragraph in walk:
             if not hasattr(paragraph, "createEnumeration"):
                 continue
-            if last is not None and index > last:
-                break
-            if index < first:
-                index += 1
-                continue
+            if over is None:
+                if last is not None and index > last:
+                    break
+                if index < first:
+                    index += 1
+                    continue
             offset = 0
             current = None
             portions = paragraph.createEnumeration()
@@ -108,7 +132,11 @@ class LinksMixin:
                             "paragraph": index,
                             "offset": offset,
                             "_end": offset + len(body),
+                            "_from": portion,
+                            "_to": portion,
                         }
+                    if current is not None:
+                        current["_to"] = portion
                 elif current:
                     found.append(current)
                     current = None
@@ -120,25 +148,54 @@ class LinksMixin:
 
         targets = None
         for link in found:
-            link["address"] = {"paragraph": link["paragraph"],
-                               "offset": link["offset"],
-                               "length": link["_end"] - link["offset"]}
+            if number:
+                link["address"] = {"paragraph": link["paragraph"],
+                                   "offset": link["offset"],
+                                   "length": link["_end"] - link["offset"]}
+            else:
+                link["address"] = {"anchor": self._anchor_handle(
+                    self._hold_anchor(doc, self._span_of(link)), "text")}
             link.pop("_end", None)
+            link.pop("_from", None)
+            link.pop("_to", None)
             link.pop("paragraph", None)
             link.pop("offset", None)
             link["text"] = _text_payload(link["text"])["text"]
             link["internal"] = link["url"].startswith("#")
             if link["internal"]:
-                if targets is None:
-                    targets = self._link_targets(doc)
-                wanted = link["url"][1:].split("|", 1)[0]
+                # A name with a space in it arrives percent-escaped, as a URL,
+                # and comparing it that way calls a sound link broken.
+                wanted = unquote(link["url"][1:].split("|", 1)[0])
                 link["points_at"] = wanted
-                link["broken"] = wanted not in targets
+                if wanted.startswith(REFERENCE_HEADING):
+                    # Writer's own mark on a heading, which every entry of a
+                    # table of contents points at. Measured on a real guide:
+                    # it is in **none** of the collections UNO offers — not
+                    # the bookmarks, the sections, the reference marks, the
+                    # frames, the tables or the pictures — so whether it is
+                    # still there cannot be known from here, and all 256 of
+                    # that document's contents links were reported broken.
+                    link["broken"] = None
+                    link["note"] = ("this is one of Writer's own heading "
+                                    "marks; UNO lists them nowhere, so "
+                                    "whether it is still there is unknown")
+                else:
+                    if targets is None:
+                        targets = self._link_targets(doc)
+                    link["broken"] = wanted not in targets
             else:
                 # Nothing here may reach the network, so an http link is
                 # neither claimed sound nor claimed broken.
                 link["broken"] = None
         return found
+
+    def _span_of(self, link: Dict[str, Any]) -> Any:
+        """The range a link covers, from the portions it was built out of"""
+        start, end = link.get("_from"), link.get("_to")
+        owner = start.getText()
+        span = owner.createTextCursorByRange(start.getStart())
+        span.gotoRange(end.getEnd(), True)
+        return span
 
     def _link_targets(self, doc: Any) -> set:
         """Every name a link inside this document could point at"""
@@ -158,7 +215,7 @@ class LinksMixin:
             logger.info(f"Could not gather the headings: {e}")
         return names
 
-    def list_hyperlinks(self, address: Any = None,
+    def list_hyperlinks(self, address: Any = None, number: bool = False,
                         doc: Any = None) -> Dict[str, Any]:
         """
         The hyperlinks of a document, with what each one points at
@@ -166,18 +223,41 @@ class LinksMixin:
         A link into the same document says whether its target is still there;
         one pointing outside cannot be checked at all from here, and says so
         by leaving `broken` unknown rather than guessing.
+
+        **A scope walks its own paragraphs.** It used to be a predicate on
+        paragraph numbers, so the address was numbered first and then the body
+        was walked from its beginning until that number came up — 4.5s to
+        report the links of a selection two thirds of the way through a real
+        guide, of which the reading was a hundredth. The paragraphs come from
+        the range now, and each link is named by an anchor over the portions
+        it spans; `number: true` buys the walk and the paragraph numbers.
         """
         doc, error = self._writer_document(doc, "Listing hyperlinks")
         if error:
             return error
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
-        links = [link for link in self._links_in(doc, self._window_of(scope))
-                 if covers(link["address"])]
+        if number:
+            links = [link for link
+                     in self._links_in(doc, self._window_of(scope))
+                     if covers(link["address"])]
+        else:
+            paragraphs = None
+            if address is not None:
+                try:
+                    paragraphs, _, _ = self._paragraphs_over(doc, address)
+                except AddressError as e:
+                    return refusal("INVALID_ADDRESS", e)
+            links = self._links_in(doc, over=paragraphs, number=False)
+            if address is not None:
+                links = [link for link in links
+                         if covers(self._anchor_range(
+                             doc, link["address"]["anchor"]["anchorId"]))]
         return {"success": True, "links": links, "count": len(links),
                 "distinct_urls": len({link["url"] for link in links}),
                 "internal": sum(1 for link in links if link["internal"]),

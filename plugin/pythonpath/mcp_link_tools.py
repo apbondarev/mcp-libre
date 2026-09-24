@@ -31,6 +31,11 @@ class LinkTools:
                             "selection": {"type": "boolean"}
                         }
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph each link sits in, by number. That means walking the body from its beginning to the scope — 4.5s for a selection two thirds of the way through a real guide — where the anchor each link carries names the same words",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -81,13 +86,14 @@ class LinkTools:
             "handler": self.remove_hyperlink_live
         }
 
-    def list_hyperlinks_live(self, address: Any = None,
+    def list_hyperlinks_live(self, address: Any = None, number: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """List the hyperlinks of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_hyperlinks(address=address, doc=doc)
+        return self.uno_bridge.list_hyperlinks(address=address, number=number,
+                                               doc=doc)
 
     def remove_hyperlink_live(self, address: Any = None,
                               url: Optional[str] = None, all: bool = False,
