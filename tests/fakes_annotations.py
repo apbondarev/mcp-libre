@@ -184,7 +184,15 @@ class FakeField:
         return name in self.getSupportedServiceNames()
 
     def getAnchor(self):
-        return FakeRange(self._model, (self._paragraph, self._offset),
+        # Where it sits now, worked out from the portions — a field reached
+        # through its paragraph knows no more than a field reached through
+        # getTextFields(), and a real one answers the same either way.
+        model = self._model
+        if model is not None:
+            span = model.field_span(self)
+            if span is not None:
+                return FakeRange(model, span[0], span[1])
+        return FakeRange(model, (self._paragraph, self._offset),
                          (self._paragraph, self._offset + len(self._shows)))
 
 

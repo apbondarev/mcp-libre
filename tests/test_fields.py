@@ -112,6 +112,69 @@ def test_fields_can_be_asked_for_by_place(bridge, doc):
     assert bridge.list_fields({"paragraph": 1}, doc=doc)["count"] == 1
 
 
+# Asking a document for every field it has costs every field it has — 0.74s
+# for the 1536 of a real guide — and a scoped call used to pay that to answer
+# about one paragraph. A field is a portion of the paragraph it sits in.
+
+def test_the_document_is_walked_only_as_far_as_the_window(bridge):
+    walked = {"pulled": 0}
+    fields = [FakeField(f"{number}", command="Page number",
+                        service="PageNumber") for number in range(40)]
+    doc = writer_doc(["раз"], caret=(0, 0), portions={
+        0: [{"kind": "TextField", "text": f"{number}", "field": field}
+            for number, field in enumerate(fields)]})
+    each = bridge._each_text_field
+
+    def counted(document):
+        for one in each(document):
+            walked["pulled"] += 1
+            yield one
+
+    bridge._each_text_field = counted
+    listed = bridge.list_fields(count=3, doc=doc)
+    bridge._each_text_field = each
+
+    assert listed["count"] == 3
+    assert walked["pulled"] <= 5, f"pulled {walked['pulled']} fields for three"
+
+
+def test_a_scope_reads_its_own_paragraphs(bridge, doc, monkeypatch):
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing walked every field")
+
+    monkeypatch.setattr(bridge, "_text_fields", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_fields({"paragraph": 1}, doc=doc)
+
+    assert listed["count"] == 1
+    assert listed["fields"][0]["address"]["anchor"]["type"] == "text"
+
+
+def test_the_listing_is_paged_because_every_field_is_held(bridge):
+    # An anchor apiece, and the store keeps 2000: a document of 1536 fields
+    # would fill three quarters of it to answer one call.
+    fields = [FakeField(f"{number}", command="Page number",
+                        service="PageNumber") for number in range(5)]
+    doc = writer_doc(["раз два три четыре пять"], caret=(0, 0), portions={
+        0: [{"kind": "TextField", "text": f"{number}", "field": field}
+            for number, field in enumerate(fields)]})
+
+    page = bridge.list_fields(count=2, doc=doc)
+
+    assert page["count"] == 2
+    assert page["more"] is True
+    # The walk stops one field past the window, so how many there are in all
+    # is not known — and the answer says so rather than guessing.
+    assert page["total"] is None
+    assert page["kinds"] == ["page_number"]
+
+    whole = bridge.list_fields(count=100, doc=doc)
+    assert (whole["count"], whole["total"], whole["more"]) == (5, 5, False)
+    rest = bridge.list_fields(start=2, count=100, doc=doc)
+    assert (rest["count"], rest["more"]) == (3, False)
+
+
 def test_a_field_showing_nothing_does_not_hide_its_neighbour(bridge):
     """A title the document has not got is an empty field, and an empty
     range overlaps every address beside it — which left the field next to it

@@ -49,6 +49,12 @@ WORD = re.compile(r"[^\W\d_]+(?:['\u2019-][^\W\d_]+)*")
 DEFAULT_SPELLING_RESULTS = 50
 MAX_SPELLING_RESULTS = 200
 
+# What a window nobody asked about holds when a document's fields are listed.
+# A default, not a ceiling: `count` may ask for the lot. It exists because
+# every field reported is held by an anchor, and a real guide has 1536 of
+# them against the 2000 the anchor store keeps.
+DEFAULT_FIELD_REPORTS = 200
+
 
 def _locale(language: str) -> Any:
     """

@@ -23,8 +23,9 @@ it is what makes them dangerous to the text tools:
 from typing import Any, Dict, List, Optional
 import logging
 
-from uno_values import (ANNOTATION_SERVICE, AddressError, _get_property,
-                        _supports, _text_payload, refusal)
+from uno_values import (ANNOTATION_SERVICE, AddressError,
+                        DEFAULT_FIELD_REPORTS, _get_property, _supports,
+                        _text_payload, refusal)
 
 logger = logging.getLogger(__name__)
 
@@ -57,23 +58,34 @@ class FieldsMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
     def _text_fields(self, doc: Any) -> List[Any]:
-        """Every field in the document except the comments.
+        """Every field in the document except the comments"""
+        return list(self._each_text_field(doc))
+
+    def _each_text_field(self, doc: Any):
+        """The fields of a document one at a time, the comments left out
 
         A comment is a text field as well, so this filter is the difference
-        between listing the fields and listing the margin.
+        between listing the fields and listing the margin. It yields rather
+        than collects because the enumeration *is* the cost: 1536 fields of a
+        real guide are 0.5–1.0s of bare `nextElement` over a socket, and a
+        caller asking for a window of them should not pay for the rest.
         """
-        found = []
         try:
             fields = doc.getTextFields().createEnumeration()
         except Exception as e:
             logger.error(f"Could not enumerate the fields: {e}")
-            return found
-        while fields.hasMoreElements():
-            field = fields.nextElement()
+            return
+        while True:
+            try:
+                if not fields.hasMoreElements():
+                    return
+                field = fields.nextElement()
+            except Exception as e:
+                logger.info(f"The fields would not go on: {e}")
+                return
             if _supports(field, ANNOTATION_SERVICE):
                 continue
-            found.append(field)
-        return found
+            yield field
 
     def _fields_with_addresses(self, doc: Any) -> List[tuple]:
         """[(field, described)] for the whole document, in one walk of it.
@@ -171,7 +183,8 @@ class FieldsMixin:
             logger.info(f"A field would not say what it shows: {e}")
             return None
 
-    def list_fields(self, address: Any = None, number: bool = False,
+    def list_fields(self, address: Any = None, start: int = 0,
+                    count: Optional[int] = None, number: bool = False,
                     doc: Any = None) -> Dict[str, Any]:
         """
         The fields of a document, with what each one shows and where it sits
@@ -184,8 +197,23 @@ class FieldsMixin:
         paragraph: a zero-width cursor standing at a field hands back the
         text the field shows, so string arithmetic around one lies. That walk
         is what `number: true` pays for — 14 seconds for the 1536 fields of a
-        real guide. An anchor needs no offset: the document hands out its
-        fields directly, and each is held where it stands.
+        real guide.
+
+        Two things kept a scoped call paying for the whole document. It asked
+        the document for **every** field and then threw away the ones outside
+        the scope — 2.26s to answer that a paragraph holds none — where a
+        field is a portion of its own paragraph (type `TextField`, carrying
+        the field), so the scope can read its own paragraphs instead. And
+        every field reported is held by an anchor, 1.79s for 1536 of them and
+        1536 of the 2000 anchors the store keeps, so the answer is paged:
+        `count` reports a window (200 by default, and a default is not a
+        ceiling) and `more` says another call is worth making.
+
+        The enumeration **is** the cost of a call about the whole document —
+        1536 fields are 0.5 to 1.0s of bare `nextElement` over a socket, and
+        `getTextFields()` has no count to ask for — so it stops one field
+        past the window. `total` therefore comes back null unless the walk
+        reached the end, which a `count` past the last field does.
         """
         doc, error = self._writer_document(doc, "Listing fields")
         if error:
@@ -197,28 +225,105 @@ class FieldsMixin:
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
 
+        window = max(1, int(DEFAULT_FIELD_REPORTS if count is None else count))
+        begin = max(0, int(start or 0))
+
         if number:
-            fields = [described for _field, described
+            placed = [described for _field, described
                       in self._fields_with_addresses(doc)
                       if covers(described["address"])]
+            total = len(placed)
+            fields = placed[begin:begin + window]
+            kinds = sorted({one["kind"] for one in placed if one["kind"]})
+            more = begin + len(fields) < total
         else:
+            kept = []
+            exhausted = True
+            source = (self._each_text_field(doc) if address is None
+                      else iter(self._fields_over(doc, address)))
+            for field in source:
+                if address is not None:
+                    try:
+                        if not covers(field.getAnchor()):
+                            continue
+                    except Exception as e:
+                        logger.info(f"A field would not say where it is: {e}")
+                        continue
+                if len(kept) > begin + window:
+                    # One past the window is all `more` needs to know, and
+                    # the rest of the document is not walked for it: the
+                    # 1536 fields of a real guide are 0.5–1.0s of bare
+                    # enumeration, which is the whole cost of this call.
+                    exhausted = False
+                    break
+                kept.append(field)
             fields = []
-            for field in self._text_fields(doc):
+            for field in kept[begin:begin + window]:
                 try:
                     anchor = field.getAnchor()
                 except Exception as e:
                     logger.info(f"A field would not say where it is: {e}")
                     continue
-                if not covers(anchor):
-                    continue
                 held = self._anchor_handle(self._hold_anchor(doc, anchor),
                                            "text")
                 fields.append(self._describe_field(
                     doc, field, address={"anchor": held}))
+            # What the answer knows: the total only when the walk reached the
+            # end of the document, and the kinds of the fields it reports.
+            total = len(kept) if exhausted else None
+            kinds = sorted({one["kind"] for one in fields if one["kind"]})
+            more = (not exhausted) or begin + len(fields) < len(kept)
 
         return {"success": True, "fields": fields, "count": len(fields),
-                "kinds": sorted({one["kind"] for one in fields if one["kind"]}),
+                "total": total,
+                "start": begin,
+                "more": more,
+                "kinds": kinds,
+                "order": "reading" if number
+                         else "as the document names them",
                 "scope": scope}
+
+    def _kind_of(self, field: Any) -> Optional[str]:
+        """What kind of field this is, for one UNO call"""
+        try:
+            services = list(field.getSupportedServiceNames())
+        except Exception as e:
+            logger.info(f"A field would not name itself: {e}")
+            return None
+        kind = next((KIND_OF_SERVICE[one] for one in services
+                     if one in KIND_OF_SERVICE), None)
+        if kind == "date or time":
+            kind = "date" if _get_property(field, "IsDate", False) else "time"
+        return kind
+
+    def _fields_over(self, doc: Any, address: Any) -> List[Any]:
+        """The fields in the paragraphs a scope covers, from their portions
+
+        A field is a portion of type `TextField` carrying the field itself —
+        measured — so a paragraph names its own fields, and a scoped listing
+        costs the scope rather than every field the document has. A comment
+        is a text field too and is left out here as everywhere.
+        """
+        paragraphs, _, _ = self._paragraphs_over(doc, address)
+        if paragraphs is None:
+            return self._text_fields(doc)
+        found = []
+        for paragraph in paragraphs:
+            try:
+                portions = paragraph.createEnumeration()
+            except Exception as e:
+                logger.info(f"Could not read a paragraph's portions: {e}")
+                continue
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if _get_property(portion, "TextPortionType",
+                                 "Text") != "TextField":
+                    continue
+                field = _get_property(portion, "TextField", None)
+                if field is None or _supports(field, ANNOTATION_SERVICE):
+                    continue
+                found.append(field)
+        return found
 
     def insert_field(self, address: Any, kind: str, fixed: bool = False,
                      track_changes: Optional[bool] = None,

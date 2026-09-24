@@ -936,9 +936,14 @@ class FakeText:
                 # and a (text, locale) pair for the ones that do not.
                 if not isinstance(piece, dict):
                     continue
-                note = piece.get("field")
-                if piece.get("kind") == "Annotation" and note is not None:
-                    note._model = self
+                held = piece.get("field")
+                if held is None:
+                    continue
+                # Both a comment and a field are held by the document, so both
+                # answer getAnchor() whoever asks — through getTextFields() or
+                # through the portions of the paragraph they sit in.
+                if piece.get("kind") in ("Annotation", "TextField"):
+                    held._model = self
         # Cursors handed out stay live in Writer: they move with the text and
         # collapse when it is rewritten. The ones here are tracked so the
         # same can happen — an anchor that quietly stayed valid would be a
@@ -992,6 +997,22 @@ class FakeText:
             for field, at in opened:
                 if field is note:
                     return (index, at), (index, at)
+        return None
+
+    def field_span(self, field):
+        """Where a field's portion sits now, or None if it is gone.
+
+        A field carries the characters it shows, so its anchor covers them —
+        measured, 7 characters for a date — and it moves with the text like
+        anything else the document holds.
+        """
+        for index in range(len(self.paragraphs)):
+            offset = 0
+            for text, _locale, _props, kind, held in self.portions_of(index):
+                if kind == "TextField" and held is field:
+                    return (index, offset), (index, offset + len(text))
+                if kind not in ("Annotation", "AnnotationEnd", "Redline"):
+                    offset += len(text)
         return None
 
     def insert_comment(self, start, end, note):

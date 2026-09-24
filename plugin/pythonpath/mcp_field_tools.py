@@ -34,6 +34,16 @@ class FieldTools:
                 "properties": {
                     "address": {"type": "object", "description": SCOPE,
                                 "properties": ADDRESS_PARTS},
+                    "start": {
+                        "type": "integer",
+                        "description": "Which field of the answer to begin at, for paging through a document that holds many",
+                        "default": 0
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "How many fields to report. 200 when nobody says, and that is a default rather than a limit — every field reported is held by an anchor, and a real guide has 1536 of them against the 2000 the anchor store keeps. The document is walked only as far as the window needs, since walking all its fields is the whole cost of this call, so `total` comes back null when there are more than were asked for; `more` says another call is worth making, and a `count` past the end reports the true total",
+                        "default": 200
+                    },
                     "number": {
                         "type": "boolean",
                         "description": "Work out each field's paragraph and offset as well. A field's offset can only come from walking the portions of every paragraph — 14s for the 1536 fields of a real guide — so it is off unless a human needs to be shown where things are",
@@ -105,13 +115,15 @@ class FieldTools:
             "handler": self.delete_field_live
         }
 
-    def list_fields_live(self, address: Any = None, number: bool = False,
+    def list_fields_live(self, address: Any = None, start: int = 0,
+                         count: Optional[int] = None, number: bool = False,
                          document: Optional[str] = None) -> Dict[str, Any]:
-        """The fields of a document, with what each one shows"""
+        """List the fields of a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_fields(address=address, number=number,
+        return self.uno_bridge.list_fields(address=address, start=start,
+                                           count=count, number=number,
                                            doc=doc)
 
     def insert_field_live(self, address: Any, kind: str, fixed: bool = False,
