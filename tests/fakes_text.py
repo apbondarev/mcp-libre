@@ -928,6 +928,17 @@ class FakeText:
         self.created_comments = []
         self.fills = {}
         self.portions = dict(portions) if portions else {}
+        # The document owns the comments in it, so every note it holds can
+        # say where it is — whoever asks it, and whichever way it was reached.
+        for pieces in self.portions.values():
+            for piece in pieces:
+                # A piece is a dict for the fixtures that spell out markers
+                # and a (text, locale) pair for the ones that do not.
+                if not isinstance(piece, dict):
+                    continue
+                note = piece.get("field")
+                if piece.get("kind") == "Annotation" and note is not None:
+                    note._model = self
         # Cursors handed out stay live in Writer: they move with the text and
         # collapse when it is rewritten. The ones here are tracked so the
         # same can happen — an anchor that quietly stayed valid would be a
@@ -956,6 +967,33 @@ class FakeText:
             text_range.mark = text_range.pos = (start[0],
                                                 start[1] + len(value))
 
+    def comment_span(self, note):
+        """Where a comment's markers sit now, or None if they are gone.
+
+        A real annotation answers getAnchor() whoever asks — the document
+        holds it — so the fake works it out from the markers rather than from
+        what was remembered when the comment was made. Without this a note
+        reached through a paragraph's portions, which is how a scoped listing
+        finds one, had no anchor at all while the same note reached through
+        getTextFields() did.
+        """
+        for index in range(len(self.paragraphs)):
+            offset = 0
+            opened = []
+            for text, _locale, _props, kind, field in self.portions_of(index):
+                if kind == "Annotation":
+                    opened.append((field, offset))
+                elif kind == "AnnotationEnd" and opened:
+                    field, at = opened.pop()
+                    if field is note:
+                        return (index, at), (index, offset)
+                else:
+                    offset += len(text)
+            for field, at in opened:
+                if field is note:
+                    return (index, at), (index, at)
+        return None
+
     def insert_comment(self, start, end, note):
         """What insertTextContent(range, annotation, True) does to the runs.
 
@@ -967,6 +1005,7 @@ class FakeText:
         was there, and a reply came back as the only comment in the document.
         """
         self.created_comments.append({"span": (start, end), "note": note})
+        note._model = self
         (paragraph, start_offset), (_, end_offset) = sorted([start, end])
         pieces = self.portions.get(paragraph)
         if pieces is None:

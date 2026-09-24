@@ -39,6 +39,11 @@ class CommentTools:
                         "type": "boolean",
                         "description": "Only the resolved comments, or with false only the ones still open"
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph each comment sits in, by number, and report them in reading order. That is a sweep of the body, and for a scoped call it also means walking every text field the document has — 0.7s for the 1536 fields of a real guide — where the answer otherwise costs only the paragraphs the scope covers. Without it each comment carries an anchor, which every tool takes",
+                        "default": False
+                    },
                     "document": {
                         "type": "string",
                         "description": "URL of the document to act on, from list_open_documents; defaults to the active document"
@@ -240,13 +245,15 @@ class CommentTools:
     def list_comments_live(self, address: Any = None,
                            author: Optional[str] = None,
                            resolved: Optional[bool] = None,
+                           number: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """List the comments of a Writer document with their anchors"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.list_comments(address=address, author=author,
-                                             resolved=resolved, doc=doc)
+                                             resolved=resolved, number=number,
+                                             doc=doc)
 
     def add_comment_live(self, text: str, address: Any = None,
                          author: str = "", language: Optional[str] = None,

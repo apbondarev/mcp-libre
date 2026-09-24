@@ -134,7 +134,13 @@ def test_lists_the_comments_of_a_document(bridge, doc):
     assert result["count"] == 1
     assert result["comments"][0]["content"] == "Термин – не переводится"
     assert result["comments"][0]["anchor_text"] == "query"
-    assert result["comments"][0]["address"]["paragraph"] == 1
+    # Named by an anchor, not by a number: working a number out is a sweep of
+    # the body, and the anchor says the same thing to every tool.
+    assert result["comments"][0]["address"]["anchor"]["type"] == "text"
+    assert bridge._resolve_address(
+        doc, result["comments"][0]["address"]).getString() == "query"
+    assert bridge.list_comments(number=True,
+                                doc=doc)["comments"][0]["address"]["paragraph"] == 1
 
 
 def test_adds_a_comment_to_a_range(bridge):
@@ -270,7 +276,11 @@ def test_lists_every_comment_of_the_document(bridge, section_doc):
     assert listed["count"] == 3
     assert [c["content"] for c in listed["comments"]] == [
         "Термин – не переводится", "Уточнить", "Не про этот раздел"]
-    assert [c["address"]["paragraph"] for c in listed["comments"]] == [2, 3, 5]
+    assert [c["address"]["anchor"]["type"] for c in listed["comments"]] \
+        == ["text", "text", "text"]
+    assert [c["address"]["paragraph"] for c
+            in bridge.list_comments(number=True,
+                                    doc=section_doc)["comments"]] == [2, 3, 5]
 
 
 def test_reports_the_identity_and_state_of_a_comment(bridge, section_doc):
@@ -281,6 +291,27 @@ def test_reports_the_identity_and_state_of_a_comment(bridge, section_doc):
     assert first["date"] == "2026-09-08T09:32:29"
     assert first["reply_to"] is None
     assert bridge.list_comments(doc=section_doc)["comments"][1]["resolved"] is True
+
+
+# Asking a document for its comments walks every text field it has — 0.672s
+# for the 1536 of a real guide, which holds no comments at all — and the scope
+# was a predicate on paragraph numbers, so an address had to be numbered
+# first: another walk. A paragraph names its own comments through its marker
+# portions.
+
+def test_a_scoped_listing_reads_its_own_paragraphs(bridge, section_doc,
+                                                   monkeypatch):
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing walked every text field")
+
+    monkeypatch.setattr(bridge, "_comments_of_document", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_comments({"paragraph": 2}, doc=section_doc)
+
+    assert [one["content"] for one in listed["comments"]] \
+        == ["Термин – не переводится"]
+    assert listed["comments"][0]["address"]["anchor"]["type"] == "text"
 
 
 def test_lists_the_comments_of_a_section(bridge, section_doc):

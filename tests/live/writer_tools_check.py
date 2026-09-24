@@ -891,13 +891,33 @@ try:
     check("with its author", listed["comments"][0]["author"], "Reviewer")
     check("with its text", listed["comments"][0]["content"],
           "A term, left untranslated")
+    # The address is an anchor: numbering a comment is a sweep of the body,
+    # and the anchor resolves to exactly the text the comment is about.
     check("and the address of the text it covers",
-          listed["comments"][0]["address"],
+          bridge._resolve_address(doc,
+                                  listed["comments"][0]["address"]).getString(),
+          "query and mutation")
+    check("with the numbers when they are asked for",
+          bridge.list_comments(number=True, doc=doc)["comments"][0]["address"],
           {"paragraph": 3, "offset": 0, "length": 18})
     check("listing one paragraph finds it",
           bridge.list_comments({"paragraph": 3}, doc=doc)["count"], 1)
     check("listing another paragraph does not",
           bridge.list_comments({"paragraph": 1}, doc=doc)["count"], 0)
+    # A scoped listing reads the portions of its own paragraphs, so it never
+    # asks the document for the text fields it has.
+    watched = {"asked": False}
+    walk_fields = bridge._comments_of_document
+
+    def _noticed(document):
+        watched["asked"] = True
+        return walk_fields(document)
+
+    bridge._comments_of_document = _noticed
+    scoped = bridge.list_comments({"paragraph": 3}, doc=doc)
+    bridge._comments_of_document = walk_fields
+    check("a scoped listing reads its own paragraphs, not every field",
+          (scoped["count"], watched["asked"]), (1, False))
 
     print("\n--- read_runs reports it on every run its anchor covers ---")
     runs = bridge.read_runs({"paragraph": 3}, doc=doc)["runs"]
@@ -1150,8 +1170,15 @@ try:
           ("query", "is", "he ", "ntry "))
     check("and the comments are where they say they are",
           [(c["address"]["offset"], c["anchor_text"])
-           for c in bridge.list_comments({"paragraph": 1}, doc=doc)["comments"]],
+           for c in bridge.list_comments({"paragraph": 1}, number=True,
+                                         doc=doc)["comments"]],
           [(0, "query"), (6, "is")])
+    check("which their anchors say too",
+          [(bridge._resolve_address(doc, c["address"]).getString(),
+            c["anchor_text"])
+           for c in bridge.list_comments({"paragraph": 1},
+                                         doc=doc)["comments"]],
+          [("query", "query"), ("is", "is")])
 
     edited = bridge.replace_range({"paragraph": 1, "offset": 9, "length": 3},
                                   "THE", doc=doc)
@@ -1728,8 +1755,11 @@ try:
                                    "A term", doc=doc)
     check("a comment can be anchored in a cell", commented.get("success"), True)
     check("on the cell's text", commented.get("anchor_text"), "Operation")
+    # A comment in a cell has no body paragraph, so the cell is its address —
+    # which is one of the things the numbers are asked for.
     listed_comments = [comment for comment
-                       in bridge.list_comments(doc=doc)["comments"]
+                       in bridge.list_comments(number=True,
+                                               doc=doc)["comments"]
                        if (comment["address"] or {}).get("cell")]
     check("and it is listed with a cell address",
           listed_comments[0]["address"]["cell"] if listed_comments else None,
@@ -3093,7 +3123,8 @@ try:
     # paragraph with its comments and its formatting.
     check("the paragraph moved", (moved.get("success"), shape()[2]),
           (True, "Первый абзац"))
-    carried = bridge.list_comments(doc=cut)
+    # By number, since what this is checking is *where* the comment ended up.
+    carried = bridge.list_comments(number=True, doc=cut)
     check("its comment came with it",
           (carried["count"], carried["comments"][0]["address"]["paragraph"]),
           (1, 2))

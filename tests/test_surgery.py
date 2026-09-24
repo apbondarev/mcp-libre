@@ -72,9 +72,10 @@ def test_moving_a_paragraph_carries_what_is_on_it(bridge, doc):
 
     assert (moved["success"], moved["to"]) == (True, [2, 2])
     assert lines(doc)[2] == "Первый абзац"
-    comments = bridge.list_comments(doc=doc)
+    # By number, since what this is checking is *where* the comment ended up.
+    comments = bridge.list_comments(number=True, doc=doc)
     assert comments["count"] == 1
-    assert comments["comments"][0]["address"]["paragraph"] == 2
+    assert comments["comments"][0]["address"]["paragraph"] == 2  # numbered
 
 
 def test_moving_to_a_place(bridge, doc):

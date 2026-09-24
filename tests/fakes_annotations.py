@@ -308,6 +308,16 @@ class FakeAnnotation:
         return name == "com.sun.star.text.textfield.Annotation"
 
     def getAnchor(self):
+        # The document holds a comment's anchor, so a real one answers
+        # whoever asks — through the document's text fields or through the
+        # portions of the paragraph it marks. The fake used to be given its
+        # anchor only by getTextFields(), so a note reached the other way had
+        # none, and a scoped listing found nothing.
+        model = getattr(self, "_model", None)
+        if model is not None:
+            span = model.comment_span(self)
+            if span is not None:
+                return FakeRange(model, span[0], span[1])
         return self._anchor
 
     @property

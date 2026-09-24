@@ -571,6 +571,7 @@ class CommentsMixin:
     def list_comments(self, address: Any = None,
                       author: Optional[str] = None,
                       resolved: Optional[bool] = None,
+                      number: bool = False,
                       doc: Any = None) -> Dict[str, Any]:
         """
         The comments of a document, a section, a paragraph, a range or the
@@ -579,53 +580,64 @@ class CommentsMixin:
         Each carries the address of the text it is anchored to and that text
         itself, so a caller can see what a comment is about without reading
         the whole document, plus the id that names it for editing.
+
+        **A scope reads its own paragraphs.** Asking a document for its
+        comments means walking every text field it has — 0.672s for the 1536
+        fields of a 519-page guide, which holds no comments at all — and the
+        scope was then a predicate on paragraph *numbers*, so an address had
+        to be numbered first: another walk, 1.75s to answer "none here".
+        A comment is a marker portion of the paragraph it sits in
+        (`Annotation` … `AnnotationEnd`, measured), so a scoped call now reads
+        the portions of the paragraphs its scope covers and costs what the
+        scope costs. Only a call about the **whole** document walks the
+        fields, and only `number: true` walks the body for the numbers.
         """
         doc, error = self._writer_document(doc, "Listing comments")
         if error:
             return error
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
 
-        comments = []
         try:
-            fields = doc.getTextFields().createEnumeration()
+            notes, anchors = (self._comments_of_document(doc)
+                              if address is None or number
+                              else self._comments_over(doc, address))
+        except AddressError as e:
+            return refusal("INVALID_ADDRESS", e)
         except Exception as e:
             logger.error(f"Could not enumerate comments: {e}")
             return refusal("FAILED", e)
 
-        notes, anchors = [], []
-        while fields.hasMoreElements():
-            field = fields.nextElement()
-            if not _supports(field, ANNOTATION_SERVICE):
-                continue
-            try:
-                anchors.append(field.getAnchor())
-                notes.append(field)
-            except Exception as e:
-                logger.info(f"A comment would not say where it is: {e}")
+        # Numbering them is one sweep of the body — where addressing each on
+        # its own would be a walk apiece, and a document with seven of them
+        # spent 1.3s in here. An anchor is two UNO calls and says the same
+        # thing to every tool.
+        placed = (self._addresses_in_order(doc, anchors) if number
+                  else [None] * len(anchors))
 
-        # Addressing each anchor on its own walks the body once per comment —
-        # a document with seven of them spent 1.3s in here. One sweep places
-        # them all, the same way find_text places its hits, which needs them
-        # in document order: getTextFields() does not promise that, so they
-        # are sorted by comparing regions first — n log n calls across the
-        # bridge against n walks of the document.
-        placed = self._addresses_in_order(doc, anchors)
-
+        comments = []
         for field, anchor, located in zip(notes, anchors, placed):
             described = _describe_comment(field)
-            described["address"] = located
             try:
-                described["anchor_text"] = \
-                    _text_payload(anchor.getString())["text"]
+                text = anchor.getString()
             except Exception as e:
                 logger.info(f"Could not read a comment's anchor: {e}")
-                described["anchor_text"] = None
-            if not covers(described["address"]):
-                continue
+                text = None
+            if number:
+                described["address"] = located
+                if not covers(located):
+                    continue
+            else:
+                if not covers(anchor):
+                    continue
+                described["address"] = {"anchor": self._anchor_handle(
+                    self._hold_anchor(doc, anchor, known=text), "text")}
+            described["anchor_text"] = (None if text is None
+                                        else _text_payload(text)["text"])
             if author is not None and described["author"] != author:
                 continue
             if resolved is not None and bool(described["resolved"]) != bool(resolved):
@@ -642,7 +654,8 @@ class CommentsMixin:
                     address.get("cell") or "",
                     address.get("offset") or 0)
 
-        comments.sort(key=where)
+        if number:
+            comments.sort(key=where)
         # A reply is joined to its parent by ParentName and sits on the same
         # anchor, so a thread arrives as several comments over one stretch.
         # Saying which replies hang off which comment saves the caller
@@ -661,7 +674,70 @@ class CommentsMixin:
                                   if not one.get("resolved")),
                 "authors": sorted({one["author"] for one in comments
                                    if one["author"]}),
+                "order": "reading" if number
+                         else "as the document names them",
                 "scope": scope}
+
+    def _comments_of_document(self, doc: Any) -> tuple:
+        """Every comment in the document, from its text fields
+
+        A comment is a text field, so this is the only way to ask a document
+        for all of them — and it costs every field the document has, 0.672s
+        for the 1536 of a real guide. A scoped call has a cheaper way in.
+        """
+        notes, anchors = [], []
+        fields = doc.getTextFields().createEnumeration()
+        while fields.hasMoreElements():
+            field = fields.nextElement()
+            if not _supports(field, ANNOTATION_SERVICE):
+                continue
+            try:
+                anchors.append(field.getAnchor())
+                notes.append(field)
+            except Exception as e:
+                logger.info(f"A comment would not say where it is: {e}")
+        return notes, anchors
+
+    def _comments_over(self, doc: Any, address: Any) -> tuple:
+        """The comments in the paragraphs a scope covers, from their portions
+
+        Writer marks a comment with empty portions of the paragraph it sits in
+        — `Annotation` where it opens and `AnnotationEnd` where it closes, or
+        a lone `Annotation` for a point anchor — so a paragraph names its own
+        comments, and the walk is the scope's rather than the document's.
+        """
+        paragraphs, _, _ = self._paragraphs_over(doc, address)
+        if paragraphs is None:
+            return self._comments_of_document(doc)
+        notes, anchors, seen = [], [], set()
+        for paragraph in paragraphs:
+            try:
+                portions = paragraph.createEnumeration()
+            except Exception as e:
+                logger.info(f"Could not read a paragraph's portions: {e}")
+                continue
+            while portions.hasMoreElements():
+                portion = portions.nextElement()
+                if _get_property(portion, "TextPortionType",
+                                 "Text") != "Annotation":
+                    continue
+                note = _get_property(portion, "TextField", None)
+                if note is None:
+                    continue
+                try:
+                    name = note.Name
+                except Exception:
+                    name = None
+                if name and name in seen:
+                    continue
+                if name:
+                    seen.add(name)
+                try:
+                    anchors.append(note.getAnchor())
+                    notes.append(note)
+                except Exception as e:
+                    logger.info(f"A comment would not say where it is: {e}")
+        return notes, anchors
 
     def add_comment(self, address: Any = None, text: str = "",
                     author: str = "", language: Optional[str] = None,
