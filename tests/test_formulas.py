@@ -147,7 +147,12 @@ def test_formulas_are_listed_in_reading_order_not_the_order_they_were_made(bridg
 
     assert listed["count"] == 2
     assert [one["formula"] for one in listed["formulas"]] == [FIFTH, "rho _ 1"]
-    assert [one["address"]["paragraph"] for one in listed["formulas"]] == [0, 1]
+    # Reading order costs a comparison per pair, where numbering them is a
+    # sweep of the body — 5.1s to place the single formula of a real guide.
+    assert all(one["address"]["anchor"]["type"] == "text"
+               for one in listed["formulas"])
+    assert [one["address"]["paragraph"] for one
+            in bridge.list_formulas(number=True, doc=doc)["formulas"]] == [0, 1]
 
 
 def test_two_in_one_paragraph_keep_their_order_by_offset(bridge, doc):
@@ -166,6 +171,39 @@ def test_a_list_can_be_scoped_to_a_paragraph(bridge, doc):
     listed = bridge.list_formulas(address={"paragraph": 1}, doc=doc)
 
     assert [one["formula"] for one in listed["formulas"]] == ["rho _ 1"]
+
+
+def test_a_scoped_list_reads_its_own_paragraphs(bridge, doc, monkeypatch):
+    # Measured on a guide holding one formula: finding it among the embedded
+    # objects is 0.006s, and the call took 5.14s — all of it placing that one
+    # formula by paragraph number, which is a sweep of the body.
+    put(bridge, doc, 0, AFTER_EQUALS, FIFTH)
+    put(bridge, doc, 1, 5, "rho _ 1")
+
+    def refuse(*arguments, **named):
+        raise AssertionError("a scoped listing swept the body")
+
+    monkeypatch.setattr(bridge, "_addresses_in_order", refuse)
+    monkeypatch.setattr(bridge, "_locate_paragraph", refuse)
+
+    listed = bridge.list_formulas(address={"paragraph": 1}, doc=doc)
+
+    assert [one["formula"] for one in listed["formulas"]] == ["rho _ 1"]
+    assert listed["formulas"][0]["address"]["anchor"]["type"] == "text"
+
+
+def test_the_whole_document_is_listed_without_a_sweep_too(bridge, doc,
+                                                          monkeypatch):
+    put(bridge, doc, 0, AFTER_EQUALS, FIFTH)
+
+    def refuse(*arguments, **named):
+        raise AssertionError("listing every formula swept the body")
+
+    monkeypatch.setattr(bridge, "_addresses_in_order", refuse)
+
+    listed = bridge.list_formulas(doc=doc)
+
+    assert [one["formula"] for one in listed["formulas"]] == [FIFTH]
 
 
 def test_a_document_without_formulas_lists_none(bridge, doc):

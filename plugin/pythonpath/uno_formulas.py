@@ -165,6 +165,22 @@ class FormulasMixin:
         real guide dearer than reading fifty.
         """
         found = []
+        for name, obj, model, offset in self._formula_objects_in(paragraph):
+            try:
+                found.append({"name": name, "formula": model.Formula,
+                              "offset": offset})
+            except Exception as e:
+                logger.info(f"A formula would not answer: {e}")
+        return found
+
+    def _formula_objects_in(self, paragraph: Any) -> List[tuple]:
+        """(name, object, Math model, offset) for the formulas of a paragraph
+
+        The one walk both the readers and `list_formulas` stand on: a formula
+        hangs off an empty portion of type `Frame`, and its content
+        enumeration hands out the object itself.
+        """
+        found = []
         offset = 0
         try:
             portions = paragraph.createEnumeration()
@@ -180,11 +196,9 @@ class FormulasMixin:
                     if model is None:
                         continue
                     try:
-                        found.append({"name": held.getName(),
-                                      "formula": model.Formula,
-                                      "offset": offset})
+                        found.append((held.getName(), held, model, offset))
                     except Exception as e:
-                        logger.info(f"A formula would not answer: {e}")
+                        logger.info(f"A formula would not name itself: {e}")
                 continue
             try:
                 offset += len(portion.getString())
@@ -336,7 +350,9 @@ class FormulasMixin:
         described["height_mm"] = _millimetres(_get_property(obj, "Height", None))
 
         # The paragraph does not hold the formula, so where it stands in the
-        # sentence is said by what is on either side of it.
+        # sentence is said by what is on either side of it — read from the
+        # anchor, which knows its own paragraph, rather than from a number,
+        # which would have to be counted to.
         paragraph = (address or {}).get("paragraph")
         offset = (address or {}).get("offset")
         if isinstance(paragraph, int) and isinstance(offset, int):
@@ -348,29 +364,74 @@ class FormulasMixin:
                     text[offset:offset + CONTEXT])["text"]
             except Exception as e:
                 logger.info(f"Could not read around formula {name}: {e}")
+        else:
+            before, after = self._words_around(obj)
+            if before is not None:
+                described["text_before"] = before
+            if after is not None:
+                described["text_after"] = after
         return described
+
+    def _words_around(self, obj: Any) -> tuple:
+        """What stands on either side of a formula, from its anchor alone
+
+        Six UNO calls and no walk: the anchor is an empty range at the spot,
+        so a cursor from the start of its paragraph to it is the text before,
+        and one from it to the end is the text after.
+        """
+        try:
+            anchor = obj.getAnchor()
+            owner = anchor.getText()
+            before = owner.createTextCursorByRange(anchor)
+            before.gotoStartOfParagraph(True)
+            after = owner.createTextCursorByRange(anchor)
+            after.gotoEndOfParagraph(True)
+        except Exception as e:
+            logger.info(f"Could not read around a formula: {e}")
+            return None, None
+        try:
+            return (_text_payload(before.getString()[-CONTEXT:])["text"],
+                    _text_payload(after.getString()[:CONTEXT])["text"])
+        except Exception as e:
+            logger.info(f"Could not read around a formula: {e}")
+            return None, None
 
     # ---- reading ------------------------------------------------------
 
-    def list_formulas(self, address: Any = None,
+    def list_formulas(self, address: Any = None, number: bool = False,
                       doc: Any = None) -> Dict[str, Any]:
         """
-        The formulas of a document, in reading order, each with its text
+        The formulas of a document, each with its text and where it stands
 
         Scoped like the comments and the bookmarks. Embedded objects that are
         not formulas — a chart, a drawing — are not listed.
+
+        **Finding them was never the cost.** Measured on a 519-page guide
+        holding exactly one formula: asking the document for its embedded
+        objects is 0.001s and picking the formula out of them 0.006s, while
+        the call took **5.14s** — all of it spent placing that one formula by
+        paragraph number, which is a sweep of the body, plus another walk when
+        the scope had to be numbered too (7.1s through an anchor). Each
+        formula now carries an anchor, a scope compares ranges, and a scoped
+        call reads the `Frame` portions of its own paragraphs, where the
+        object hangs. `number: true` buys the sweep and reading order.
         """
         doc, error = self._writer_document(doc, "Listing formulas")
         if error:
             return error
-        formulas = self._formulas_of(doc)
-        if formulas is None:
+        if self._formulas_of(doc) is None:
             return refusal("UNSUPPORTED", "this document keeps no embedded objects")
 
         try:
-            covers, scope = self._comment_scope(doc, address)
+            covers, scope = (self._comment_scope(doc, address) if number
+                             else self._scope_over(doc, address))
         except Exception as e:
             return refusal("INVALID_ADDRESS", e)
+
+        if address is None or number:
+            formulas = self._formulas_of(doc) or []
+        else:
+            formulas = self._formulas_over(doc, address)
 
         names, held, anchors = [], [], []
         for name, obj, model in formulas:
@@ -381,15 +442,32 @@ class FormulasMixin:
                 continue
             names.append(name)
             held.append((obj, model))
-        placed = self._addresses_in_order(doc, anchors)
+        if not number and len(anchors) > 1:
+            # `getEmbeddedObjects()` names them in no order at all (Object3,
+            # Object2, Object1 — measured), and reading order is what a
+            # caller means by a list of formulas. Comparing the anchors is
+            # one UNO call per comparison, a handful for a handful of
+            # formulas, where numbering them is a sweep of the whole body.
+            order = self._by_where_they_stand(doc, anchors)
+            names = [names[at] for at in order]
+            held = [held[at] for at in order]
+            anchors = [anchors[at] for at in order]
+        placed = (self._addresses_in_order(doc, anchors) if number
+                  else [None] * len(anchors))
 
         found = []
-        for name, (obj, model), located in zip(names, held, placed):
-            described = self._describe_formula(doc, name, obj, model,
-                                               address=located)
-            if not covers(described["address"]):
-                continue
-            found.append(described)
+        for name, (obj, model), located, anchor in zip(names, held, placed,
+                                                       anchors):
+            if number:
+                if not covers(located):
+                    continue
+            else:
+                if not covers(anchor):
+                    continue
+                located = {"anchor": self._anchor_handle(
+                    self._hold_anchor(doc, anchor), "text")}
+            found.append(self._describe_formula(doc, name, obj, model,
+                                                address=located))
 
         # In a table cell a formula has no body paragraph, so it sorts after
         # the ones that do, by table and cell.
@@ -400,9 +478,47 @@ class FormulasMixin:
                     place.get("table") or "", place.get("cell") or "",
                     place.get("offset") or 0)
 
-        found.sort(key=where)
+        if number:
+            found.sort(key=where)
         return {"success": True, "formulas": found, "count": len(found),
-                "scope": scope}
+                "order": "reading", "scope": scope}
+
+    def _by_where_they_stand(self, doc: Any, anchors: List[Any]) -> List[int]:
+        """The indices of `anchors`, in reading order, by comparing them
+
+        A range inside a table cell cannot be compared with one in the body —
+        it throws — so those keep their place rather than failing the sort.
+        """
+        import functools
+        body = doc.getText()
+
+        def compare(one: int, other: int) -> int:
+            try:
+                return -body.compareRegionStarts(anchors[one], anchors[other])
+            except Exception:
+                return 0
+
+        return sorted(range(len(anchors)), key=functools.cmp_to_key(compare))
+
+    def _formulas_over(self, doc: Any, address: Any) -> List[tuple]:
+        """The formulas in the paragraphs a scope covers, from their portions
+
+        A formula is an empty portion of type `Frame` whose content
+        enumeration hands out the embedded object — the same shape a picture
+        has — so a paragraph names its own, and the scope costs the scope.
+        """
+        paragraphs, _, _ = self._paragraphs_over(doc, address)
+        if paragraphs is None:
+            return self._formulas_of(doc) or []
+        found, seen = [], set()
+        for paragraph in paragraphs:
+            for name, obj, model, _offset in \
+                    self._formula_objects_in(paragraph):
+                if name in seen:
+                    continue
+                seen.add(name)
+                found.append((name, obj, model))
+        return found
 
     # ---- making, changing, taking away --------------------------------
 

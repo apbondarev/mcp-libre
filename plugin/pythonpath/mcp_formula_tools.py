@@ -37,6 +37,11 @@ class FormulaTools:
                 "properties": {
                     "address": {"type": "object", "description": SCOPE,
                                 "properties": ADDRESS_PARTS},
+                    "number": {
+                        "type": "boolean",
+                        "description": "Say which paragraph each formula stands in, by number. That is a sweep of the body — 5.1s to place the single formula of a real guide — where the anchor each one carries names the same place for two UNO calls",
+                        "default": False
+                    },
                     "document": {"type": "string", "description": DOCUMENT}
                 }
             },
@@ -101,13 +106,14 @@ class FormulaTools:
             "handler": self.delete_formula_live
         }
 
-    def list_formulas_live(self, address: Any = None,
+    def list_formulas_live(self, address: Any = None, number: bool = False,
                            document: Optional[str] = None) -> Dict[str, Any]:
         """The formulas of a document"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.list_formulas(address=address, doc=doc)
+        return self.uno_bridge.list_formulas(address=address, number=number,
+                                             doc=doc)
 
     def add_formula_live(self, address: Any, formula: str,
                          name: Optional[str] = None,

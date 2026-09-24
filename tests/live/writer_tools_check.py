@@ -4088,9 +4088,15 @@ try:
           swept, [])
 
     listed = bridge.list_formulas(doc=doc)
-    check("listed with its place",
+    check("listed, named by an anchor that resolves where it stands",
+          [(one["name"], one["address"]["anchor"]["type"],
+            bridge._resolve_address(doc, one["address"]).getString())
+           for one in listed["formulas"]], [("доля", "text", "")])
+    check("listed with its place, when the numbers are asked for",
           [(one["name"], one["address"]["paragraph"], one["address"]["offset"])
-           for one in listed["formulas"]], [("доля", here, after_equals)])
+           for one in bridge.list_formulas(number=True,
+                                           doc=doc)["formulas"]],
+          [("доля", here, after_equals)])
     check("and with the words on either side of it",
           (listed["formulas"][0].get("text_before", "")[-6:],
            listed["formulas"][0].get("text_after", "")[:3]),
