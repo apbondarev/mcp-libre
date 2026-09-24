@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class ViewMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
-    def select(self, address: Any, number: bool = False,
+    def select(self, address: Any, paragraphs: int = 0, number: bool = False,
                doc: Any = None) -> Dict[str, Any]:
         """
         Select the text at an address, as a reader would with the mouse
@@ -23,6 +23,12 @@ class ViewMixin:
         Nothing here could set a selection, so anything that works on one —
         and a human watching the screen — was out of reach without driving
         UNO by hand. Selecting changes no text; it moves the view.
+
+        `paragraphs` extends the selection that many paragraphs on from the
+        address, which is how a block is asked for **without numbers**: every
+        route to a paragraph number on a 6981-paragraph document is a sweep
+        of the body — the outline 3.2s, a text search 2.9s — while walking
+        forward from a place already in hand is one UNO call per paragraph.
 
         What was selected is reported from the **range itself**, which
         enumerates the paragraphs and tables it covers: how many paragraphs,
@@ -45,6 +51,14 @@ class ViewMixin:
             target = self._resolve_address(doc, address)
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
+
+        if paragraphs:
+            if not isinstance(paragraphs, int) or isinstance(paragraphs, bool) \
+                    or paragraphs < 0:
+                return refusal("INVALID_PARAMETER",
+                               f"paragraphs is how many to take from the "
+                               f"address onwards, got {paragraphs!r}")
+            target = self._through_paragraphs(target, paragraphs)
 
         try:
             controller.select(target)
@@ -70,6 +84,26 @@ class ViewMixin:
             spans = self._range_spans(doc, target)
             answer["paragraphs"] = spans["paragraphs"]
         return answer
+
+    def _through_paragraphs(self, target: Any, count: int) -> Any:
+        """The range from a place through the next `count` paragraphs
+
+        One UNO call per paragraph and no walk of the body: a caller that
+        holds an anchor can act on the section under it without ever learning
+        a number.
+        """
+        try:
+            text = target.getText()
+            span = text.createTextCursorByRange(target.getStart())
+            span.gotoStartOfParagraph(False)
+            for _ in range(count):
+                if not span.gotoNextParagraph(True):
+                    break
+            span.gotoEndOfParagraph(True)
+            return span
+        except Exception as e:
+            logger.info(f"Could not take the paragraphs after a place: {e}")
+            return target
 
     def get_cursor_info(self, number: bool = False,
                         character_offset: bool = False,

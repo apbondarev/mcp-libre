@@ -93,6 +93,22 @@ def test_selecting_a_block(bridge, doc):
         == selected["selected"]
 
 
+def test_selecting_a_number_of_paragraphs_from_a_place(bridge, doc):
+    # Every route to a paragraph *number* on a long document is a sweep of
+    # the body — the outline 3.2s, a text search 2.9s — so a block is asked
+    # for from a place already in hand, walking forward from it.
+    held = bridge.anchor({"paragraph": 1}, doc=doc)["anchors"][0]["address"]
+
+    selected = bridge.select(held, paragraphs=3, doc=doc)
+
+    assert selected["success"] is True
+    assert selected["paragraphs_selected"] == 4
+    assert bridge._resolve_address(doc, {"selection": True}).getString() \
+        == selected["selected"]
+    refused = bridge.select(held, paragraphs=-2, doc=doc)
+    assert refused["code"] == "INVALID_PARAMETER"
+
+
 def test_selecting_one_paragraph(bridge, doc):
     selected = bridge.select({"paragraph": 7}, doc=doc)
 

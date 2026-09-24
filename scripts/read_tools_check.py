@@ -275,30 +275,29 @@ def select_section(client, named, wanted, paragraphs):
     selection starts at that heading and runs far enough down to be worth
     asking about.
     """
-    # Anchors on 938 headings cost seconds and none of them is used here:
-    # what this wants is the one heading's number.
+    # The map itself looks for the chapter: reading the whole of it costs
+    # 3.2s on a 519-page guide, and paging to a late chapter no less, since
+    # every page searches and anchors again. `matching` stops at the first
+    # page of matches and anchors only those.
     print(f"   reading the outline to find {wanted!r}", end="", flush=True)
     mark = time.time()
-    outline = client.call("get_outline_live", dict(named, count=10000,
-                                                   anchors=False))
-    print(f" — {time.time() - mark:.1f}s")
+    outline = client.call("get_outline_live", dict(named, matching=wanted,
+                                                   count=5))
     if not outline.get("success"):
         raise SystemExit(f"Could not read the outline: {outline.get('error')}")
-    headings = [one for one in outline["headings"]
-                if wanted.lower() in " ".join(
-                    (one.get("text") or "").split()).lower()]
-    if not headings:
+    headings = outline["headings"]
+    heading = min(headings, key=lambda one: one.get("level", 9)) \
+        if headings else None
+    print(f" — {time.time() - mark:.1f}s")
+    if heading is None:
         print(f"no heading holds {wanted!r}; leaving the caret where it is")
         return None
-    heading = min(headings, key=lambda one: (one.get("level", 9),
-                                             one.get("paragraph", 0)))
-    first = heading["address"].get("paragraph")
-    picked = ({"paragraph": first, "through": first + paragraphs}
-              if isinstance(first, int)
-              else dict(heading["address"], offset=0, length=0))
+    # No numbers anywhere: the heading's own anchor, and the paragraphs after
+    # it taken by walking forward from there.
     print(f"   selecting {paragraphs} paragraphs there", end="", flush=True)
     mark = time.time()
-    chosen = client.call("select_live", dict(named, address=picked))
+    chosen = client.call("select_live", dict(named, address=heading["address"],
+                                             paragraphs=paragraphs))
     print(f" — {time.time() - mark:.1f}s")
     if not chosen.get("success"):
         print(f"could not select in {wanted!r}: {chosen.get('error')}")

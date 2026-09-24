@@ -127,6 +127,29 @@ class FakeTextCursor:
             self.mark = self.pos
         return True
 
+    def gotoNextParagraph(self, expand):
+        """XParagraphCursor: to the start of the paragraph after this one.
+
+        False at the end of the text, which is how a caller asking for more
+        paragraphs than there are stops without an error.
+        """
+        index = self.pos[0] + 1
+        if index >= len(self.model.paragraphs):
+            return False
+        self.pos = (index, 0)
+        if not expand:
+            self.mark = self.pos
+        return True
+
+    def gotoPreviousParagraph(self, expand):
+        index = self.pos[0] - 1
+        if index < 0:
+            return False
+        self.pos = (index, 0)
+        if not expand:
+            self.mark = self.pos
+        return True
+
     def gotoRange(self, other, expand):
         """Send the cursor to another range in the same text."""
         if getattr(other, "model", None) is not self.model:

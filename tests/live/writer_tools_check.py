@@ -245,6 +245,26 @@ try:
               doc=doc)["headings"]],
           ["Chapter One", "Section A"])
 
+    print("\n--- the map can look for a heading, and a block starts at one ---")
+    matched = bridge.get_outline(matching="section a", doc=doc)
+    check("the outline answers with the headings that hold a phrase",
+          [one["text"] for one in matched["headings"]], ["Section A"])
+    check("and says what it was looking for", matched.get("matching"),
+          "section a")
+    # A block from a place already in hand: no number is worked out anywhere,
+    # which is the only cheap way on a long document.
+    from_there = bridge.select(matched["headings"][0]["address"],
+                               paragraphs=1, doc=doc)
+    check("selecting a place and the paragraph after it",
+          (from_there.get("success"), from_there.get("paragraphs_selected")),
+          (True, 2))
+    check("and the selection really is those two",
+          bridge._resolve_address(doc, {"selection": True}).getString(),
+          from_there["selected"])
+    check("a count that is not a count is refused",
+          bridge.select({"paragraph": 1}, paragraphs=-1,
+                        doc=doc).get("code"), "INVALID_PARAMETER")
+
     print("\n--- read_paragraphs ---")
     window = bridge.read_paragraphs(start=1, count=2, doc=doc)
     print(window)

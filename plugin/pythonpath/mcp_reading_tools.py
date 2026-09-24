@@ -28,6 +28,11 @@ class ReadingTools:
                             "cell": {"type": "string"}
                         }
                     },
+                    "paragraphs": {
+                        "type": "integer",
+                        "description": "Take this many paragraphs on from the address — the way to select a section without knowing any numbers, since every route to a paragraph number on a long document is a sweep of the body (the outline 3.2s on a real guide, a text search 2.9s) while walking forward from a place in hand is one call per paragraph",
+                        "default": 0
+                    },
                     "number": {
                         "type": "boolean",
                         "description": "Say which paragraph numbers were selected. That means comparing the range with every paragraph of the document — 15 to 23 seconds on a real guide — where the count, the tables and the anchor come from the range itself",
@@ -112,6 +117,10 @@ class ReadingTools:
                         "description": "How many headings to return. 200 when nobody says, and that is a default, not a limit: ask for more and the rest come with it, so a whole map — hundreds of headings — is one call",
                         "default": 200
                     },
+                    "matching": {
+                        "type": "string",
+                        "description": "Only the headings whose text holds this phrase, which is how a chapter is found without reading the whole map: the search stops at the first page of matches and anchors only those. On a 519-page guide the whole outline is 3.2s and paging to a late chapter no cheaper, where matching reaches it in about a second"
+                    },
                     "anchors": {
                         "type": "boolean",
                         "description": "Give every heading an `address` holding an anchor, so the map still points at the right paragraphs after edits have moved them. On by default — turning it off means the headings must be numbered instead, which walks the document",
@@ -195,13 +204,15 @@ class ReadingTools:
             "handler": self.get_text_content_live
         }
 
-    def select_live(self, address: Any, number: bool = False,
+    def select_live(self, address: Any, paragraphs: int = 0,
+                    number: bool = False,
                     document: Optional[str] = None) -> Dict[str, Any]:
         """Select the text at an address"""
         doc, error = self._target_document(document)
         if error:
             return error
-        return self.uno_bridge.select(address, number=number, doc=doc)
+        return self.uno_bridge.select(address, paragraphs=paragraphs,
+                                      number=number, doc=doc)
 
     def get_cursor_info_live(self, number: bool = False,
                              character_offset: bool = False,
@@ -226,6 +237,7 @@ class ReadingTools:
 
     def get_outline_live(self, start: Any = 0, count: Optional[int] = None,
                          anchors: bool = True, number: bool = False,
+                         matching: Optional[str] = None,
                          document: Optional[str] = None) -> Dict[str, Any]:
         """List the headings of a Writer document"""
         doc, error = self._target_document(document)
@@ -233,7 +245,7 @@ class ReadingTools:
             return error
         return self.uno_bridge.get_outline(start=start, count=count,
                                            anchors=anchors, number=number,
-                                           doc=doc)
+                                           matching=matching, doc=doc)
 
     def find_text_live(self, query: str, regex: bool = False,
                        case_sensitive: bool = False, max_results: int = 50,

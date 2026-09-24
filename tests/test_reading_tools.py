@@ -207,6 +207,25 @@ def test_a_window_costs_the_window_and_not_the_document(bridge):
     assert fetched <= 3, f"fetched {fetched} hits for one heading"
 
 
+def test_the_map_can_look_for_a_heading_itself(bridge):
+    # Reading the whole map of a 519-page guide is 3.2s and paging to a late
+    # chapter no cheaper, since every page searches and anchors again. This
+    # stops at the matches and anchors only those.
+    doc = writer_doc(["Chapter 11, Images", "Body.", "Chapter 12, Lists",
+                      "Body.", "Chapter 13, Tables"],
+                     caret=(0, 0),
+                     styles=["Heading 1", "Standard", "Heading 1", "Standard",
+                             "Heading 1"],
+                     outline_levels=[1, 0, 1, 0, 1])
+
+    found = bridge.get_outline(matching="chapter 12", doc=doc)
+
+    assert [one["text"] for one in found["headings"]] == ["Chapter 12, Lists"]
+    assert found["matching"] == "chapter 12"
+    assert found["headings"][0]["address"]["anchor"]["type"] == "paragraph"
+    assert bridge.get_outline(matching="нетакой", doc=doc)["count"] == 0
+
+
 def test_a_level_taken_from_a_style_name_says_so(bridge):
     # Measured on a real guide: "Heading 2" and "Heading 3" carry no outline
     # level there, so Writer does not call those paragraphs structure at all

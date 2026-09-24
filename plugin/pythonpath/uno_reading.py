@@ -218,6 +218,7 @@ class ReadingMixin:
 
     def get_outline(self, start: Any = 0, count: Optional[int] = None,
                     anchors: bool = True, number: bool = False,
+                    matching: Optional[str] = None,
                     doc: Any = None) -> Dict[str, Any]:
         """
         List the document's headings — the structure Writer itself keeps
@@ -256,6 +257,13 @@ class ReadingMixin:
         Long documents page the way `read_paragraphs` pages: `start` is a
         place — a number or an address — and `more` says another call is worth
         making, with the last heading's own address to hand back as `start`.
+
+        `matching` asks for the headings whose text holds a phrase, which is
+        how a chapter is found without reading the map: the stream stops at
+        the first page of matches, and only they are anchored. Measured on the
+        519-page guide — the whole map is 3.2s and paging through it to
+        "Chapter 12" no cheaper, since each page searches and anchors again,
+        while `matching` reaches it in about a second and holds one anchor.
         """
         try:
             doc, error = self._writer_document(doc, "An outline")
@@ -292,12 +300,28 @@ class ReadingMixin:
             except AddressError as e:
                 return refusal("INVALID_ADDRESS", e)
 
+            wanted = (" ".join(str(matching).split()).lower()
+                      if matching else None)
+
+            def holds_it(one):
+                if wanted is None:
+                    return True
+                try:
+                    text = one["range"].getString() if "range" in one \
+                        else one["element"].getString()
+                except Exception:
+                    return False
+                one["text"] = text
+                return wanted in " ".join(text.split()).lower()
+
             # Only as far as the window: every heading passed over costs a
             # fetch and a comparison, and every one taken costs its anchor.
             before = 0
             shown = []
             after = 0
             for one in stream:
+                if not holds_it(one):
+                    continue
                 if not shown and not reached(one):
                     before += 1
                     continue
@@ -321,6 +345,7 @@ class ReadingMixin:
                 "total_headings": total,
                 "total_paragraphs": total_paragraphs,
                 "found_by": found_by,
+                "matching": matching,
                 # What Writer itself counts as structure, in a millisecond.
                 "outline_entries": said,
                 "more": after > 0,
@@ -522,7 +547,7 @@ class ReadingMixin:
             "level": one["level"],
             # Whether Writer calls this structure or the style's name does.
             "level_from": one["level_from"],
-            "text": one["range"].getString()[:MAX_TEXT_CHARS]
+            "text": (one.get("text") or one["range"].getString())[:MAX_TEXT_CHARS]
         }
         token = (self._hold_paragraph_anchor(doc, element, one["paragraph"])
                  if anchors and element is not None else None)
