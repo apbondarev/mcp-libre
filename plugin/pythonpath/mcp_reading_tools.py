@@ -88,6 +88,11 @@ class ReadingTools:
                         "description": "How many paragraphs to read. 50 when nobody says, and a block address says its own length; it is a window rather than a limit, so a whole document can be asked for — but with `anchors` on, at most 2000, since that is how many anchors a session keeps",
                         "default": 50
                     },
+                    "number": {
+                        "type": "boolean",
+                        "description": "Work out each paragraph's number when the read starts at an address. That means walking the body to the place — 2.9s at the far end of a real guide — where reading on from it is a cursor step per paragraph. Without it `paragraph` and `start` come back null and every paragraph is named by its anchor",
+                        "default": False
+                    },
                     "anchors": {
                         "type": "boolean",
                         "description": "Hand every paragraph out with an `address` holding an anchor beside its index — pass that address back as it is and it reaches the same paragraph after edits above it, yours or the reader's, have renumbered the document. On by default; false saves the cost on a large read that nothing will be written back to",
@@ -226,14 +231,15 @@ class ReadingTools:
 
     def read_paragraphs_live(self, start: Any = 0,
                              count: Optional[int] = None,
-                             anchors: bool = True,
+                             anchors: bool = True, number: bool = False,
                              document: Optional[str] = None) -> Dict[str, Any]:
         """Read a window of paragraphs from a Writer document"""
         doc, error = self._target_document(document)
         if error:
             return error
         return self.uno_bridge.read_paragraphs(start=start, count=count,
-                                               anchors=anchors, doc=doc)
+                                               anchors=anchors, number=number,
+                                               doc=doc)
 
     def get_outline_live(self, start: Any = 0, count: Optional[int] = None,
                          anchors: bool = True, number: bool = False,

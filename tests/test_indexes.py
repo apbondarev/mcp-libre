@@ -156,7 +156,8 @@ def test_two_indexes_keep_their_places(bridge, doc):
     bridge.insert_index({"paragraph": 0}, doc=doc)
     bridge.add_index_mark({"paragraph": 5, "offset": 16, "length": 7},
                           "GraphQL", doc=doc)
-    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    total = bridge.read_paragraphs(start=0, count=1, number=True,
+                                   doc=doc)["total_paragraphs"]
     bridge.insert_index({"paragraph": total - 1}, kind="alphabetical", doc=doc)
 
     listed = bridge.list_indexes(number=True, doc=doc)

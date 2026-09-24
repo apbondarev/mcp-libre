@@ -291,7 +291,12 @@ try:
     moved = bridge.read_paragraphs(start=handed_out, count=1, doc=doc)
     check("an address still reads its own paragraph after the numbers moved",
           ([p["text"] for p in moved["paragraphs"]], moved["start"]),
-          (["Alpha beta alpha."], 2))
+          (["Alpha beta alpha."], None))
+    # The number costs a walk of the body to the place — 2.9s at the far end
+    # of a real guide — so it comes only when it is asked for.
+    check("and the number comes when it is asked for",
+          bridge.read_paragraphs(start=handed_out, count=1, number=True,
+                                 doc=doc)["start"], 2)
     check("where the number it was handed out with now reads another",
           bridge.read_paragraphs(start=1, count=1,
                                  doc=doc)["paragraphs"][0]["text"],
@@ -1978,7 +1983,8 @@ try:
 
     for _ in range(3):                      # take the marker paragraphs away
         last = bridge._paragraph_at(body, bridge.read_paragraphs(
-            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+            start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
     print("\n--- colouring many pieces in one call ---")
@@ -2342,7 +2348,8 @@ try:
     for line in ("ANCHOR-ABOVE", "ANCHOR-ONE", "ANCHOR-TWO"):
         body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
         body.insertString(marker, line, False)
-    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    total = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"]
     above, first, second = total - 3, total - 2, total - 1
 
     held = bridge.anchor([{"paragraph": first}, {"paragraph": second}], doc=doc)
@@ -2462,15 +2469,16 @@ try:
 
     for _ in range(2):                      # take this section's paragraphs away
         last = bridge._paragraph_at(body, bridge.read_paragraphs(
-            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+            start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
     print("\n--- bookmarks: the names a document keeps for places ---")
     marker = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
     body.insertString(marker, "МЕТКА-СТРОКА для закладок", False)
-    where = bridge.read_paragraphs(start=0, count=1,
-                                   doc=doc)["total_paragraphs"] - 1
+    where = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1
 
     made = bridge.add_bookmark({"paragraph": where, "offset": 0, "length": 12},
                                "Метка", doc=doc)
@@ -2515,8 +2523,8 @@ try:
           bridge._resolve_address(doc, {"bookmark": "Метка"}).getString(),
           "МЕТКА-СТРОКА")
     body.removeTextContent(bridge._paragraph_at(body, 0))
-    where = bridge.read_paragraphs(start=0, count=1,
-                                   doc=doc)["total_paragraphs"] - 1
+    where = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1
 
     check("renaming leaves it where it is",
           bridge.rename_bookmark("Метка", "Метка-2", doc=doc).get("success"),
@@ -2547,8 +2555,8 @@ try:
     marker = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
     body.insertString(marker, "Страница X из Y, составлено Z", False)
-    page = bridge.read_paragraphs(start=0, count=1,
-                                  doc=doc)["total_paragraphs"] - 1
+    page = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1
 
     put = bridge.insert_field({"paragraph": page, "offset": 9, "length": 1},
                               "page_number", doc=doc)
@@ -3483,8 +3491,8 @@ try:
                  "After the section", "Last line"):
         region_text.insertString(quill, line, False)
         region_text.insertControlCharacter(quill, PARAGRAPH_BREAK, False)
-    counted = bridge.read_paragraphs(start=0, count=1,
-                                     doc=regioned)["total_paragraphs"]
+    counted = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=regioned)["total_paragraphs"]
 
     made = bridge.create_section({"paragraph": 1, "through": 2}, "Правила",
                                  doc=regioned)
@@ -3494,8 +3502,8 @@ try:
           (made.get("success"), (made.get("text") or "").replace("\r\n", "\n")),
           (True, "Inside one\nInside two"))
     check("and moves nothing: the numbering is what it was",
-          bridge.read_paragraphs(start=0, count=1,
-                                 doc=regioned)["total_paragraphs"], counted)
+          bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=regioned)["total_paragraphs"], counted)
     check("a section with no columns of its own counts as one",
           made.get("columns"), 1)
     check("a name that is taken",
@@ -3560,8 +3568,8 @@ try:
           (removed.get("success"), removed.get("kept_text")),
           (True, "Inside two"))
     check("with the numbering still what it was",
-          bridge.read_paragraphs(start=0, count=1,
-                                 doc=regioned)["total_paragraphs"], counted)
+          bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=regioned)["total_paragraphs"], counted)
     check("a section nobody has",
           bridge.delete_section("Нетакой", doc=regioned).get("code"),
           "NOT_FOUND")
@@ -3746,8 +3754,8 @@ try:
     marked = bridge.add_index_mark(word["address"], "GraphQL", doc=indexed)
     check("a mark covers its word and leaves it",
           (marked.get("success"), marked.get("marked")), (True, "GraphQL"))
-    total = bridge.read_paragraphs(start=0, count=1,
-                                   doc=indexed)["total_paragraphs"]
+    total = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=indexed)["total_paragraphs"]
     alphabetical = bridge.insert_index({"paragraph": total - 1},
                                        kind="alphabetical", title="Указатель",
                                        doc=indexed)
@@ -3872,7 +3880,8 @@ try:
     for line in ("REVIEW-ONE stays as it is", "REVIEW-TWO loses a word"):
         body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
         body.insertString(marker, line, False)
-    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    total = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"]
     first, second = total - 2, total - 1
 
     was_recording = doc.RecordChanges
@@ -3972,15 +3981,16 @@ try:
     doc.RecordChanges = was_recording
     for _ in range(2):
         last = bridge._paragraph_at(body, bridge.read_paragraphs(
-            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+            start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
     print("\n--- a review conversation: a comment and the replies on it ---")
     marker = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
     body.insertString(marker, "query is the entry point", False)
-    talk = bridge.read_paragraphs(start=0, count=1,
-                                  doc=doc)["total_paragraphs"] - 1
+    talk = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1
 
     parent = bridge.add_comment({"paragraph": talk, "offset": 0, "length": 5},
                                 "Is this the right term?", author="Reviewer",
@@ -4088,8 +4098,8 @@ try:
     writing = body.createTextCursorByRange(body.getEnd())
     body.insertControlCharacter(writing, PARAGRAPH_BREAK, False)
     body.insertString(writing, sentence, False)
-    here = bridge.read_paragraphs(start=0, count=1,
-                                  doc=doc)["total_paragraphs"] - 1
+    here = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1
     made = bridge.add_formula({"paragraph": here, "offset": after_equals,
                                "length": 0}, FIFTH, name="доля", doc=doc)
     print("   ", {key: made.get(key) for key in
@@ -4170,7 +4180,8 @@ try:
     for line in ("BATCH-ONE", "BATCH-TWO", "BATCH-THREE"):
         body.insertControlCharacter(marker, PARAGRAPH_BREAK, False)
         body.insertString(marker, line, False)
-    total = bridge.read_paragraphs(start=0, count=1, doc=doc)["total_paragraphs"]
+    total = bridge.read_paragraphs(start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"]
     first = total - 3
 
     batched = server.batch_live(
@@ -4229,7 +4240,8 @@ try:
 
     for _ in range(3):                      # take this section's paragraphs away
         last = bridge._paragraph_at(body, bridge.read_paragraphs(
-            start=0, count=1, doc=doc)["total_paragraphs"] - 1)
+            start=0, count=1, number=True,
+                doc=doc)["total_paragraphs"] - 1)
         body.removeTextContent(last)
 
     print("\n--- saving under a name, closing, renaming ---")

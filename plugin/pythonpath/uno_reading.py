@@ -41,6 +41,31 @@ class ReadingMixin:
             logger.error(f"Failed to get text content: {e}")
             return refusal("FAILED", e)
 
+    def _paragraphs_onward(self, paragraph: Any):
+        """This paragraph and the ones after it, a cursor step apiece
+
+        No numbers and no walk of the body: what a caller holding an anchor
+        means by "read on from here".
+        """
+        yield paragraph
+        try:
+            text = paragraph.getText()
+            step = text.createTextCursorByRange(paragraph.getStart())
+        except Exception as e:
+            logger.info(f"Could not step on from a paragraph: {e}")
+            return
+        while True:
+            try:
+                if not step.gotoNextParagraph(False):
+                    return
+                here = self._paragraph_from(step)
+            except Exception as e:
+                logger.info(f"Could not step on from a paragraph: {e}")
+                return
+            if here is None:
+                return
+            yield here
+
     def _window_from(self, doc: Any, address: Any) -> tuple:
         """(paragraphs of the body, where this address is among them).
 
@@ -80,7 +105,7 @@ class ReadingMixin:
 
     def read_paragraphs(self, start: Any = 0,
                         count: Optional[int] = None,
-                        anchors: bool = True,
+                        anchors: bool = True, number: bool = False,
                         doc: Any = None) -> Dict[str, Any]:
         """
         Read a window of body paragraphs with their indices and styles
@@ -97,7 +122,14 @@ class ReadingMixin:
         handed back are both accepted, so a long document can be walked
         without a number ever being carried from one call to the next. A
         block (`through`) also says how many to read when `count` does not.
-        The `start` in the result is the number the address came to.
+        Starting at an address costs the paragraphs read and no more: the
+        place is resolved and the reading steps on from it, so `paragraph`
+        comes back **null** and `start` with it — working the numbers out
+        means walking the body to the place, 2.9s at the far end of a real
+        guide. `number: true` buys that walk, and so does a block, which is
+        written in numbers. The walk also stops one paragraph past the
+        window, so `total_paragraphs` is reported only when the end of the
+        document was reached and `more` says whether it was.
 
         Every paragraph comes with an `address` holding a paragraph anchor
         beside its number, so passing that address back reaches the same
@@ -119,16 +151,33 @@ class ReadingMixin:
 
             asked = count
             sweep = None
+            onward = None
             if isinstance(start, dict):
                 try:
                     through = start.get("through")
-                    sweep, start = self._window_from(doc, start)
-                    if asked is None and isinstance(through, int) \
-                            and not isinstance(through, bool):
-                        last = self._paragraph_index_of(doc,
-                                                        {"paragraph": through})
-                        asked = abs(last - start) + 1
-                        start = min(start, last)
+                    if number or through is not None:
+                        sweep, start = self._window_from(doc, start)
+                        if asked is None and isinstance(through, int) \
+                                and not isinstance(through, bool):
+                            last = self._paragraph_index_of(
+                                doc, {"paragraph": through})
+                            asked = abs(last - start) + 1
+                            start = min(start, last)
+                    else:
+                        # The address names a paragraph; reading on from it
+                        # is a cursor step apiece. Working out *which* number
+                        # it is means walking the body to it — 2.9s at the
+                        # far end of a real guide, for a field the caller did
+                        # not ask for. `number: true` buys it.
+                        here = self._paragraph_from(
+                            self._resolve_address(doc, start).getStart())
+                        if here is None:
+                            raise AddressError(
+                                "that address is outside the body text — a "
+                                "table cell, most likely — so it names no "
+                                "body paragraph")
+                        onward = here
+                        start = 0
                 except AddressError as e:
                     return refusal("INVALID_ADDRESS", e)
             if not isinstance(start, int) or isinstance(start, bool) or start < 0:
@@ -162,10 +211,18 @@ class ReadingMixin:
             # body already walked: reading the window from it saves the
             # second walk that reaching a number costs.
             walked = iter(sweep) if sweep is not None else None
-            enumeration = (None if walked is not None
+            enumeration = (None if walked is not None or onward is not None
                            else doc.getText().createEnumeration())
+            stepping = None
+            if onward is not None:
+                stepping = self._paragraphs_onward(onward)
+            ended = True
             while True:
-                if walked is not None:
+                if stepping is not None:
+                    element = next(stepping, None)
+                    if element is None:
+                        break
+                elif walked is not None:
                     element = next(walked, None)
                     if element is None:
                         break
@@ -175,10 +232,19 @@ class ReadingMixin:
                     element = enumeration.nextElement()
                     if not hasattr(element, "getStart"):
                         continue
+                if total >= start + window:
+                    # One past the window is all `more` needs; walking the
+                    # rest of the document to count it is what made reading
+                    # three paragraphs of a 6981-paragraph guide 1.8s.
+                    # `number` asks for the count, and pays the walk for it.
+                    if not number:
+                        ended = False
+                        break
                 if start <= total < start + window:
+                    numbered = None if stepping is not None else total
                     raw = element.getString()
                     entry = _text_payload(raw)
-                    entry["paragraph"] = total
+                    entry["paragraph"] = numbered
                     here = self._formulas_in_paragraph(element)
                     if here:
                         standing[total] = here
@@ -193,23 +259,30 @@ class ReadingMixin:
                     if anchors:
                         # The paragraph itself, held with a cursor at its
                         # start — see uno_anchors for why both.
-                        token = self._hold_paragraph_anchor(doc, element, total)
-                        entry["address"] = {
-                            "paragraph": total,
-                            "anchor": self._anchor_handle(token, "paragraph")
-                        } if token else {"paragraph": total}
+                        token = self._hold_paragraph_anchor(doc, element,
+                                                            numbered)
+                        held = self._anchor_handle(token, "paragraph")
+                        entry["address"] = (
+                            dict({"paragraph": numbered} if numbered is not None
+                                 else {}, anchor=held) if token
+                            else {"paragraph": numbered})
                     else:
-                        entry["address"] = {"paragraph": total}
+                        entry["address"] = {"paragraph": numbered}
                     paragraphs.append(entry)
                 total += 1
 
             return {
                 "success": True,
                 "paragraphs": paragraphs,
-                "start": start,
+                # The number it came to, when a number was worked out at all.
+                "start": None if stepping is not None else start,
                 "count": len(paragraphs),
                 "anchors": bool(anchors),
-                "total_paragraphs": total
+                "more": not ended,
+                # Only when the walk reached the end of the document: counting
+                # the rest to say how many there are is the walk this stops.
+                "total_paragraphs": None if not ended or stepping is not None
+                                    else total
             }
 
         except Exception as e:

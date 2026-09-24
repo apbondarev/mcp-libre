@@ -76,7 +76,11 @@ paragraphs of a 519-page guide: 0.025s to ask, 0.135s to read.
 `read_paragraphs` also **takes** an address as its `start` — the one a
 previous read or a search handed back — so a long document is paged through
 without a number ever being carried from one call to the next, and a block
-address (`through`) says how many paragraphs to read. `count` is a window,
+address (`through`) says how many paragraphs to read. Starting at an address
+costs the paragraphs read and no more, and `paragraph` comes back null with
+it: working the numbers out means walking the body to the place, which is
+seconds on a long document. Ask `number: true` when a number is really what
+is wanted, and `total_paragraphs` comes with it. `count` is a window,
 not a limit: 50 unasked, and a whole document can be had in one call — 6981
 paragraphs came back in five seconds — though with anchors on it is refused
 past 2000, which is how many this session keeps. An answer names a place **once**, in its `address`, and the anchor inside it

@@ -32,9 +32,15 @@ def test_reads_a_window_of_paragraphs(bridge):
 def test_reports_the_total_paragraph_count(bridge):
     doc = writer_doc(PARAGRAPHS, caret=(0, 0))
 
-    result = bridge.read_paragraphs(start=0, count=2, doc=doc)
+    # Counting the whole document means walking it, so it comes with the
+    # numbers: reading three paragraphs of a 6981-paragraph guide was 1.8s
+    # of counting the rest.
+    result = bridge.read_paragraphs(start=0, count=2, number=True, doc=doc)
 
     assert result["total_paragraphs"] == 5
+    assert bridge.read_paragraphs(start=0, count=2,
+                                  doc=doc)["total_paragraphs"] is None
+    assert bridge.read_paragraphs(start=0, count=2, doc=doc)["more"] is True
 
 
 def test_includes_the_paragraph_style(bridge):
@@ -92,7 +98,7 @@ def test_skips_tables_when_numbering_paragraphs(bridge):
     doc = writer_doc(PARAGRAPHS, caret=(0, 0),
                      enumeration_items=[0, "table", 1, 2, 3, 4])
 
-    result = bridge.read_paragraphs(start=1, count=1, doc=doc)
+    result = bridge.read_paragraphs(start=1, count=1, number=True, doc=doc)
 
     assert result["paragraphs"][0]["text"] == "Beta."
     assert result["total_paragraphs"] == 5
@@ -533,7 +539,14 @@ def test_reading_starts_at_a_paragraph_address(bridge):
     read = bridge.read_paragraphs(start={"paragraph": 2}, count=2, doc=doc)
 
     assert [p["text"] for p in read["paragraphs"]] == ["Gamma.", "Delta."]
-    assert read["start"] == 2
+    # Reading on from a place needs no number, and working one out means
+    # walking the body to it — 2.9s at the far end of a real guide.
+    assert read["start"] is None
+    assert [p["paragraph"] for p in read["paragraphs"]] == [None, None]
+    numbered = bridge.read_paragraphs(start={"paragraph": 2}, count=2,
+                                      number=True, doc=doc)
+    assert numbered["start"] == 2
+    assert [p["paragraph"] for p in numbered["paragraphs"]] == [2, 3]
 
 
 def test_reading_starts_where_an_anchor_still_points(bridge):
@@ -547,7 +560,8 @@ def test_reading_starts_where_an_anchor_still_points(bridge):
     read = bridge.read_paragraphs(start=handed_out, count=1, doc=doc)
 
     assert [p["text"] for p in read["paragraphs"]] == ["Gamma."]
-    assert read["start"] == 3
+    assert bridge.read_paragraphs(start=handed_out, count=1, number=True,
+                                  doc=doc)["start"] == 3
 
 
 def test_a_block_address_says_how_many_to_read(bridge):
