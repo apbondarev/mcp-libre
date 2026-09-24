@@ -730,7 +730,13 @@ class ReadingMixin:
 
             if anchors:
                 for hit, match in zip(hits, matches):
-                    token = self._hold_anchor(doc, match)
+                    # The sweep that placed the hits knows each one's
+                    # paragraph, so the anchor is told: without it, reading
+                    # through a hit's own address walked the body to work the
+                    # number out again — 5.4s at paragraph 2725.
+                    token = self._hold_anchor(
+                        doc, match,
+                        index=(hit.get("address") or {}).get("paragraph"))
                     if token and isinstance(hit.get("address"), dict):
                         # Handed out inside the address and nowhere else, so
                         # passing the address back is all it takes to use it.

@@ -70,6 +70,20 @@ class TablesMixin:
             logger.info(f"Could not compare two ranges: {e}")
             return unknown
 
+    def _in_the_body(self, body: Any, span: Any) -> bool:
+        """Whether a range is in the body text at all — one UNO call
+
+        Measured: `compareRegionStarts` throws IllegalArgumentException for a
+        range the body does not own — a picture's anchor in a frame, a field
+        in a header — which is the cheapest way to ask, since every other
+        test means walking to find it and failing.
+        """
+        try:
+            body.compareRegionStarts(span.getStart(), span.getStart())
+            return True
+        except Exception:
+            return False
+
     def _within_one_paragraph(self, body: Any, span: Any) -> bool:
         """Whether a range begins and ends inside the same body paragraph.
 
@@ -107,6 +121,13 @@ class TablesMixin:
         try:
             body = doc.getText()
             if _supports(span.getText(), CELL_SERVICE):
+                return found
+            if not self._in_the_body(body, span):
+                # A header, a footer, a text frame, a footnote's own text: a
+                # range there covers no body paragraph and no table, and
+                # comparing it with every paragraph answers nothing — 16.8s
+                # on a real guide for a field standing in a frame. The body
+                # refuses to compare such a range at all, which is the test.
                 return found
 
             if self._within_one_paragraph(body, span):

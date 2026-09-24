@@ -97,8 +97,22 @@ class AnchorsMixin:
         except Exception:
             return "url:"
 
+    def _remember_anchor_paragraph(self, token: Any, index: Any) -> None:
+        """Tell an anchor which paragraph it was last seen in.
+
+        A text anchor works its paragraph out by walking the body and
+        comparing regions — 5.4s at paragraph 2725 — so a caller that already
+        knows the number says so, and the next read checks that memory
+        instead.
+        """
+        entry = self._anchor_store().get(token)
+        if entry is not None and isinstance(index, int) \
+                and not isinstance(index, bool):
+            entry["index"] = index
+
     def _hold_anchor(self, doc: Any, text_range: Any,
-                     known: Optional[str] = None) -> Optional[str]:
+                     known: Optional[str] = None,
+                     index: Optional[int] = None) -> Optional[str]:
         """Keep a cursor over a range and return the token naming it.
 
         None when the range cannot be held, which is not worth failing a
@@ -139,7 +153,7 @@ class AnchorsMixin:
                         # The paragraph it was last seen in: checked before it
                         # is believed, so a wrong one costs nothing but the
                         # walk it was meant to save.
-                        "index": None}
+                        "index": index}
         while len(store) > MAX_ANCHORS:
             dropped, _ = store.popitem(last=False)
             logger.info(f"Anchor {dropped} let go, {MAX_ANCHORS} is the limit")
@@ -203,7 +217,10 @@ class AnchorsMixin:
                   else [None] * len(anchors))
         addresses = []
         for anchor, located in zip(anchors, placed):
-            held = self._anchor_handle(self._hold_anchor(doc, anchor), "text")
+            held = self._anchor_handle(
+                self._hold_anchor(doc, anchor,
+                                  index=(located or {}).get("paragraph")),
+                "text")
             addresses.append(dict(located or {}, anchor=held) if number
                              else {"anchor": held})
         return addresses

@@ -241,8 +241,13 @@ def check(client, name, named, ground, resolve):
         row["anchors"] = ("all" if len(anchored) == len(addresses)
                           else f"{len(anchored)}/{len(addresses)}")
         if resolve and anchored:
+            # Timed and shown: this check is a tool call of its own, and
+            # hiding it made the script sit for seconds beside a row saying
+            # 432 ms — the cost was real and belonged to read_runs.
+            mark = time.time()
             read = client.call("read_runs_live",
                                dict(named, address=anchored[0]))
+            row["resolve_ms"] = int((time.time() - mark) * 1000)
             if not read.get("success") and read.get("code") != "INVALID_ADDRESS":
                 row["state"] = "broken"
                 row["why"] = f"its address would not read back: {read.get('error')}"
@@ -365,10 +370,14 @@ def main():
             continue
         rows.append(check(client, name, named, ground, not args.no_resolve))
         row = rows[-1]
+        # The read-back check is a tool call of its own: hiding it left the
+        # script sitting for seconds beside a row saying 432 ms.
+        extra = (f"+{row['resolve_ms']:>5} ms read back"
+                 if row.get("resolve_ms") is not None else "")
         print(f"{row['tool']:24} {row['state']:8} "
               f"{str(row.get('count', '')):>6} "
               f"{str(row.get('elapsed_ms', '')):>7} ms  "
-              f"anchors: {row.get('anchors', '')}"
+              f"anchors: {row.get('anchors', ''):<9}{extra}"
               + (f"   {row.get('why', '')}" if row.get("why") else ""))
 
     broken = [row for row in rows if row["state"] == "broken"]

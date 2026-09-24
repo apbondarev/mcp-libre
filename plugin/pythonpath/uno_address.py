@@ -315,14 +315,34 @@ class AddressMixin:
         """
         if not isinstance(address, dict):
             return None
-        if "anchor" in address:
-            return (self._anchor_paragraph(doc,
-                                           _anchor_token(address["anchor"]))
-                    if doc is not None else None)
         index = address.get("paragraph")
-        if isinstance(index, int) and not isinstance(index, bool) \
-                and index >= 0 and "cell" not in address \
-                and "table" not in address:
+        named = (isinstance(index, int) and not isinstance(index, bool)
+                 and index >= 0 and "cell" not in address
+                 and "table" not in address)
+        if "anchor" in address:
+            if named:
+                # The address handed out by a reading tool carries **both**,
+                # and asking the anchor instead threw the number away: a text
+                # anchor remembers none, so every read through a search hit
+                # walked the body comparing regions — 5.4s at paragraph 2725
+                # of a real guide, for a number the caller had just been
+                # given. The anchor still decides *where*; this is only what
+                # to report, and a numbered address is trusted the same way.
+                if doc is not None:
+                    self._remember_anchor_paragraph(
+                        _anchor_token(address["anchor"]), index)
+                return index
+            # What the anchor *remembers*, and no more: working a number out
+            # for an anchor that never knew one means walking the body and
+            # comparing regions, which is 9.5s at the far end of a real
+            # guide — paid, measured, for a read that then reports no number
+            # at all. `paragraph_now` is for a caller that wants it.
+            entry = self._anchor_store().get(_anchor_token(address["anchor"]))
+            remembered = (entry or {}).get("index")
+            return (remembered
+                    if isinstance(remembered, int)
+                    and not isinstance(remembered, bool) else None)
+        if named:
             return index
         return None
 
