@@ -626,6 +626,43 @@ class FakeDoc:
         return FakeIndexed([one for one in self._text.notes_in_order()
                             if one.kind == "endnote"])
 
+    def addCloseListener(self, listener):
+        """What a document really takes: its own addEventListener resolves to
+        com.sun.star.document's listener instead — measured against a live
+        office, "value does not implement com.sun.star.document.XEventListener".
+        """
+        self.listeners = getattr(self, "listeners", [])
+        self.listeners.append(listener)
+
+    def removeCloseListener(self, listener):
+        self.removeEventListener(listener)
+
+    def addEventListener(self, listener):
+        """A user of a document asks to be told when it is disposed.
+
+        The Developer's Guide: "Users of an object add an event listener to
+        be notified when the object is disposed, at which point they release
+        their interface references." The fake keeps them so a test can fire
+        `disposing` and see that the anchors of this document went with it.
+        """
+        self.listeners = getattr(self, "listeners", [])
+        self.listeners.append(listener)
+
+    def removeEventListener(self, listener):
+        for held in list(getattr(self, "listeners", [])):
+            if held is listener:
+                self.listeners.remove(held)
+
+    def dispose(self):
+        """What closing does: tell everyone, then refuse further work."""
+        from com.sun.star.lang import EventObject
+        for listener in list(getattr(self, "listeners", [])):
+            if hasattr(listener, "notifyClosing"):
+                listener.notifyClosing(EventObject())
+            else:
+                listener.disposing(EventObject())
+        self.listeners = []
+
     def getLinks(self):
         """What the Navigator lists, as SwXLinkTargetSupplier hands it out.
 

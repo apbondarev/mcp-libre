@@ -45,6 +45,26 @@ def test_anchoring_a_paragraph_hands_back_a_token(bridge, doc):
     assert "anchor" not in held
 
 
+def test_the_anchors_of_a_document_go_when_it_does(bridge, doc):
+    """The one rule UNO states about holding references to another's objects.
+
+    Developer's Guide, Professional UNO: users of an object "add an event
+    listener to be notified when the object is disposed, at which point they
+    release their interface references" — and its example says it outright,
+    "any references to the EventObject's source have to be released here
+    now!". Without it this server learned a document was gone only when a
+    later call threw, and hundreds of its cursors lived on until Python
+    happened to collect them, which is where a headless office was measured
+    to abort with `free(): invalid pointer`.
+    """
+    bridge.anchor([{"paragraph": 1}, {"paragraph": 2}], doc=doc)
+    assert len(bridge._anchor_store()) == 2
+
+    doc.dispose()                       # what closing a document does
+
+    assert bridge._anchor_store() == {}
+
+
 def test_an_anchor_is_an_address(bridge, doc):
     token = bridge.anchor({"paragraph": 2}, doc=doc)["anchors"][0]["address"]["anchor"]["anchorId"]
 

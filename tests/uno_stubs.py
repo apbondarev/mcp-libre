@@ -45,7 +45,13 @@ _INTERFACES = {
     "com.sun.star.awt": ["XActionListener"],
     # registration.py, the UNO component itself
     "com.sun.star.frame": ["XDispatchProvider", "XDispatch"],
-    "com.sun.star.lang": ["XServiceInfo"],
+    # XEventListener and EventObject are how a user of a document is told it
+    # has been disposed — the one rule UNO states about holding references to
+    # somebody else's objects, and what the anchor store now obeys.
+    "com.sun.star.lang": ["XServiceInfo", "XEventListener", "EventObject"],
+    # A document is shut with close(), and XCloseListener is what hears it;
+    # it carries `disposing` as well, so one object covers both ways out.
+    "com.sun.star.util": ["XCloseListener"],
 }
 
 

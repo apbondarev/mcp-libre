@@ -67,8 +67,112 @@ DEFAULT_ANCHOR_REPORTS = 200
 MAX_ANCHOR_REPORTS = DEFAULT_ANCHOR_REPORTS    # the old name, kept
 
 
+def _listener_for(bridge: Any, key: str) -> Any:
+    """A UNO listener that drops a document's anchors when it is disposed.
+
+    The Developer's Guide states the rule this follows, and it is the one
+    rule about holding references that UNO does state: "UNO employs an
+    owner/user concept… Only the single **owner** of an object can call
+    dispose(). **Users** of an object add an event listener to be notified
+    when the object is disposed, at which point they release their interface
+    references" (Professional UNO, The XComponent Interface), and its example
+    says it outright — "any references to the EventObject's source have to be
+    released here now!".
+
+    This server is a user: the document belongs to the office and to whoever
+    is reading it, while the anchor store holds hundreds of that document's
+    cursors and paragraph objects. Without a listener it learned a document
+    was gone only when some later call threw, and the proxies went on living
+    until Python happened to collect them — which is where a headless office
+    was measured to abort with `free(): invalid pointer`.
+
+    Built here rather than at import: `unohelper` and the interface only
+    exist inside an office, and a bridge that cannot make one goes on
+    without it.
+    """
+    try:
+        import unohelper
+        from com.sun.star.util import XCloseListener
+    except Exception as e:                       # no office, no listener
+        logger.info(f"Cannot listen for a document going away: {e}")
+        return None
+
+    class _AnchorsGoWithTheDocument(unohelper.Base, XCloseListener):
+        """Both ways a document can go, and neither is vetoed here.
+
+        `XCloseListener` rather than the plain `XEventListener`: a document's
+        `addEventListener` resolves to **com.sun.star.document**'s listener —
+        measured, "value does not implement com.sun.star.document.
+        XEventListener" — while `addCloseListener` is unambiguous, and the
+        Developer's Guide names close, not dispose, as the way a document is
+        shut. XCloseListener carries `disposing` too, so the hard path is
+        covered by the same object.
+        """
+
+        def __init__(self):
+            unohelper.Base.__init__(self)
+
+        def queryClosing(self, source, ownership):   # noqa: N802 — UNO's name
+            # Never a veto: whether a document may close is its reader's
+            # business, not this server's.
+            pass
+
+        def notifyClosing(self, source):             # noqa: N802
+            bridge._document_is_gone(key)
+
+        def disposing(self, event):                  # noqa: N802
+            bridge._document_is_gone(key)
+
+    return _AnchorsGoWithTheDocument()
+
+
 class AnchorsMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
+
+    def _watch_document(self, doc: Any, key: str) -> None:
+        """Ask to be told when this document goes, once per document.
+
+        Registering is two UNO calls and happens on the first anchor of a
+        document, not on every one.
+        """
+        watched = getattr(self, "_watched_documents", None)
+        if watched is None:
+            watched = {}
+            self._watched_documents = watched
+        if key in watched:
+            return
+        listener = _listener_for(self, key)
+        if listener is None:
+            watched[key] = None                  # asked once, cannot listen
+            return
+        told = False
+        for asking in ("addCloseListener", "addEventListener"):
+            try:
+                getattr(doc, asking)(listener)
+                told = True
+                break
+            except Exception as e:
+                logger.info(f"{asking} would not take the listener: {e}")
+        if not told:
+            watched[key] = None
+            return
+        # The listener is kept alive here: UNO holds it weakly enough that a
+        # Python object nobody references would be collected and never called.
+        watched[key] = listener
+
+    def _document_is_gone(self, key: str) -> int:
+        """Let go of every anchor of a document that has been disposed"""
+        store = self._anchor_store()
+        going = [token for token, entry in list(store.items())
+                 if entry.get("document") == key]
+        for token in going:
+            store.pop(token, None)
+        watched = getattr(self, "_watched_documents", None)
+        if watched is not None:
+            watched.pop(key, None)
+        if going:
+            logger.info(f"{len(going)} anchors let go with their document")
+        return len(going)
 
     def _anchor_store(self) -> "OrderedDict":
         """The registry, made on first use.
@@ -143,11 +247,13 @@ class AnchorsMixin:
             return None
 
         store = self._anchor_store()
+        key = self._document_key(doc)
+        self._watch_document(doc, key)
         token = secrets.token_hex(3)
         while token in store:
             token = secrets.token_hex(3)
         store[token] = {"cursor": cursor,
-                        "document": self._document_key(doc),
+                        "document": key,
                         "held": held,
                         "was_empty": not held,
                         # The paragraph it was last seen in: checked before it
@@ -174,12 +280,14 @@ class AnchorsMixin:
             logger.info(f"Could not hold a paragraph: {e}")
             return None
         store = self._anchor_store()
+        key = self._document_key(doc)
+        self._watch_document(doc, key)
         token = secrets.token_hex(3)
         while token in store:
             token = secrets.token_hex(3)
         store[token] = {"kind": "paragraph", "paragraph": paragraph,
                         "cursor": start,
-                        "document": self._document_key(doc),
+                        "document": key,
                         "held": held, "was_empty": not held, "index": index}
         while len(store) > MAX_ANCHORS:
             dropped, _ = store.popitem(last=False)

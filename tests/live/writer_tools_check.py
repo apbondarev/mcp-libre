@@ -343,6 +343,31 @@ try:
           bridge._resolve_address(
               doc, {"paragraph": 1, "offset": 6, "length": 4}).getString(), "beta")
 
+    print("\n--- a document takes its anchors with it when it goes ---")
+    # The one rule UNO states about holding another's objects: a *user* adds
+    # an event listener and releases its references when the object is
+    # disposed (Developer's Guide, Professional UNO). Without it this server
+    # learned a document was gone only when a later call threw, and hundreds
+    # of its cursors lived on — which is where a headless office was measured
+    # to abort with `free(): invalid pointer`, two sessions in six.
+    passing = desktop.loadComponentFromURL("private:factory/swriter",
+                                           "_blank", 0, ())
+    going = passing.getText()
+    going.insertString(going.createTextCursor(), "Первый абзац", False)
+    ours = bridge._document_key(passing)
+    held = bridge.anchor({"paragraph": 0}, doc=passing)
+    check("its anchor is held",
+          (held.get("success"),
+           len([one for one in bridge._anchor_store().values()
+                if one["document"] == ours])), (True, 1))
+    # Closed from outside this server, as a reader closing the window does —
+    # not through close_document, which lets its own anchors go.
+    passing.close(True)
+    time.sleep(1)
+    check("and they went with the document",
+          [one for one in bridge._anchor_store().values()
+           if one["document"] == ours], [])
+
     print("\n--- an offset counted inside a paragraph anchor ---")
     # A paragraph enumerated out of a cursor carries only the portions that
     # cursor covers, and a paragraph anchor's cursor is collapsed: it carried
