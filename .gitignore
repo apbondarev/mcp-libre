@@ -63,6 +63,7 @@ python-sdk/
 # IDEs
 .vscode/
 .idea/
+.qwen/
 *.swp
 *.swo
 *~
