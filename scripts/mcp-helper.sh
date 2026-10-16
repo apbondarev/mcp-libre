@@ -1,18 +1,14 @@
 #!/bin/bash
 
 # LibreOffice MCP Server Helper Script
-# This script helps with testing, deployment, and integration
+# This script checks the prerequisites the LibreOffice extension needs.
 #
-# Configuration:
-# - MCP_CONFIG_PATH: Override the default MCP config location
-#   Default: $HOME/Documents/mcp/mcp.config.json
-#   Usage: MCP_CONFIG_PATH=/custom/path/mcp.config.json ./mcp-helper.sh proxy
+# Installing, building and testing the extension itself is plugin/install.sh.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-MCP_CONFIG_PATH="${MCP_CONFIG_PATH:-$HOME/Documents/mcp/mcp.config.json}"
 
 # Colors for output
 RED='\033[0;31m'
@@ -105,20 +101,6 @@ check_dependencies() {
     fi
     echo ""
     
-    # Check Node.js/NPX (Optional - for Super Assistant proxy)
-    echo "Node.js/NPX (Optional - for Super Assistant Chrome extension):"
-    if command -v npx >/dev/null 2>&1; then
-        local node_version=$(node --version 2>/dev/null)
-        print_status "Node.js/NPX is available: $node_version"
-        print_status "Super Assistant proxy support enabled"
-    else
-        print_warning "Node.js/NPX not found. Needed for Super Assistant Chrome extension."
-        echo "  Ubuntu/Debian: sudo apt install nodejs npm"
-        echo "  macOS: brew install node"
-        echo "  Windows: Download from https://nodejs.org/"
-    fi
-    echo ""
-    
     # Check Java (Optional - for advanced LibreOffice features)
     echo "Java (Optional - for advanced LibreOffice features like PDF generation):"
     if command -v java >/dev/null 2>&1; then
@@ -147,40 +129,17 @@ check_dependencies() {
 }
 
 test_mcp_server() {
-    echo "Testing MCP server functionality..."
+    echo "Testing the plugin's tool registry..."
     cd "$PROJECT_ROOT"
-    
-    # Run the built-in test
-    if uv run python src/main.py --test; then
-        print_status "MCP server test passed"
+
+    if uv run pytest tests/ -q; then
+        print_status "Tests passed"
     else
-        print_error "MCP server test failed"
+        print_error "Tests failed"
         exit 1
     fi
-    
-    echo ""
-}
 
-start_proxy() {
-    echo "Starting MCP proxy for Super Assistant..."
-    
-    if [ ! -f "$MCP_CONFIG_PATH" ]; then
-        print_error "MCP configuration file not found: $MCP_CONFIG_PATH"
-        exit 1
-    fi
-    
-    print_status "Starting proxy with configuration: $MCP_CONFIG_PATH"
-    print_warning "Press Ctrl+C to stop the proxy"
     echo ""
-    
-    npx @srbhptl39/mcp-superassistant-proxy@latest --config "$MCP_CONFIG_PATH"
-}
-
-run_demo() {
-    echo "Running interactive demo..."
-    cd "$PROJECT_ROOT"
-    
-    uv run python tests/test_client.py
 }
 
 show_requirements() {
@@ -203,14 +162,14 @@ show_requirements() {
     echo ""
     
     echo "2. Python (Version 3.12 or higher)"
-    echo "   Purpose: Runtime environment for MCP server"
-    echo "   Features: FastMCP framework, async operations"
+    echo "   Purpose: Runs the extension's tests against faked UNO modules"
+    echo "   Features: The extension itself runs under LibreOffice's bundled Python"
     echo "   Install:"
     echo "     • Ubuntu/Debian: sudo apt install python3.12 python3.12-venv"
     echo "     • macOS: brew install python@3.12"
     echo "     • Windows: https://www.python.org/downloads/"
     echo ""
-    
+
     echo "3. UV Package Manager (Latest version)"
     echo "   Purpose: Fast Python package management"
     echo "   Features: Dependency resolution, virtual environments"
@@ -218,21 +177,12 @@ show_requirements() {
     echo "     • All platforms: curl -LsSf https://astral.sh/uv/install.sh | sh"
     echo "     • Alternative: pip install uv"
     echo ""
-    
+
     echo -e "${YELLOW}Optional Components:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
-    echo "4. Node.js & NPM (Version 18+)"
-    echo "   Purpose: Super Assistant Chrome extension proxy"
-    echo "   Features: Browser integration, real-time document processing"
-    echo "   Install:"
-    echo "     • Ubuntu/Debian: sudo apt install nodejs npm"
-    echo "     • macOS: brew install node"
-    echo "     • Windows: https://nodejs.org/"
-    echo ""
-    
-    echo "5. Java Runtime Environment (JRE 11+)"
+
+    echo "4. Java Runtime Environment (JRE 11+)"
     echo "   Purpose: Advanced LibreOffice features"
     echo "   Features: PDF generation, complex document processing"
     echo "   Install:"
@@ -240,26 +190,24 @@ show_requirements() {
     echo "     • macOS: brew install openjdk"
     echo "     • Windows: https://adoptium.net/"
     echo ""
-    
+
     echo -e "${BLUE}Integration Targets:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
-    
-    echo "• Claude Desktop (Anthropic)"
-    echo "  - Direct MCP protocol integration"
-    echo "  - Configuration via claude_desktop_config.json"
+
+    echo "• Any MCP client speaking SSE"
+    echo "  - The extension serves http://localhost:8765/sse"
+    echo "  - Point the client at that URL once the server is started"
     echo ""
-    
-    echo "• Super Assistant Chrome Extension"
-    echo "  - Browser-based document processing"
-    echo "  - Requires MCP proxy server (Node.js)"
+
+    echo "• LibreOffice itself"
+    echo "  - Tools > MCP Server starts and stops the server"
     echo ""
-    
-    echo "• Direct MCP Clients"
-    echo "  - Python applications using FastMCP"
-    echo "  - Custom integrations via stdio transport"
+
+    echo "• scripts/mcp_standalone.py"
+    echo "  - The same tools over a UNO socket, when the extension"
+    echo "    cannot be registered"
     echo ""
-    
     echo -e "${GREEN}Minimum System Requirements:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "• Operating System: Linux, macOS, Windows"
@@ -287,13 +235,13 @@ show_info() {
     
     echo -e "${GREEN}Key Features:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "• Document Creation & Editing (Writer, Calc, Impress, Draw)"
-    echo "• Format Conversion (50+ formats including PDF, DOCX, HTML)"
-    echo "• Content Extraction & Analysis"
-    echo "• Batch Operations & Document Search"
-    echo "• AI Assistant Integration (Claude Desktop, Super Assistant)"
+    echo "• Live editing of open Writer documents over UNO"
+    echo "• Formatting, comments, tracked changes, fields, tables, images"
+    echo "• Guarded rewrites that refuse to flatten what they cannot restore"
+    echo "• Batched tool calls as a single undo step"
+    echo "• Served to any MCP client as SSE on localhost:8765"
     echo ""
-    
+
     echo -e "${YELLOW}License Information:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo "• License Type: MIT License (Permissive)"
@@ -305,27 +253,15 @@ show_info() {
     echo "For full license text, see: LICENSE"
     echo "For other license options, see: LICENSE_OPTIONS.md"
     echo ""
-    
+
     echo -e "${BLUE}File Structure:${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    echo "• libremcp.py - Main MCP server implementation"
-    echo "• main.py - Entry point script"
-    echo "• test_client.py - Test client for validation"
-    echo "• mcp-helper.sh - Management and testing helper"
-    echo "• pyproject.toml - Project configuration"
-    echo "• Documentation: README.md, EXAMPLES.md, etc."
-    echo ""
-}
-
-show_config() {
-    echo "Current MCP configuration:"
-    echo "Config file: $MCP_CONFIG_PATH"
-    echo ""
-    if [ -f "$MCP_CONFIG_PATH" ]; then
-        cat "$MCP_CONFIG_PATH"
-    else
-        print_error "Configuration file not found"
-    fi
+    echo "• plugin/pythonpath/ - the extension: UNO bridge, MCP server, SSE transport"
+    echo "• plugin/install.sh - build, install and test the extension"
+    echo "• scripts/mcp_standalone.py - the same tools over a UNO socket"
+    echo "• tests/ - asserting tests against faked UNO modules"
+    echo "• mcp-helper.sh - prerequisite checks"
+    echo "• Documentation: README.md, CLAUDE.md, docs/"
     echo ""
 }
 
@@ -336,31 +272,23 @@ show_help() {
     echo "Commands:"
     echo "  requirements Show detailed system requirements and installation guides"
     echo "  check        Check dependencies and system requirements"
-    echo "  test         Run MCP server functionality tests"
-    echo "  demo         Run interactive demo of MCP capabilities"
-    echo "  proxy        Start the MCP proxy for Super Assistant"
-    echo "  config       Show current MCP configuration"
+    echo "  test         Run the extension's tests (uv run pytest tests/)"
     echo "  info         Show project information and license details"
     echo "  help         Show this help message"
     echo ""
     echo "Examples:"
     echo "  $0 requirements             # Show detailed system requirements"
     echo "  $0 check                    # Check if everything is set up correctly"
-    echo "  $0 test                     # Test the LibreOffice MCP server"
-    echo "  $0 proxy                    # Start proxy for Super Assistant"
-    echo "  $0 demo                     # See what the server can do"
+    echo "  $0 test                     # Run the tests"
     echo ""
-    echo "Integration Workflow:"
+    echo "Setup Workflow:"
     echo "  1. Run '$0 requirements' to see what you need"
     echo "  2. Install required components"
     echo "  3. Run '$0 check' to verify setup"
-    echo "  4. Run '$0 test' to test functionality"
-    echo "  5. Run './generate-config.sh' to create configurations"
-    echo "     - For Claude Desktop: './generate-config.sh claude'"
-    echo "     - For Super Assistant: './generate-config.sh mcp'"
-    echo "     - For both: './generate-config.sh both'"
-    echo "  6. Run '$0 proxy' to start proxy (Super Assistant only)"
-    echo "  7. Configure AI assistant to use the MCP server"
+    echo "  4. Run 'cd plugin && ./install.sh install' to build and install"
+    echo "     the extension, then restart LibreOffice"
+    echo "  5. Start the server from Tools > MCP Server and point your MCP"
+    echo "     client at http://localhost:8765/sse"
     echo ""
 }
 
@@ -375,17 +303,6 @@ case "${1:-help}" in
     "test")
         check_dependencies
         test_mcp_server
-        ;;
-    "demo")
-        check_dependencies
-        run_demo
-        ;;
-    "proxy")
-        check_dependencies
-        start_proxy
-        ;;
-    "config")
-        show_config
         ;;
     "info"|"information")
         show_info

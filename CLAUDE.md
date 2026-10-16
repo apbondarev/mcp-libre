@@ -5,24 +5,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-uv sync                              # install dependencies
+uv sync                              # create the venv — pytest is the only dependency
 
 python3 scripts/write_skill.py       # regenerate skills/libreoffice-mcp/SKILL.md from mcp_guide.py
 cp -r skills/libreoffice-mcp ~/.claude/skills/   # hand the same guide to Claude Code
 
-./quick-test.sh test                 # built-in functionality tests (= python src/main.py --test)
-./quick-test.sh server               # start the stdio MCP server
-./quick-test.sh client               # interactive in-process MCP client (tests/test_client.py)
 ./mcp-helper.sh check                # verify LibreOffice/Python/uv prerequisites
-./mcp-helper.sh demo                 # interactive demo (examples/)
-./generate-config.sh claude          # write ~/.config/claude/claude_desktop_config.json with real paths
+./mcp-helper.sh requirements         # the same, as installation instructions
 
-uv run pytest tests/ -v              # 28 tests
-uv run pytest tests/test_cursor_info.py                   # no LibreOffice needed
-uv run pytest tests/test_insert_fix.py::test_edge_cases   # single test
+uv run pytest tests/ -q              # 813 tests, none of them needing LibreOffice
+uv run pytest tests/test_cursor_info.py                  # one file
+uv run pytest tests/test_cursor_info.py -k table -q      # one test
 ```
 
-Two kinds of test live here. `test_cursor_info.py` and `test_document_type_dispatch.py` are real asserting tests that run in the venv, because `tests/uno_stubs.py` fakes the `uno` and `com.sun.star.*` modules so `plugin/pythonpath/` becomes importable — see the caveat in `tests/fake_writer.py` about what fakes cannot prove. `test_client.py` and `test_insert_fix.py` are older print-driven scripts that shell out to real LibreOffice and return booleans instead of asserting, so their green runs prove little — read their output. `test_client.py::test_mcp_client` fails on collection because `pytest-asyncio` is not enabled (no `asyncio_mode` in `pyproject.toml`); that predates any current work.
+Every collected test asserts, and every one runs in the venv, because `tests/uno_stubs.py` fakes the `uno` and `com.sun.star.*` modules so `plugin/pythonpath/` becomes importable — see the caveat in `tests/fake_writer.py` about what fakes cannot prove. The two older print-driven scripts that shelled out to a real office and returned booleans instead of asserting (`test_client.py`, `test_insert_fix.py`) went with the external server they exercised; `tests/live/*` is the harness that still drives a real one, and is not collected by name.
 
 No linter or formatter is configured; `ruff` is not a dependency despite what `QWEN.md` says.
 
@@ -39,23 +35,9 @@ tail -f /tmp/mcp_extension.log   # the only usable log — UNO swallows stderr
 
 ## Architecture
 
-Two **independent** MCP server implementations live here. They share no code; a change in one is not a change in the other.
+One MCP server lives here: the LibreOffice extension in `plugin/pythonpath/`. A second, file-oriented stdio server used to sit in `src/libremcp.py` and is gone — `git log` is where to look for it, and nothing in this repository references it.
 
-### 1. External server — `src/libremcp.py` (14 tools, stdio)
-
-A single-file FastMCP server that manipulates documents **as files on disk**, driving LibreOffice through `subprocess` (`libreoffice --headless --convert-to ...`). It never talks to a running LibreOffice instance, so it has no concept of the active document, the cursor, or the selection.
-
-Consequences worth knowing before adding a tool:
-
-- `_run_libreoffice_command` tries `libreoffice`, `loffice`, `soffice` in order.
-- Text extraction (`read_document_text`) converts to `.txt` in a temp dir, then falls back to unzipping `content.xml` (`_extract_text_from_odt`), then to reading raw bytes.
-- **Editing is destructive by design.** `insert_text_at_position` reads all text, concatenates, and *recreates* the file (`_recreate_writer_document` → LibreOffice conversion → `_create_minimal_odt` hand-written ODT zip). All formatting, styles, and images are lost. A `.backup` copy is restored on failure. `_insert_text_writer_document` is dead code — it builds a UNO macro string and then `return False` unconditionally.
-- Resources: `documents://` (rglob over `~/Documents`, `~/Desktop`, cwd) and `document://{path}`.
-- `main()` handles `--test`, `--help`, `--version` before `mcp.run()`; startup chatter goes to stderr so stdio JSON-RPC stays clean.
-
-Entry points: `src/main.py` does a flat `import libremcp`, which works only because Python puts the script's own directory on `sys.path` — hence `PYTHONPATH=<repo>/src` in the config templates. The root `libremcp.py` is a 6-line vestigial stub, not the server; `pyproject.toml`'s `[project.scripts]`/hatch `packages` still point at stale paths.
-
-### 2. Embedded plugin — `plugin/pythonpath/` (108 tools, SSE over HTTP :8765)
+### The embedded plugin — `plugin/pythonpath/` (113 tools, SSE over HTTP :8765)
 
 Runs *inside* LibreOffice via UNO, so it acts on live open documents with no file I/O. Four layers:
 
@@ -251,6 +233,6 @@ Hard constraints on plugin code:
 
 ## Conventions
 
-- Structured returns: the external server uses Pydantic models (`DocumentInfo`, `TextContent`, `ConversionResult`, `SpreadsheetData`) so MCP clients get schemas; the plugin returns plain dicts because Pydantic isn't available there.
-- Root `mcp-helper.sh` and `generate-config.sh` are one-line `exec` wrappers around `scripts/`.
+- Structured returns: plain dicts, because Pydantic is not available under LibreOffice's Python. `uno_values.ERROR_CODES` and `elapsed_ms` are what makes them machine-readable instead.
+- Root `mcp-helper.sh` is a one-line `exec` wrapper around `scripts/mcp-helper.sh`.
 - `docs/` is extensive and largely aspirational — verify claims against code before relying on them.

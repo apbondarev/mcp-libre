@@ -116,8 +116,8 @@ documents, summarisation.
 ### 1.7 The thin ones
 
 `harshithb3304/libre-office-mcp`, `patrup/mcp-libre`, `jwingnut/mcp-libre` and the
-various forks of this repository are file- or helper-process-oriented and offer less
-than our external `src/libremcp.py`. `chfle/word-to-pdf-mcp` is a single conversion
+various forks of this repository are file- or helper-process-oriented, and offer less
+than a server running inside the office. `chfle/word-to-pdf-mcp` is a single conversion
 service built on **unoserver** — worth remembering as the standard way to keep a
 LibreOffice process warm outside the GUI.
 
@@ -599,9 +599,9 @@ consolidation is the blunter version of the same economy.
 - **Document protection** (read-only / comments-only) — LibreOffice supports it.
 - **`lock_document_updates`** around a long batch: LibreOffice's own screen-update freeze, which is free speed.
 - **Document events** (`wait_for_document_event`): the fork's caveat is instructive — with one process-wide lock, waiting for an event that another tool call would raise deadlocks by construction.
-- **`unoserver`** as the model for a warm headless process, if the external `src/libremcp.py` server is ever taken seriously again.
+- **`unoserver`** as the model for a warm headless process, should a file-oriented server ever be wanted here again.
 
-### 3.14 Two inconsistencies — one cleared up
+### 3.14 Two inconsistencies — both cleared up
 
 Neither is a missing capability; both are the server being untrue to itself.
 
@@ -615,10 +615,10 @@ Neither is a missing capability; both are the server being untrue to itself.
   document to be pointed at. A test holds that line, the guide says it, and
   `format_text_live` stopped being `**kwargs` — which is what had hidden its schema
   promising five parameters the handler never named.
-- **The external server in `src/libremcp.py` is a different product** with the same
-  name: 14 tools, files on disk, editing that destroys formatting by design. Nothing
-  in this survey applies to it, and the two are easy to confuse from the outside —
-  the README should say which one a reader is looking at.
+- ~~**The external server in `src/libremcp.py` is a different product**~~ **Done.** It
+  was: 14 tools, files on disk, editing that destroys formatting by design, and nothing
+  in this survey applied to it. It has been removed, so the name now means one thing —
+  the extension in `plugin/pythonpath/`.
 
 ---
 

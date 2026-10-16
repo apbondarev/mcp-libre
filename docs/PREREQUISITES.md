@@ -10,7 +10,8 @@
 - **Windows**: [Download from libreoffice.org](https://www.libreoffice.org/download/)
 
 ### 2. Python 3.12+
-- **Purpose**: Runtime environment for MCP server
+- **Purpose**: Runs the test suite against faked UNO modules
+- **Note**: The extension itself runs under LibreOffice's bundled Python
 - **Ubuntu/Debian**: `sudo apt install python3.12 python3.12-venv`
 - **macOS**: `brew install python@3.12`
 - **Windows**: [Download from python.org](https://www.python.org/downloads/)
@@ -22,13 +23,7 @@
 
 ## 🔧 Optional Components
 
-### 4. Node.js 18+ & NPM
-- **Purpose**: Super Assistant Chrome extension proxy
-- **Ubuntu/Debian**: `sudo apt install nodejs npm`
-- **macOS**: `brew install node`
-- **Windows**: [Download from nodejs.org](https://nodejs.org/)
-
-### 5. Java Runtime Environment (JRE 11+)
+### 4. Java Runtime Environment (JRE 11+)
 - **Purpose**: Advanced LibreOffice features (PDF generation)
 - **Ubuntu/Debian**: `sudo apt install default-jre`
 - **macOS**: `brew install openjdk`
@@ -44,7 +39,7 @@ sudo apt install libreoffice python3.12 python3.12-venv curl
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Optional components
-sudo apt install nodejs npm default-jre
+sudo apt install default-jre
 ```
 
 ### macOS (with Homebrew)
@@ -55,7 +50,7 @@ brew install python@3.12
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Optional components
-brew install node openjdk
+brew install openjdk
 ```
 
 ### Windows (with Chocolatey)
@@ -65,7 +60,7 @@ choco install libreoffice python312
 # Then install UV manually from the website
 
 # Optional components
-choco install nodejs openjdk
+choco install openjdk
 ```
 
 ## 🔍 Verification Commands
@@ -81,10 +76,6 @@ python3 -c "import sys; print('✓ Python 3.12+' if sys.version_info >= (3, 12) 
 
 # Check UV
 uv --version
-
-# Check Node.js (optional)
-node --version
-npm --version
 
 # Check Java (optional)
 java -version
@@ -114,9 +105,9 @@ Use the included helper script for automated checking:
 
 ## 🔗 Integration Support
 
-- **Claude Desktop**: Direct MCP protocol
-- **Super Assistant**: Chrome extension via proxy
-- **Custom Clients**: Python FastMCP framework
+- **Any MCP client speaking SSE**: the extension serves `http://localhost:8765/sse`
+- **LibreOffice itself**: Tools > MCP Server starts and stops the server
+- **Without the extension**: `scripts/mcp_standalone.py` serves the same tools over a UNO socket
 
 ---
 

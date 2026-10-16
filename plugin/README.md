@@ -193,17 +193,6 @@ curl http://localhost:8765/tools/get_text_content_live
 curl http://localhost:8765/tools/list_open_documents
 ```
 
-## 🔄 Comparison with External MCP Server
-
-| Feature | External Server | Plugin Extension |
-|---------|----------------|------------------|
-| **Performance** | ⭐⭐ (file I/O) | ⭐⭐⭐⭐⭐ (direct API) |
-| **Real-time Editing** | ⭐⭐ (file-based) | ⭐⭐⭐⭐⭐ (live objects) |
-| **Installation** | ⭐⭐⭐⭐ (simple) | ⭐⭐⭐ (extension install) |
-| **Multi-document** | ⭐⭐ (file ops) | ⭐⭐⭐⭐⭐ (all open docs) |
-| **GUI Integration** | ⭐ (none) | ⭐⭐⭐⭐⭐ (native menus) |
-| **Startup Time** | ⭐⭐ (LibreOffice launch) | ⭐⭐⭐⭐⭐ (instant) |
-
 ## 🛠️ Technical Architecture
 
 ```

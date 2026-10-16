@@ -124,9 +124,7 @@ plugin/
 
 ### **Enhanced Documentation**
 - **[Plugin README](plugin/README.md)**: Comprehensive plugin guide
-- **[Migration Guide](docs/PLUGIN_MIGRATION_GUIDE.md)**: External server → plugin migration
 - **[Updated Main README](README.md)**: Plugin integration information
-- **[Repository Structure](docs/REPOSITORY_STRUCTURE.md)**: Updated directory layout
 
 ## 🎯 Benefits Achieved
 

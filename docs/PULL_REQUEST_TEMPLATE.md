@@ -69,9 +69,7 @@ plugin/
 ### Documentation Added/Updated
 - **`plugin/README.md`**: Comprehensive plugin documentation
 - **`plugin/IMPLEMENTATION_SUMMARY.md`**: Technical architecture overview
-- **`docs/PLUGIN_MIGRATION_GUIDE.md`**: Migration from external server guide
 - **`README.md`**: Updated with plugin integration information
-- **`docs/REPOSITORY_STRUCTURE.md`**: Updated directory structure
 
 ## 🔗 AI Assistant Integration
 
