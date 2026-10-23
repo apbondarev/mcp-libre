@@ -369,8 +369,15 @@ class FieldsMixin:
                     field.IsFixed = bool(fixed)
                 except Exception as e:
                     logger.info(f"Could not fix a field: {e}")
-            owner = target.getText()
-            owner.insertTextContent(target, field, bool(target.getString()))
+            # A caret and a span arrive here as the same kind of range, and
+            # only one of them may be absorbed: {"paragraph": 3, "offset": 5}
+            # resolves to the rest of the paragraph, so taking the range as it
+            # stands put the field in place of everything after the caret —
+            # measured, and silent. The field replaces text only when the
+            # address said how much text.
+            where = target if self._names_a_span(address) else target.getStart()
+            owner = where.getText()
+            owner.insertTextContent(where, field, bool(where.getString()))
             described = self._describe_field(doc, field)
             return {"kind": kind, "shows": described["text"],
                     "command": described["command"],

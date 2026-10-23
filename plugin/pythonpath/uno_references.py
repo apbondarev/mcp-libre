@@ -900,8 +900,12 @@ class ReferencesMixin:
             if sequence_id is not None:
                 field.SequenceNumber = sequence_id
             field.ReferenceFieldPart = PART_OF_NAME[part]
-            owner = where.getText()
-            owner.insertTextContent(where, field, bool(where.getString()))
+            # As insert_field: an address that named a place, not a span,
+            # resolves to the rest of the paragraph, and absorbing that took
+            # the text the reference was meant to stand beside.
+            spot = where if self._names_a_span(address) else where.getStart()
+            owner = spot.getText()
+            owner.insertTextContent(spot, field, bool(spot.getString()))
             doc.getTextFields().refresh()
             located, _, _ = self._locate_range(doc, field.getAnchor())
             return {"target": {"kind": kind, "name": name,

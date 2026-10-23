@@ -536,6 +536,25 @@ class FakeText:
         if piece.get("id") is not None:
             self.paragraph_ids[index] = piece["id"]
 
+    def fill_paragraph(self, index, piece):
+        """Put a lifted paragraph into an empty one, where it stands.
+
+        What a paste into an empty paragraph does — measured: the empty
+        paragraph takes the text and its style, and no paragraph is left over
+        beside it, so the count does not move. In place rather than out and
+        back in, since taking a paragraph out shifts every number below it and
+        would disturb the anchors held on them for no reason.
+        """
+        self.paragraphs[index] = piece["text"]
+        self.styles[index] = piece["style"]
+        self.outline_levels[index] = piece["level"]
+        if piece["portions"] is not None:
+            self.portions[index] = piece["portions"]
+        else:
+            self.portions.pop(index, None)
+        if piece.get("id") is not None:
+            self.paragraph_ids[index] = piece["id"]
+
     def _remove_paragraph_at(self, index):
         """Take a paragraph out, moving everything below it up one."""
         self._paragraph_removed(index)
@@ -794,6 +813,14 @@ class FakeText:
         if hasattr(content, "getPresentation") \
                 and not hasattr(content, "Author"):
             # A caption's number or a cross-reference: a field, not a note.
+            # Put over a range it takes that text's place, the way a formula
+            # does; put at a caret it goes in beside what is already there.
+            # The caller's own range goes in, not a copy of it: insert_field
+            # moves it past the field, which is how a caption knows where its
+            # number ended and its text begins.
+            start, end = sorted([text_range.start, text_range.end])
+            if absorb and start != end:
+                self.replace_range(start, end, "")
             self.insert_field(text_range, content,
                               content.getPresentation(False))
             return

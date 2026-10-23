@@ -19,6 +19,23 @@ logger = logging.getLogger(__name__)
 class AddressMixin:
     """Part of UNOBridge — see uno_bridge.py for how the parts meet."""
 
+    def _names_a_span(self, address: Any) -> bool:
+        """Whether an address says how much text it covers, not only where it is
+
+        `{"paragraph": 3, "offset": 5}` names a place: a caret. An omitted
+        length resolves to the rest of the paragraph, which is what a reading
+        tool wants and what an insertion must not read as a span — measured,
+        a field put at a caret this way took the place of everything after it,
+        because the range it was handed was not empty and `insertTextContent`
+        was told to absorb. So an insertion replaces text only when the caller
+        said how much: a `length`, or a `through` naming whole paragraphs.
+        """
+        if not isinstance(address, dict):
+            return False
+        if address.get("through") is not None:
+            return True
+        return bool(address.get("length"))
+
     def _resolve_address(self, doc: Any, address: Any) -> Any:
         """
         Turn an address into a text range

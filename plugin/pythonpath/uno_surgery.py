@@ -275,15 +275,27 @@ class SurgeryMixin:
         it, and so does every piece of formatting. It goes through the
         controller's own transferable, so the reader's clipboard is left
         alone.
+
+        `to` names the paragraph the copy lands in front of, and the number
+        of paragraphs is one of the places it may name: that is the spot
+        after the last one, so a copy can go at the end of a document, where
+        there is no paragraph left to stand in front of.
         """
         doc, error = self._writer_document(doc, "Copying paragraphs")
         if error:
             return error
         try:
             first, last = self._paragraph_block(doc, address)
-            self._paragraph_index_of(doc, {"paragraph": to})
         except AddressError as e:
             return refusal("INVALID_ADDRESS", e)
+        total = self._count_body_paragraphs(doc)
+        if not isinstance(to, int) or isinstance(to, bool) or total is None \
+                or not 0 <= to <= total:
+            return refusal("INVALID_ADDRESS",
+                           f"no body paragraph {to}: this document has "
+                           f"{total}, so a copy can go in front of 0 through "
+                           f"{total - 1 if total else 0}, or in front of "
+                           f"{total} to land after the last of them")
         if first <= to <= last:
             return refusal("INVALID_PARAMETER",
                            f"paragraph {to} is inside the block being copied")
@@ -298,16 +310,34 @@ class SurgeryMixin:
         count = last - first + 1
 
         def edit():
+            from com.sun.star.text.ControlCharacter import PARAGRAPH_BREAK
+
+            body = doc.getText()
             self._select_paragraphs(doc, first, last)
             carried = controller.getTransferable()
-            body = doc.getText()
-            landing = self._paragraph_at(body, to)
+
+            # A paste joins the paragraph it lands in rather than becoming one
+            # of its own — measured on a live Writer, where a copy made in
+            # front of "Гамма" read back as one paragraph holding "АльфаГамма"
+            # and the count never moved. So the landing place is given a
+            # paragraph of its own first: a break that leaves an empty one at
+            # `to`, which the copy then fills, with nothing left over beside
+            # it. The source's own break cannot serve instead, because the
+            # last paragraph of a document has none to give — the body's end
+            # sits inside it, measured — and it is not needed: `to` is at most
+            # the paragraph count, so the break always goes at the end of the
+            # paragraph above the landing place, which for an append is that
+            # last paragraph's own end and lands in the same place.
+            at = (self._paragraph_at(body, 0).getStart() if to == 0
+                  else self._paragraph_at(body, to - 1).getEnd())
+            body.insertControlCharacter(body.createTextCursorByRange(at),
+                                        PARAGRAPH_BREAK, False)
+
             view = controller.getViewCursor()
-            view.gotoRange(landing.getStart(), False)
+            view.gotoRange(self._paragraph_at(body, to).getStart(), False)
             controller.insertTransferable(carried)
             self._restore_selection(doc, held)
-            copied_first = to if to > last else to
-            landed = self._paragraph_at(body, copied_first)
+            landed = self._paragraph_at(body, to)
             return {"copied": [first, last], "to": to, "paragraphs": count,
                     "text": _text_payload(landed.getString())["text"]
                     if landed else None,

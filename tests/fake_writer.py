@@ -328,10 +328,26 @@ class FakeController:
                 for index in range(first, last + 1)]
 
     def insertTransferable(self, carried):
+        """Paste what the view carries, the way Writer does it.
+
+        Measured on a live Writer, and what the fake used to get wrong in the
+        optimistic direction: a paste **joins** the paragraph the cursor
+        stands in rather than becoming a paragraph of its own, so copying in
+        front of "Гамма" read back as one paragraph holding "АльфаГамма" and
+        the count never moved. Into an empty paragraph the first piece simply
+        lands and the rest follow it — which is why copy_paragraphs makes room
+        at the landing place instead of trusting the source's own break, and
+        why nothing is left over beside the copy.
+        """
         model = self._view_cursor.model
-        at = self._view_cursor.start[0]
-        for offset, piece in enumerate(carried):
-            model.put_paragraph(at + offset, dict(piece))
+        index, offset = self._view_cursor.start
+        first, rest = carried[0], carried[1:]
+        if offset == 0 and not model.paragraphs[index]:
+            model.fill_paragraph(index, dict(first))
+        else:
+            model.put_paragraph(index, dict(first))
+        for step, piece in enumerate(rest):
+            model.put_paragraph(index + 1 + step, dict(piece))
         return True
 
 

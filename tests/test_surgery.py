@@ -117,10 +117,67 @@ def test_copying_brings_the_comment_with_it(bridge, doc):
     assert bridge.list_comments(doc=doc)["count"] == 2
 
 
+def test_a_copy_is_a_paragraph_of_its_own(bridge, doc):
+    # Measured on a live Writer: a paste joins the paragraph it lands in
+    # instead of becoming one, so a copy made in front of "Третий абзац" used
+    # to read back as a single paragraph holding both, and the count never
+    # moved. The landing place is given an empty paragraph first, and the copy
+    # fills it.
+    copied = bridge.copy_paragraphs({"paragraph": 1}, to=3, doc=doc)
+
+    assert copied["success"] is True
+    assert lines(doc)[3] == "Первый абзац"
+    assert lines(doc)[4] == "Третий абзац", "what it landed in front of"
+    assert copied["total_paragraphs"] == len(lines(doc)) == 6
+
+
+def test_the_last_paragraph_can_be_copied(bridge, doc):
+    # It has no break of its own to give — the body's end sits inside it — so
+    # this is the case that decided the rule.
+    copied = bridge.copy_paragraphs({"paragraph": 4}, to=1, doc=doc)
+
+    assert copied["success"] is True
+    assert lines(doc)[1] == "Четвёртый абзац"
+    assert lines(doc)[5] == "Четвёртый абзац", "the original stayed put"
+    assert copied["total_paragraphs"] == 6
+
+
+def test_a_copy_can_land_after_the_last_paragraph(bridge, doc):
+    # `to` may be the number of paragraphs: the place after the last one,
+    # which is what copying to the end of a document means.
+    copied = bridge.copy_paragraphs({"paragraph": 1}, to=5, doc=doc)
+
+    assert copied["success"] is True
+    assert lines(doc)[5] == "Первый абзац"
+    assert lines(doc)[4] == "Четвёртый абзац", "the last one was left alone"
+    assert copied["total_paragraphs"] == 6
+
+
+def test_a_copy_can_land_in_front_of_the_first_paragraph(bridge, doc):
+    copied = bridge.copy_paragraphs({"paragraph": 2}, to=0, doc=doc)
+
+    assert copied["success"] is True
+    assert lines(doc)[0] == "Второй абзац"
+    assert lines(doc)[1] == "Заголовок"
+    assert copied["total_paragraphs"] == 6
+
+
+def test_a_block_lands_in_order_and_shifts_what_is_below(bridge, doc):
+    copied = bridge.copy_paragraphs({"paragraph": 1, "through": 2}, to=4,
+                                    doc=doc)
+
+    assert copied["paragraphs"] == 2
+    assert lines(doc)[4:6] == ["Первый абзац", "Второй абзац"]
+    assert lines(doc)[6] == "Четвёртый абзац"
+    assert copied["total_paragraphs"] == 7
+
+
 def test_what_copying_refuses(bridge, doc):
     assert bridge.copy_paragraphs({"paragraph": 1}, to=1,
                                   doc=doc)["code"] == "INVALID_PARAMETER"
     assert bridge.copy_paragraphs({"paragraph": 1}, to=99,
+                                  doc=doc)["code"] == "INVALID_ADDRESS"
+    assert bridge.copy_paragraphs({"paragraph": 1}, to=-1,
                                   doc=doc)["code"] == "INVALID_ADDRESS"
 
 

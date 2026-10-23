@@ -145,7 +145,7 @@ class SurgeryTools:
                     },
                     "to": {
                         "type": "integer",
-                        "description": "The copy goes in front of this paragraph"
+                        "description": "The copy goes in front of this paragraph. The number of paragraphs is allowed and means after the last one, so a copy can go at the end of the document, where there is no paragraph left to name"
                     },
                     "track_changes": {
                         "type": "boolean",

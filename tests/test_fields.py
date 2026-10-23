@@ -107,6 +107,47 @@ def test_a_kind_nobody_has_heard_of_is_refused(bridge, doc):
                                                      "INVALID_PARAMETER")
 
 
+# An address is either a place or a stretch of text, and only a stretch may be
+# absorbed. `{"paragraph": 0, "offset": 4}` used to resolve to the rest of the
+# paragraph — which is what a reading tool wants — and the field then took the
+# place of all of it, silently, because insertTextContent was told to absorb
+# whatever the range held.
+
+def test_a_caret_address_puts_the_field_beside_the_text(bridge, doc):
+    put = bridge.insert_field({"paragraph": 0, "offset": 4}, "date", doc=doc)
+
+    assert put["success"] is True
+    line = doc.getText().paragraphs[0]
+    assert line.startswith("Заго")
+    assert line.endswith("ловок"), "the rest of the paragraph went with it"
+    assert put["shows"] in line
+
+
+def test_a_bare_paragraph_address_does_not_take_the_paragraph(bridge, doc):
+    bridge.insert_field({"paragraph": 0}, "date", doc=doc)
+
+    assert doc.getText().paragraphs[0].endswith("Заголовок")
+
+
+def test_an_address_that_names_a_span_still_takes_its_place(bridge, doc):
+    put = bridge.insert_field({"paragraph": 0, "offset": 0, "length": 4},
+                              "date", doc=doc)
+
+    line = doc.getText().paragraphs[0]
+    assert not line.startswith("Заго"), "the span it named is still there"
+    assert line.endswith("ловок")
+    assert put["shows"] in line
+
+
+def test_a_paragraph_anchor_handed_back_is_a_place_not_a_span(bridge, doc):
+    held = bridge.read_paragraphs(start=0, count=1,
+                                  doc=doc)["paragraphs"][0]["address"]
+
+    bridge.insert_field(held, "date", doc=doc)
+
+    assert doc.getText().paragraphs[0].endswith("Заголовок")
+
+
 def test_fields_can_be_asked_for_by_place(bridge, doc):
     assert bridge.list_fields({"paragraph": 0}, doc=doc)["count"] == 0
     assert bridge.list_fields({"paragraph": 1}, doc=doc)["count"] == 1

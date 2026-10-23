@@ -147,6 +147,19 @@ def test_or_the_words_of_the_caption(bridge, doc):
     assert put["shows"] == "A picture"
 
 
+def test_a_reference_at_a_caret_leaves_the_paragraph_whole(bridge, doc):
+    # The same rule insert_field follows: an address that named a place, and
+    # so resolved to the rest of its paragraph, used to be absorbed.
+    put = bridge.insert_cross_reference({"paragraph": 2, "offset": 5},
+                                        {"heading": 0}, doc=doc)
+
+    assert put["success"] is True
+    line = paragraphs(doc)[2]
+    assert line.startswith("Body ")
+    assert line.endswith("text"), "the rest of the paragraph went with it"
+    assert put["shows"] in line
+
+
 def test_a_reference_to_a_heading_leaves_a_bookmark_on_it(bridge, doc):
     put = bridge.insert_cross_reference({"paragraph": 3, "offset": 0,
                                          "length": 0}, {"heading": 0},
