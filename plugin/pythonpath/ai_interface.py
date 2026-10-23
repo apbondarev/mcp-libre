@@ -31,7 +31,11 @@ _sessions_lock = threading.Lock()
 
 
 def _make_sse(event: str, data: Any) -> bytes:
-    payload = json.dumps(data) if not isinstance(data, str) else data
+    # ensure_ascii=False: a document's own text travels as UTF-8, not as
+    # \uXXXX. SSE is UTF-8 by specification, and json.dumps still escapes the
+    # control characters that would break the data: framing.
+    payload = (json.dumps(data, ensure_ascii=False)
+               if not isinstance(data, str) else data)
     return f"event: {event}\ndata: {payload}\n\n".encode()
 
 
@@ -85,7 +89,8 @@ def _handle_mcp_request(session_id: str, msg: dict):
             # as base64 buried in a wall of JSON.
             picture = (result.pop("_image_content", None)
                        if isinstance(result, dict) else None)
-            content = [{"type": "text", "text": json.dumps(result)}]
+            content = [{"type": "text",
+                        "text": json.dumps(result, ensure_ascii=False)}]
             if isinstance(picture, dict) and picture.get("data"):
                 content.append({"type": "image", "data": picture["data"],
                                 "mimeType": picture.get("mime_type",
@@ -209,7 +214,7 @@ class MCPRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _send_json(self, code: int, data: dict):
-        body = json.dumps(data).encode()
+        body = json.dumps(data, ensure_ascii=False).encode()
         self.send_response(code)
         self._cors()
         self.send_header("Content-Type", "application/json")
